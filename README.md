@@ -1,2 +1,5 @@
 # CardBrick
-Memorization Tool to help learn foreign languages for the Trim UI Brick
+
+MVP flashcard app for Trim UI Brick.
+
+See docs/ for details.
