@@ -1,71 +1,44 @@
 // CardBrick - main.rs
-// Phase 0: "Hello, Brick!" - Window and basic event loop.
+// Phase 1: Test the .apkg loader.
 
-// Import the SDL2 crate
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
-use std::time::Duration;
+use std::env;
+use std::path::Path;
 
-pub fn main() -> Result<(), String> {
-    // Initialize SDL2
-    let sdl_context = sdl2::init()?;
-    let video_subsystem = sdl_context.video()?;
+// This tells Rust that we have a module named `deck`
+mod deck;
 
-    // Create the window.
-    // The TrimUI Brick has a 1024x768 screen, but our logical canvas is 512x364.
-    // For this initial test, we'll just create a window.
-    // The final version will have letterboxing.
-    let window = video_subsystem
-        .window("CardBrick v0.1", 1024, 768)
-        .position_centered()
-        .opengl() // Use the OpenGL renderer
-        .build()
-        .map_err(|e| e.to_string())?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Collect command-line arguments.
+    let args: Vec<String> = env::args().collect();
 
-    // Create a canvas to draw on
-    let mut canvas = window
-        .into_canvas()
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    // Set the draw color to a dark grey
-    canvas.set_draw_color(Color::RGB(40, 40, 40));
-    canvas.clear();
-    canvas.present();
-
-    // Create an event pump to handle events (keyboard, mouse, etc.)
-    let mut event_pump = sdl_context.event_pump()?;
-
-    // Main application loop
-    'running: loop {
-        canvas.set_draw_color(Color::RGB(40, 40, 40));
-        canvas.clear();
-
-        // Process all pending events
-        for event in event_pump.poll_iter() {
-            match event {
-                // Quit event (e.g., closing the window)
-                Event::Quit { .. }
-                // Keydown event for the Escape key
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => {
-                    break 'running;
-                }
-                _ => {}
-            }
-        }
-
-        // --- DRAWING HAPPENS HERE ---
-
-        // Present the canvas to the screen
-        canvas.present();
-
-        // Sleep for a short duration to avoid pegging the CPU
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+    // Check if a file path was provided.
+    if args.len() < 2 {
+        eprintln!("Usage: {} <path_to_apkg_file>", args[0]);
+        // Return a simple error.
+        return Err("No file path provided.".into());
     }
 
+    // The first argument (args[0]) is the program name, the second (args[1]) is our path.
+    let file_path = Path::new(&args[1]);
+
+    // Call our new loader function.
+    let deck = deck::loader::load_apkg(file_path)?;
+
+    println!("\n--- Deck Loaded Successfully! ---");
+    println!("Total cards: {}", deck.cards.len());
+    println!("Total notes: {}", deck.notes.len());
+
+    // Let's inspect the first 5 cards to verify.
+    println!("\n--- First 5 Cards ---");
+    for card in deck.cards.iter().take(5) {
+        // Find the note associated with this card.
+        if let Some(note) = deck.notes.get(&card.note_id) {
+            let front = note.fields.get(0).map(String::as_str).unwrap_or(" (no front)");
+            let back = note.fields.get(1).map(String::as_str).unwrap_or(" (no back)");
+            println!("Card ID: {}, Front: '{}', Back: '{}'", card.id, front, back);
+        }
+    }
+    
+    // Return Ok with the unit type `()` to indicate success.
     Ok(())
 }
