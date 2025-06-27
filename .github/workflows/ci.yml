@@ -1,0 +1,70 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure APT for Multi-Architecture
+        run: |
+          # Add the ARM architecture
+          sudo dpkg --add-architecture armhf
+          
+          # IMPORTANT: Modify existing sources to specify they are for amd64 ONLY.
+          # The sed command is crafted to NOT modify lines that already have an architecture specified.
+          sudo sed -i '/^deb \[/!s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          # Also modify any additional source list files using the same safe command
+          sudo find /etc/apt/sources.list.d/ -type f -name "*.list" -exec sudo sed -i '/^deb \[/!s/^deb /deb [arch=amd64] /' {} \;
+
+          # Add the Ubuntu Ports repository which hosts the ARM packages
+          echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm-ports.list
+          echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm-ports.list
+          echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm-ports.list
+          
+          # Now, update the package lists
+          sudo apt-get update
+
+      - name: Install System Dependencies
+        run: >
+          sudo apt-get install -y
+          gcc-arm-linux-gnueabihf
+          g++-arm-linux-gnueabihf
+          libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev
+          libsqlite3-dev libopus-dev
+          libsdl2-dev:armhf
+          libsdl2-image-dev:armhf
+          libsdl2-ttf-dev:armhf
+          libdbus-1-dev:armhf
+          libibus-1.0-dev:armhf
+          libpulse-dev:armhf
+          libudev-dev:armhf
+
+      - name: Set up Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: armv7-unknown-linux-gnueabihf
+          override: true
+
+      - name: Build for Host (for testing)
+        run: cargo build --all-targets --all-features
+
+      - name: Unit & Integration Tests (on host)
+        run: cargo test --all-targets --all-features
+
+      - name: Build for Target (ARMv7)
+        # The .cargo/config.toml file will be used here automatically
+        run: cargo build --release --target armv7-unknown-linux-gnueabihf
+
+      # The packaging step will be added once the script is created
+      # - name: Package .opk
+      #   run: ./scripts/package_opk.sh
+
+      # - name: Upload Artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: cardbrick-opk
+      #     path: dist/cardbrick-*.opk

@@ -1,0 +1,26 @@
+# This configuration file provides specific settings for cross-compiling
+# to the armv7-unknown-linux-gnueabihf target.
+
+[target.armv7-unknown-linux-gnueabihf]
+
+# We must specify the linker and archiver for the target architecture.
+# This ensures that Cargo uses the correct C cross-compiler toolchain.
+linker = "arm-linux-gnueabihf-gcc"
+ar = "arm-linux-gnueabihf-ar"
+
+# We can also use rustflags to pass the linker configuration again.
+# This can help in complex build script scenarios (like cmake) where
+# the top-level `linker` key might not be fully propagated.
+rustflags = [
+  "-C", "linker=arm-linux-gnueabihf-gcc",
+]
+
+# Set environment variables for build scripts.
+# This is crucial for dependencies that use tools like pkg-config or cmake
+# to find C libraries during a cross-compile.
+[env]
+# Allow pkg-config to work in a cross-compilation context.
+PKG_CONFIG_ALLOW_CROSS = "1"
+# Point pkg-config to the correct directory for the target's .pc files.
+# This requires that the armhf dev packages (e.g., libdbus-1-dev:armhf) are installed.
+PKG_CONFIG_LIBDIR = "/usr/lib/arm-linux-gnueabihf/pkgconfig"
