@@ -29,6 +29,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 tiny_http = "0.12"
 # libmdns = "0.4" # This has been unmaintained, we might need an alternative
 
+# DB
+chrono = { version = "0.4", features = ["serde"] }
+
 # Utilities
 log = "0.4"
 env_logger = "0.11"
