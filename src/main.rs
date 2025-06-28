@@ -16,6 +16,7 @@ use sdl2::rect::Rect;
 mod deck;
 mod scheduler;
 mod ui;
+mod html;
 
 // Bring our structs and traits into scope
 use deck::{Card, Deck};
@@ -100,11 +101,12 @@ fn load_card_layouts(state: &mut AppState, card: &Card) {
         if let Some(note) = scheduler.get_note(card.note_id) {
             let content_width = 512 - 60;
             let front_text = note.fields.get(0).map_or("", |s| s.as_str());
-            let back_text = note.fields.get(1).map_or("", |s| s.as_str());
+            let back_html = note.fields.get(1).map_or("", |s| s.as_str());
+            let back_text = html::html_to_text(back_html);
 
             state.front_layout = Some(state.font_manager.layout_text(front_text, content_width).unwrap());
             state.small_front_layout = Some(state.small_font_manager.layout_text(front_text, content_width).unwrap());
-            state.back_layout = Some(state.font_manager.layout_text(back_text, content_width).unwrap());
+            state.back_layout = Some(state.font_manager.layout_text(&back_text, content_width).unwrap());
         }
     }
 }
