@@ -3,6 +3,7 @@
 
 // Make the loader module public so other parts of our application can use it.
 pub mod loader;
+pub mod html_parser;
 
 use std::collections::HashMap;
 

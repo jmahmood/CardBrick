@@ -1,5 +1,4 @@
 // CardBrick - main.rs
-// Phase 3 & 4: Implemented Rewind Functionality (Full Version)
 
 use std::env;
 use std::path::PathBuf;
@@ -21,6 +20,7 @@ mod ui;
 use deck::{Card, Deck};
 use scheduler::{Rating, Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
+use deck::html_parser;
 
 pub enum LoaderMessage { Progress(f32), Complete(Result<Deck, String>), }
 enum GameState { Loading, Reviewing, Done, Error(String), }
@@ -38,6 +38,8 @@ struct AppState<'a> {
     front_layout: Option<TextLayout>,
     back_layout: Option<TextLayout>,
     small_front_layout: Option<TextLayout>,
+    hint_layout: Option<TextLayout>,
+    loading_layout: Option<TextLayout>, // NEW: Store loading layout
     scroll_offset: i32,
     loading_progress: f32,
 }
@@ -60,17 +62,29 @@ pub fn main() -> Result<(), String> {
     thread::spawn(move || { deck::loader::load_apkg(&deck_path, tx); });
 
     let font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+
+    // Initialize FontManager instances first, as they are needed for loading_layout
+    let mut font_manager = FontManager::new(&ttf_context, font_path, 32)?;
+    let mut small_font_manager = FontManager::new(&ttf_context, font_path, 24)?;
+    let mut hint_font_manager = FontManager::new(&ttf_context, font_path, 20)?;
+
+    // Calculate loading_layout ONCE
+    let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
+    let loading_layout = Some(font_manager.layout_text(&loading_spans, 400_u32)?);
+
     let mut app_state = AppState {
         game_state: GameState::Loading,
         scheduler: None,
         canvas_manager: CanvasManager::new(sdl_canvas, &texture_creator)?,
-        font_manager: FontManager::new(&ttf_context, font_path, 32)?,
-        small_font_manager: FontManager::new(&ttf_context, font_path, 24)?,
-        hint_font_manager: FontManager::new(&ttf_context, font_path, 20)?,
+        font_manager, // Use the initialized manager
+        small_font_manager, // Use the initialized manager
+        hint_font_manager, // Use the initialized manager
         sprite: Sprite::new(),
         current_card: None,
         is_answer_revealed: false,
         front_layout: None, back_layout: None, small_front_layout: None,
+        hint_layout: None,
+        loading_layout, // NEW: Pass the pre-calculated layout
         scroll_offset: 0, loading_progress: 0.0,
     };
     
@@ -88,6 +102,7 @@ fn load_next_card(state: &mut AppState) {
             state.front_layout = None;
             state.back_layout = None;
             state.small_front_layout = None;
+            state.hint_layout = None;
         }
     }
 }
@@ -96,15 +111,25 @@ fn load_next_card(state: &mut AppState) {
 fn load_card_layouts(state: &mut AppState, card: &Card) {
     state.is_answer_revealed = false;
     state.scroll_offset = 0;
+    state.hint_layout = None;
+
     if let Some(scheduler) = &state.scheduler {
         if let Some(note) = scheduler.get_note(card.note_id) {
             let content_width = 512 - 60;
-            let front_text = note.fields.get(0).map_or("", |s| s.as_str());
-            let back_text = note.fields.get(1).map_or("", |s| s.as_str());
+            let front_html = note.fields.get(0).map_or("", |s| s.as_str());
+            let back_html = note.fields.get(1).map_or("", |s| s.as_str());
 
-            state.front_layout = Some(state.font_manager.layout_text(front_text, content_width).unwrap());
-            state.small_front_layout = Some(state.small_font_manager.layout_text(front_text, content_width).unwrap());
-            state.back_layout = Some(state.font_manager.layout_text(back_text, content_width).unwrap());
+            println!("\n--- Raw Front HTML ---");
+            println!("{}", front_html);
+            println!("----------------------\n");
+
+            println!("\n--- Raw Back HTML ---");
+            println!("{}", back_html);
+            println!("---------------------\n");
+
+            state.front_layout = Some(state.font_manager.layout_text(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
+            state.small_front_layout = Some(state.small_font_manager.layout_text(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
+            state.back_layout = Some(state.font_manager.layout_text(&html_parser::parse_html_to_spans(back_html), content_width).unwrap());
         }
     }
 }
@@ -195,6 +220,9 @@ fn handle_keypress(state: &mut AppState, keycode: Keycode) -> Result<(), String>
                 }
             } else if let Keycode::Up | Keycode::Down | Keycode::Left | Keycode::Right = keycode {
                 state.is_answer_revealed = true;
+                let margin: u32 = 30;
+                let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
+                state.hint_layout = Some(state.hint_font_manager.layout_text(&hint_spans, 512 - margin * 2).unwrap());
             }
         }
     }
@@ -207,8 +235,15 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
     state.canvas_manager.with_canvas(|canvas| {
         match &state.game_state {
             GameState::Loading => {
-                let layout = state.font_manager.layout_text("Loading Deck...", 400_u32)?;
-                state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
+                // NEW: Use the pre-calculated loading_layout
+                if let Some(layout) = &state.loading_layout {
+                    state.font_manager.draw_layout(canvas, layout, 150, 150)?;
+                } else {
+                    // Fallback, though loading_layout should always be present
+                    let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
+                    let layout = state.font_manager.layout_text(&loading_spans, 400_u32)?;
+                    state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
+                }
 
                 let bar_bg_rect = Rect::new(100, 200, 312, 30);
                 canvas.set_draw_color(Color::RGB(80, 80, 80));
@@ -221,13 +256,13 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             }
             GameState::Error(e) => {
                 let margin: u32 = 30;
-                let layout = state.font_manager.layout_text(&format!("Error: {}", e), 512 - margin * 2)?;
+                let error_spans = html_parser::parse_html_to_spans(&format!("Error: {}", e));
+                let layout = state.font_manager.layout_text(&error_spans, 512 - margin * 2)?;
                 state.font_manager.draw_layout(canvas, &layout, margin as i32, 40)?;
             }
             GameState::Reviewing | GameState::Done => {
                 let margin: u32 = 30;
 
-                // **FIXED**: Restored the progress bar drawing logic.
                 if let Some(scheduler) = &state.scheduler {
                     let total = scheduler.total_session_cards();
                     if total > 0 {
@@ -275,15 +310,17 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
                 }
 
                 if let GameState::Done = state.game_state {
-                    let layout = state.font_manager.layout_text("Deck Complete!", 400_u32)?;
+                    let done_spans = html_parser::parse_html_to_spans("Deck Complete!");
+                    let layout = state.font_manager.layout_text(&done_spans, 400_u32)?;
                     state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
                 }
                 
                 canvas.set_clip_rect(None);
 
                 if state.is_answer_revealed {
-                     let hint_layout = state.hint_font_manager.layout_text("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]", 512 - margin * 2)?;
-                     state.hint_font_manager.draw_layout(canvas, &hint_layout, margin as i32, 335)?;
+                     if let Some(hint_layout) = &state.hint_layout {
+                         state.hint_font_manager.draw_layout(canvas, hint_layout, margin as i32, 335)?;
+                     }
                 }
             }
         }
