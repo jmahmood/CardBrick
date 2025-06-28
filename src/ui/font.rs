@@ -29,8 +29,8 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(FontManager { ttf_context, font })
     }
 
-    /// A new helper function to get the pixel dimensions of a string of text.
-    /// This now considers the current style the font is set to.
+    /// Get the pixel dimensions of a string of text.
+    /// This considers the current style the font is set to.
     pub fn size_of_text_with_style(&mut self, text: &str, is_bold: bool, is_italic: bool) -> Result<(u32, u32), String> {
         let original_style = self.font.get_style();
         let mut current_style = original_style;
@@ -45,18 +45,12 @@ impl<'a, 'b> FontManager<'a, 'b> {
 
     /// Calculates how to wrap text and returns a layout object.
     /// This processes TextSpans, handles explicit newlines, and implements
-    /// character-by-character wrapping to ensure content fits within max_width,
-    /// with a small epsilon for minor measurement discrepancies.
+    /// character-by-character wrapping to ensure content fits within max_width
     pub fn layout_text(&mut self, spans: &[TextSpan], max_width: u32) -> Result<TextLayout, String> {
         let mut lines: Vec<Vec<TextSpan>> = Vec::new();
         let mut current_line_spans: Vec<TextSpan> = Vec::new();
         let mut current_line_width = 0;
         let line_height = self.font.height();
-
-        // A small pixel tolerance to prevent off-by-one line breaks.
-        // If `current_line_width + char_width` is slightly over `max_width` due to rounding,
-        // this allows it to fit.
-        let epsilon: u32 = 2; // Increased slightly for potential impact
 
         // Ensure at least one line to start with if spans are empty or to handle leading newlines
         if spans.is_empty() {
@@ -85,6 +79,15 @@ impl<'a, 'b> FontManager<'a, 'b> {
                 let mut current_segment_width_temp = 0; // Width of `line_segment_chars_to_add`
                 let mut hard_break_encountered = false;
 
+                if current_line_spans.is_empty() && remaining_text_in_span.starts_with(char::is_whitespace) {
+                    // Consume leading whitespace characters directly without adding them to line_segment_chars_to_add.
+                    // This is done by effectively skipping them in `chars_consumed_from_remaining`
+                    // and `remaining_text_in_span` will be updated later with these skipped chars.
+                    remaining_text_in_span = remaining_text_in_span.trim_start().to_string();
+                    // Reset chars_consumed_from_remaining for the next loop iteration which will process non-whitespace.
+                    chars_consumed_from_remaining = 0;
+                }
+
                 // Iterate through characters of the remaining span text to build a line segment
                 for char_c in remaining_text_in_span.chars() {
                     if char_c == '\n' {
@@ -100,11 +103,11 @@ impl<'a, 'b> FontManager<'a, 'b> {
                         span.is_italic
                     )?;
 
-                    // Check if adding this character makes the current line too wide with epsilon
+                    // Check if adding this character makes the current line too wide 
                     // current_line_width: width of spans already committed to current_line_spans
                     // current_segment_width_temp: width of chars accumulated for line_segment_chars_to_add
                     // char_width: width of the character being considered
-                    if current_line_width + current_segment_width_temp + char_width > (max_width + epsilon) {
+                    if current_line_width + current_segment_width_temp + char_width > max_width {
                         // If line_segment_chars_to_add is empty, it means this single char won't fit on this line.
                         // We must still process it, but it will start a new line and possibly overflow.
                         if line_segment_chars_to_add.is_empty() {

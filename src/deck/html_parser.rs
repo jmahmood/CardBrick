@@ -61,6 +61,12 @@ fn process_node(
                     ..fmt.clone()
                 });
             }
+            "hr/" => {
+                spans.push(TextSpan {
+                    text: "\n".into(),
+                    ..fmt.clone()
+                });
+            }
             // --- NEW: Ruby handling (placeholder for now, will be implemented fully later) ---
             "ruby" => {
                 // This is a placeholder for now. The logic below will handle children.
