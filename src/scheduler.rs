@@ -19,7 +19,7 @@ pub enum Rating {
 pub trait Scheduler {
     fn new(deck: Deck) -> Self where Self: Sized;
     fn next_card(&mut self) -> Option<Card>;
-    fn answer_card(&mut self, card_id: i64, rating: Rating);
+    fn answer_card(&mut self, card_id: i64, rating: Rating) -> Option<Card>; // Changed return type
     fn get_note(&self, note_id: i64) -> Option<&Note>;
     fn reviews_complete(&self) -> usize;
     fn total_session_cards(&self) -> usize;
@@ -73,7 +73,7 @@ impl Scheduler for Sm2Scheduler {
         self.review_queue.push(card_id);
     }
 
-    fn answer_card(&mut self, card_id: i64, rating: Rating) {
+    fn answer_card(&mut self, card_id: i64, rating: Rating) -> Option<Card> {
         let card = self.cards.get_mut(&card_id).unwrap();
         
         self.last_answer = Some((card_id, rating, card.clone()));
@@ -106,6 +106,7 @@ impl Scheduler for Sm2Scheduler {
                 }
             }
         }
+        Some(card.clone()) // Return a clone of the modified card
     }
 
     fn rewind_last_answer(&mut self) -> Option<Card> {

@@ -15,12 +15,14 @@ use sdl2::rect::Rect;
 mod deck;
 mod scheduler;
 mod ui;
+mod storage;
 
 // Bring our structs and traits into scope
 use deck::{Card, Deck};
 use scheduler::{Rating, Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
+use storage::{DatabaseManager, ReplayLogger};
 
 pub enum LoaderMessage { Progress(f32), Complete(Result<Deck, String>), }
 enum GameState { Loading, Reviewing, Done, Error(String), }
@@ -42,12 +44,23 @@ struct AppState<'a> {
     loading_layout: Option<TextLayout>, // NEW: Store loading layout
     scroll_offset: i32,
     loading_progress: f32,
+    db_manager: Option<DatabaseManager>,
+    replay_logger: Option<ReplayLogger>,
+
 }
 
 pub fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 { return Err(format!("Usage: {} <path/to/deck.apkg>", args.get(0).unwrap_or(&"cardbrick".to_string()))); }
-    let deck_path = PathBuf::from(&args[1]);
+    // Use PathBuf for an owned path
+    let deck_path = PathBuf::from(&args[1]); 
+    
+    // --- FIX: Create deck_id BEFORE deck_path is moved ---
+    let deck_id = deck_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("default")
+        .to_string(); // Create an owned String for the ID
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -86,6 +99,9 @@ pub fn main() -> Result<(), String> {
         hint_layout: None,
         loading_layout, // NEW: Pass the pre-calculated layout
         scroll_offset: 0, loading_progress: 0.0,
+        db_manager: Some(DatabaseManager::new(&deck_id).map_err(|e| e.to_string())?),
+        replay_logger: Some(ReplayLogger::new(&deck_id).map_err(|e| e.to_string())?),
+
     };
     
     run(&mut app_state, &mut sdl_context.event_pump()?, rx)
@@ -197,9 +213,21 @@ fn handle_keypress(state: &mut AppState, keycode: Keycode) -> Result<(), String>
                 };
         
                 if let Some(r) = rating {
-                    if let Some(scheduler) = state.scheduler.as_mut() {
-                        scheduler.answer_card(card.id, r);
+                    let updated_card = if let Some(scheduler) = state.scheduler.as_mut() {
+                        scheduler.answer_card(card.id, r)
+                    } else {
+                        None
+                    };
+
+                    if let Some(card_to_save) = updated_card {
+                        if let Some(logger) = &state.replay_logger {
+                            logger.log_action(&card_to_save, r).unwrap_or_else(|e| eprintln!("Failed to log action: {}", e));
+                        }
+                        if let Some(db) = &state.db_manager {
+                            db.update_card_state(&card_to_save).unwrap_or_else(|e| eprintln!("Failed to update db: {}", e));
+                        }
                     }
+
                     load_next_card(state);
                 } else {
                     // Scrolling logic
