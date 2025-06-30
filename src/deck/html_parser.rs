@@ -10,6 +10,7 @@ pub struct TextSpan {
     pub is_italic: bool,
     pub is_ruby_base: bool,
     pub ruby_text: Option<String>,
+    pub is_newline: bool,
 }
 
 pub fn parse_html_to_spans(html: &str) -> Vec<TextSpan> {
@@ -35,7 +36,6 @@ pub fn parse_html_to_spans(html: &str) -> Vec<TextSpan> {
     for h in queue {
         process_node(h, parser, &mut spans, TextSpan::default());
     }
-    println!("{:?}", spans);
     spans
 }
 
@@ -127,6 +127,7 @@ fn process_node(
                     is_ruby_base: true,
                     ruby_text: ruby_text_content,
                     new_text_block: false,
+                    is_newline: false,
                 });
             }
         } else if !is_br { // Normal element, process children recursively, if not a <br> or <ruby>

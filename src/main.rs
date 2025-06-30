@@ -15,12 +15,14 @@ mod deck;
 mod scheduler;
 mod ui;
 mod storage;
+mod debug;
 
 use deck::{Card, Deck};
 use scheduler::{Rating, Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
+use debug::Tracer;
 
 pub enum LoaderMessage { Progress(f32), Complete(Result<Deck, String>), }
 enum GameState { Loading, Reviewing, Done, Error(String), }
@@ -81,7 +83,7 @@ pub fn main() -> Result<(), String> {
 
     // Calculate loading_layout ONCE
     let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
-    let loading_layout = Some(font_manager.layout_text(&loading_spans, 400_u32)?);
+    let loading_layout = Some(font_manager.layout_text_binary(&loading_spans, 400_u32)?);
 
     let mut app_state = AppState {
         game_state: GameState::Loading,
@@ -123,6 +125,9 @@ fn load_next_card(state: &mut AppState) {
 
 /// Helper to calculate all necessary layouts for a given card.
 fn load_card_layouts(state: &mut AppState, card: &Card) {
+    #[cfg(debug_assertions)]
+    let _layout_tracer = Tracer::new("Load Card Layout");
+
     state.is_answer_revealed = false;
     state.scroll_offset = 0;
     state.hint_layout = None;
@@ -141,9 +146,9 @@ fn load_card_layouts(state: &mut AppState, card: &Card) {
             println!("{}", back_html);
             println!("---------------------\n");
 
-            state.front_layout = Some(state.font_manager.layout_text(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
-            state.small_front_layout = Some(state.small_font_manager.layout_text(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
-            state.back_layout = Some(state.font_manager.layout_text(&html_parser::parse_html_to_spans(back_html), content_width).unwrap());
+            state.front_layout = Some(state.font_manager.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
+            state.small_front_layout = Some(state.small_font_manager.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
+            state.back_layout = Some(state.font_manager.layout_text_binary(&html_parser::parse_html_to_spans(back_html), content_width).unwrap());
         }
     }
 }
@@ -248,7 +253,7 @@ fn handle_keypress(state: &mut AppState, keycode: Keycode) -> Result<(), String>
                 state.is_answer_revealed = true;
                 let margin: u32 = 30;
                 let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
-                state.hint_layout = Some(state.hint_font_manager.layout_text(&hint_spans, 512 - margin * 2).unwrap());
+                state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, 512 - margin * 2).unwrap());
             }
         }
     }
@@ -267,7 +272,7 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
                 } else {
                     // Fallback, though loading_layout should always be present
                     let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
-                    let layout = state.font_manager.layout_text(&loading_spans, 400_u32)?;
+                    let layout = state.font_manager.layout_text_binary(&loading_spans, 400_u32)?;
                     state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
                 }
 
@@ -283,7 +288,7 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             GameState::Error(e) => {
                 let margin: u32 = 30;
                 let error_spans = html_parser::parse_html_to_spans(&format!("Error: {}", e));
-                let layout = state.font_manager.layout_text(&error_spans, 512 - margin * 2)?;
+                let layout = state.font_manager.layout_text_binary(&error_spans, 512 - margin * 2)?;
                 state.font_manager.draw_layout(canvas, &layout, margin as i32, 40)?;
             }
             GameState::Reviewing | GameState::Done => {
@@ -337,7 +342,7 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
 
                 if let GameState::Done = state.game_state {
                     let done_spans = html_parser::parse_html_to_spans("Deck Complete!");
-                    let layout = state.font_manager.layout_text(&done_spans, 400_u32)?;
+                    let layout = state.font_manager.layout_text_binary(&done_spans, 400_u32)?;
                     state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
                 }
                 
