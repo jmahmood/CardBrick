@@ -6,7 +6,7 @@ use sdl2::render::{Canvas};
 use sdl2::video::Window;
 
 use crate::deck::Card;
-use crate::scheduler::{Scheduler, Rating};
+use crate::scheduler::Scheduler;
 use crate::storage::{DatabaseManager, ReplayLogger};
 use crate::ui::{FontManager, font::TextLayout, sprite::Sprite};
 
