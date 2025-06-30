@@ -11,18 +11,18 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 
-// Modules for our application
 mod deck;
 mod scheduler;
 mod ui;
 mod storage;
+mod debug;
 
-// Bring our structs and traits into scope
 use deck::{Card, Deck};
 use scheduler::{Rating, Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
+use debug::Tracer;
 
 pub enum LoaderMessage { Progress(f32), Complete(Result<Deck, String>), }
 enum GameState { Loading, Reviewing, Done, Error(String), }
@@ -37,25 +37,29 @@ struct AppState<'a> {
     sprite: Sprite,
     current_card: Option<Card>,
     is_answer_revealed: bool,
-    front_layout: Option<TextLayout>,
-    back_layout: Option<TextLayout>,
-    small_front_layout: Option<TextLayout>,
     hint_layout: Option<TextLayout>,
-    loading_layout: Option<TextLayout>, // NEW: Store loading layout
+    loading_layout: Option<TextLayout>,
     scroll_offset: i32,
     loading_progress: f32,
     db_manager: Option<DatabaseManager>,
     replay_logger: Option<ReplayLogger>,
+    show_ruby_text: bool,
+
+    front_layout_default: Option<TextLayout>,
+    front_layout_ruby: Option<TextLayout>,
+
+    back_layout_default: Option<TextLayout>,
+    back_layout_ruby: Option<TextLayout>,
+
+    small_front_layout_default: Option<TextLayout>,
+    small_front_layout_ruby: Option<TextLayout>,
 
 }
 
 pub fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 { return Err(format!("Usage: {} <path/to/deck.apkg>", args.get(0).unwrap_or(&"cardbrick".to_string()))); }
-    // Use PathBuf for an owned path
-    let deck_path = PathBuf::from(&args[1]); 
-    
-    // --- FIX: Create deck_id BEFORE deck_path is moved ---
+    let deck_path = PathBuf::from(&args[1]);     // Use PathBuf for an owned path
     let deck_id = deck_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -64,7 +68,7 @@ pub fn main() -> Result<(), String> {
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
-    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
+    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1"); // Enable anti-aliasing et al
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
 
     let window = video_subsystem.window("CardBrick v0.1", 1024, 768).position_centered().build().map_err(|e| e.to_string())?;
@@ -74,16 +78,19 @@ pub fn main() -> Result<(), String> {
     let (tx, rx) = mpsc::channel::<LoaderMessage>();
     thread::spawn(move || { deck::loader::load_apkg(&deck_path, tx); });
 
+    // TODO: Move the font into a local directory.
     let font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
 
     // Initialize FontManager instances first, as they are needed for loading_layout
     let mut font_manager = FontManager::new(&ttf_context, font_path, 32)?;
+
+    // This needs to be mutable because we want the user to be able to change the size of the font among other things.
     let mut small_font_manager = FontManager::new(&ttf_context, font_path, 24)?;
     let mut hint_font_manager = FontManager::new(&ttf_context, font_path, 20)?;
 
     // Calculate loading_layout ONCE
     let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
-    let loading_layout = Some(font_manager.layout_text(&loading_spans, 400_u32)?);
+    let loading_layout = Some(font_manager.layout_text_binary(&loading_spans, 400_u32, false)?);
 
     let mut app_state = AppState {
         game_state: GameState::Loading,
@@ -95,13 +102,15 @@ pub fn main() -> Result<(), String> {
         sprite: Sprite::new(),
         current_card: None,
         is_answer_revealed: false,
-        front_layout: None, back_layout: None, small_front_layout: None,
+        front_layout_default: None, front_layout_ruby: None,
+        back_layout_default: None, back_layout_ruby: None, 
+        small_front_layout_default: None, small_front_layout_ruby: None,
         hint_layout: None,
         loading_layout, // NEW: Pass the pre-calculated layout
         scroll_offset: 0, loading_progress: 0.0,
         db_manager: Some(DatabaseManager::new(&deck_id).map_err(|e| e.to_string())?),
         replay_logger: Some(ReplayLogger::new(&deck_id).map_err(|e| e.to_string())?),
-
+        show_ruby_text: false,
     };
     
     run(&mut app_state, &mut sdl_context.event_pump()?, rx)
@@ -115,9 +124,12 @@ fn load_next_card(state: &mut AppState) {
             load_card_layouts(state, &card);
         } else {
             state.game_state = GameState::Done;
-            state.front_layout = None;
-            state.back_layout = None;
-            state.small_front_layout = None;
+            state.front_layout_default = None;
+            state.front_layout_ruby = None;
+            state.back_layout_default = None;
+            state.back_layout_ruby = None;
+            state.small_front_layout_default = None;
+            state.small_front_layout_ruby = None;
             state.hint_layout = None;
         }
     }
@@ -125,6 +137,9 @@ fn load_next_card(state: &mut AppState) {
 
 /// Helper to calculate all necessary layouts for a given card.
 fn load_card_layouts(state: &mut AppState, card: &Card) {
+    #[cfg(debug_assertions)]
+    let _layout_tracer = Tracer::new("Load Card Layout");
+
     state.is_answer_revealed = false;
     state.scroll_offset = 0;
     state.hint_layout = None;
@@ -143,9 +158,14 @@ fn load_card_layouts(state: &mut AppState, card: &Card) {
             println!("{}", back_html);
             println!("---------------------\n");
 
-            state.front_layout = Some(state.font_manager.layout_text(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
-            state.small_front_layout = Some(state.small_font_manager.layout_text(&html_parser::parse_html_to_spans(front_html), content_width).unwrap());
-            state.back_layout = Some(state.font_manager.layout_text(&html_parser::parse_html_to_spans(back_html), content_width).unwrap());
+            state.front_layout_default = Some(state.font_manager.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, false).unwrap());
+            state.small_front_layout_default = Some(state.small_font_manager.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, false).unwrap());
+            state.back_layout_default = Some(state.font_manager.layout_text_binary(&html_parser::parse_html_to_spans(back_html), content_width, false).unwrap());
+
+            state.front_layout_ruby = Some(state.font_manager.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, true).unwrap());
+            state.small_front_layout_ruby = Some(state.small_font_manager.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, true).unwrap());
+            state.back_layout_ruby = Some(state.font_manager.layout_text_binary(&html_parser::parse_html_to_spans(back_html), content_width, true).unwrap());
+
         }
     }
 }
@@ -167,11 +187,29 @@ fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump, rx: Receiver<Load
         }
 
         for event in event_pump.poll_iter() {
-            if let Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } = event {
-                break 'running;
-            }
-            if let Event::KeyDown { keycode: Some(keycode), .. } = event {
-                handle_keypress(state, keycode)?;
+            match event {
+                Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    break 'running;
+                }
+                Event::KeyDown { keycode: Some(keycode), repeat: false, .. } => {
+                    // --- ADD THIS LOGIC ---
+                    // Check for the "Show Ruby" button being pressed
+                    if keycode == Keycode::LShift { // <-- REPLACE WITH YOUR LT BUTTON KEYCODE
+                        state.show_ruby_text = true;
+                    } else {
+                        // Pass other keypresses to your regular handler
+                        handle_keypress(state, keycode)?;
+                    }
+                }
+                Event::KeyUp { keycode: Some(keycode), repeat: false, .. } => {
+                    // --- ADD THIS LOGIC ---
+                    // Check for the "Show Ruby" button being released
+                    if keycode == Keycode::LShift { // <-- REPLACE WITH YOUR LT BUTTON KEYCODE
+                        state.show_ruby_text = false;
+                    }
+                }
+                _ => {}
+
             }
         }
         
@@ -233,7 +271,7 @@ fn handle_keypress(state: &mut AppState, keycode: Keycode) -> Result<(), String>
                     // Scrolling logic
                     let scroll_speed = 30;
                     let viewport_height = 290;
-                    let total_height = if let (Some(front), Some(back)) = (&state.small_front_layout, &state.back_layout) {
+                    let total_height = if let (Some(front), Some(back)) = (&state.small_front_layout_default, &state.back_layout_default) {
                         front.total_height + back.total_height + 20
                     } else { 0 };
 
@@ -250,7 +288,7 @@ fn handle_keypress(state: &mut AppState, keycode: Keycode) -> Result<(), String>
                 state.is_answer_revealed = true;
                 let margin: u32 = 30;
                 let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
-                state.hint_layout = Some(state.hint_font_manager.layout_text(&hint_spans, 512 - margin * 2).unwrap());
+                state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, 512 - margin * 2, state.show_ruby_text).unwrap());
             }
         }
     }
@@ -265,12 +303,12 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             GameState::Loading => {
                 // NEW: Use the pre-calculated loading_layout
                 if let Some(layout) = &state.loading_layout {
-                    state.font_manager.draw_layout(canvas, layout, 150, 150)?;
+                    state.font_manager.draw_layout(canvas, layout, 150, 150, state.show_ruby_text)?;
                 } else {
                     // Fallback, though loading_layout should always be present
                     let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
-                    let layout = state.font_manager.layout_text(&loading_spans, 400_u32)?;
-                    state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
+                    let layout = state.font_manager.layout_text_binary(&loading_spans, 400_u32, state.show_ruby_text)?;
+                    state.font_manager.draw_layout(canvas, &layout, 150, 150, state.show_ruby_text)?;
                 }
 
                 let bar_bg_rect = Rect::new(100, 200, 312, 30);
@@ -285,8 +323,8 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             GameState::Error(e) => {
                 let margin: u32 = 30;
                 let error_spans = html_parser::parse_html_to_spans(&format!("Error: {}", e));
-                let layout = state.font_manager.layout_text(&error_spans, 512 - margin * 2)?;
-                state.font_manager.draw_layout(canvas, &layout, margin as i32, 40)?;
+                let layout = state.font_manager.layout_text_binary(&error_spans, 512 - margin * 2, state.show_ruby_text)?;
+                state.font_manager.draw_layout(canvas, &layout, margin as i32, 40, state.show_ruby_text)?;
             }
             GameState::Reviewing | GameState::Done => {
                 let margin: u32 = 30;
@@ -323,31 +361,55 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
                 canvas.set_clip_rect(Some(content_viewport));
 
                 if !state.is_answer_revealed {
-                    if let Some(layout) = &state.front_layout {
-                        state.font_manager.draw_layout(canvas, layout, margin as i32, 40)?;
+                    let layout_to_draw = if state.show_ruby_text {
+                        &state.front_layout_ruby
+                    } else {
+                        &state.front_layout_default
+                    };
+                    
+                    if let Some(layout) = layout_to_draw {
+                        state.font_manager.draw_layout(canvas, layout, margin as i32, 40, state.show_ruby_text)?;
                     }
                 } else {
+                    // When drawing the back of the card (which also contains the front):
                     let mut y_pos = 40 - state.scroll_offset;
-                    if let Some(layout) = &state.small_front_layout {
-                        state.small_font_manager.draw_layout(canvas, layout, margin as i32, y_pos)?;
-                        y_pos += layout.total_height + 20;
+
+                    let small_front_layout_to_draw = if state.show_ruby_text {
+                        &state.small_front_layout_ruby
+                    } else {
+                        &state.small_front_layout_default
+                    };
+                    
+                    let back_layout_to_draw = if state.show_ruby_text {
+                        &state.back_layout_ruby
+                    } else {
+                        &state.back_layout_default
+                    };
+
+                    if let Some(layout) = small_front_layout_to_draw {
+                        state.small_font_manager.draw_layout(canvas, layout, margin as i32, y_pos, state.show_ruby_text)?;
+                        y_pos += layout.total_height + 20; // Now this will work
                     }
-                    if let Some(layout) = &state.back_layout {
-                        state.font_manager.draw_layout(canvas, layout, margin as i32, y_pos)?;
+                    
+                    // --- FIX ---
+                    // Then handle the back layout
+                    if let Some(layout) = back_layout_to_draw {
+                        state.font_manager.draw_layout(canvas, layout, margin as i32, y_pos, state.show_ruby_text)?;
                     }
+
                 }
 
                 if let GameState::Done = state.game_state {
                     let done_spans = html_parser::parse_html_to_spans("Deck Complete!");
-                    let layout = state.font_manager.layout_text(&done_spans, 400_u32)?;
-                    state.font_manager.draw_layout(canvas, &layout, 150, 150)?;
+                    let layout = state.font_manager.layout_text_binary(&done_spans, 400_u32, state.show_ruby_text)?;
+                    state.font_manager.draw_layout(canvas, &layout, 150, 150, state.show_ruby_text)?;
                 }
                 
                 canvas.set_clip_rect(None);
 
                 if state.is_answer_revealed {
                      if let Some(hint_layout) = &state.hint_layout {
-                         state.hint_font_manager.draw_layout(canvas, hint_layout, margin as i32, 335)?;
+                         state.hint_font_manager.draw_layout(canvas, hint_layout, margin as i32, 335, state.show_ruby_text)?;
                      }
                 }
             }
