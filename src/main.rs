@@ -1,4 +1,4 @@
-// CardBrick - main.rs (Refactor Step 4: Main Menu Scene)
+// CardBrick - main.rs (Refactor Step 5: Studying Scene)
 
 mod config;
 mod deck;
@@ -6,7 +6,7 @@ mod scheduler;
 mod ui;
 mod storage;
 mod debug;
-mod scenes; // <-- Add scenes module
+mod scenes;
 
 use std::env;
 use std::path::PathBuf;
@@ -20,13 +20,13 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 
 use config::Config;
-use deck::{Card, Deck};
-use scheduler::{Rating, Scheduler, Sm2Scheduler};
+use deck::{Deck};
+use scheduler::{Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
-use debug::Tracer;
-use scenes::main_menu::MainMenuState; // <-- Import the new state
+use scenes::main_menu::MainMenuState;
+use scenes::studying::StudyingState; // <-- Import the new state
 
 // --- Data Structures for the State Machine ---
 
@@ -42,9 +42,8 @@ pub enum LoaderMessage {
     Complete(Result<Deck, String>),
 }
 
-// --- GameState Enum is now cleaner ---
 pub enum GameState<'a> {
-    MainMenu(MainMenuState), // <-- Use the new MainMenuState struct
+    MainMenu(MainMenuState),
     DeckSelection {
         decks: Vec<DeckMetadata>,
         deck_layouts: Vec<TextLayout>,
@@ -56,28 +55,11 @@ pub enum GameState<'a> {
         progress: f32,
         deck_id_to_load: String,
     },
-    Studying(StudyingState<'a>),
+    Studying(StudyingState<'a>), // <-- Now uses the imported StudyingState
     Error(String),
 }
 
-pub struct StudyingState<'a> {
-    is_done: bool,
-    scheduler: Box<dyn Scheduler + 'a>,
-    db_manager: DatabaseManager,
-    replay_logger: ReplayLogger,
-    current_card: Option<Card>,
-    is_answer_revealed: bool,
-    scroll_offset: i32,
-    show_ruby_text: bool,
-    front_layout_default: Option<TextLayout>,
-    front_layout_ruby: Option<TextLayout>,
-    back_layout_default: Option<TextLayout>,
-    back_layout_ruby: Option<TextLayout>,
-    small_front_layout_default: Option<TextLayout>,
-    small_front_layout_ruby: Option<TextLayout>,
-    hint_layout: Option<TextLayout>,
-    done_layout: Option<TextLayout>,
-}
+// --- StudyingState struct is now REMOVED from main.rs ---
 
 pub struct AppState<'a> {
     game_state: GameState<'a>,
@@ -116,7 +98,7 @@ pub fn main() -> Result<(), String> {
     ];
 
     let mut app_state = AppState {
-        game_state: GameState::MainMenu(MainMenuState::new()), // <-- Start with the new state
+        game_state: GameState::MainMenu(MainMenuState::new()),
         available_decks,
         canvas_manager: CanvasManager::new(sdl_canvas, &texture_creator)?,
         font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_large.try_into().unwrap())?,
@@ -147,17 +129,16 @@ fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), Str
     Ok(())
 }
 
-// --- handle_input now delegates to the scene-specific handler ---
 fn handle_input(state: &mut AppState, event: Event) -> Result<(), String> {
     match &mut state.game_state {
         GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(state, event),
         GameState::DeckSelection { .. } => handle_deck_selection_input(state, event),
-        GameState::Studying(_) => handle_studying_input(state, event),
+        // --- Delegate to the new scene-specific handler ---
+        GameState::Studying(_) => scenes::studying::input::handle_studying_input(state, event),
         _ => Ok(()),
     }
 }
 
-// --- draw_scene now delegates to the scene-specific drawing function ---
 fn draw_scene(state: &mut AppState) -> Result<(), String> {
     state.canvas_manager.start_frame()?;
     state.canvas_manager.with_canvas(|canvas| {
@@ -171,8 +152,9 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(canvas, &mut state.font_manager, loading_layout, *progress)
             },
+            // --- Delegate to the new scene-specific drawing function ---
             GameState::Studying(studying_state) => {
-                draw_studying_scene(canvas, studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, &mut state.sprite)
+                scenes::studying::draw_studying_scene(canvas, studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, &mut state.sprite)
             },
             GameState::Error(e) => draw_error_scene(canvas, &mut state.font_manager, e),
         }
@@ -180,10 +162,6 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
     state.canvas_manager.end_frame();
     Ok(())
 }
-
-// --- handle_main_menu_input function is now REMOVED from main.rs ---
-
-// --- draw_main_menu_scene function is now REMOVED from main.rs ---
 
 fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(), String> {
     if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
@@ -240,8 +218,9 @@ fn update_state(state: &mut AppState) -> Result<(), String> {
                         let scheduler = Box::new(Sm2Scheduler::new(deck));
                         let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
                         let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                        let mut studying_state = StudyingState::new(scheduler, db_manager, replay_logger);
-                        load_next_card(&mut studying_state, &mut state.font_manager, &mut state.small_font_manager);
+                        // --- Use the new paths for state creation and logic ---
+                        let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
+                        scenes::studying::logic::load_next_card(&mut studying_state, &mut state.font_manager, &mut state.small_font_manager);
                         GameState::Studying(studying_state)
                     }
                     LoaderMessage::Complete(Err(e)) => GameState::Error(e),
@@ -256,148 +235,12 @@ fn update_state(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), String> {
-    if let GameState::Studying(studying_state) = &mut state.game_state {
-        if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
-            if keycode == Keycode::Backspace {
-                state.game_state = GameState::DeckSelection {
-                    decks: state.available_decks.clone(),
-                    deck_layouts: vec![], // This will be recalculated next time
-                    selected_index: 0,
-                };
-                // Pre-calculate layouts for the DeckSelection screen again
-                if let GameState::DeckSelection { deck_layouts, .. } = &mut state.game_state {
-                    let max_width = state.config.window_width - 40;
-                     *deck_layouts = state.available_decks.iter().map(|deck| {
-                        let spans = html_parser::parse_html_to_spans(&deck.name);
-                        state.small_font_manager.layout_text_binary(&spans, max_width, false)
-                    }).collect::<Result<Vec<_>,_>>()?;
-                }
-                return Ok(());
-            }
-
-            if keycode == Keycode::LShift {
-                studying_state.show_ruby_text = true;
-                return Ok(());
-            }
-
-            if keycode == Keycode::Return {
-                if let Some(card) = &studying_state.current_card {
-                    studying_state.scheduler.add_card_to_front(card.id);
-                }
-                if let Some(rewound_card) = studying_state.scheduler.rewind_last_answer() {
-                    studying_state.current_card = Some(rewound_card.clone());
-                    load_card_layouts(studying_state, &rewound_card, &mut state.font_manager, &mut state.small_font_manager);
-                } else {
-                    load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
-                }
-                return Ok(());
-            }
-
-            if studying_state.is_answer_revealed {
-                let rating = match keycode {
-                    Keycode::B => Some(Rating::Again),
-                    Keycode::Y => Some(Rating::Hard),
-                    Keycode::A => Some(Rating::Good),
-                    Keycode::X => Some(Rating::Easy),
-                    _ => None,
-                };
-                if let Some(r) = rating {
-                    if let Some(card) = &studying_state.current_card {
-                        if let Some(updated_card) = studying_state.scheduler.answer_card(card.id, r) {
-                            studying_state.replay_logger.log_action(&updated_card, r).map_err(|e| e.to_string())?;
-                            studying_state.db_manager.update_card_state(&updated_card).map_err(|e| e.to_string())?;
-                        }
-                    }
-                    load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
-                } else {
-                    let scroll_speed = 30;
-                    let viewport_height = 290;
-                    let total_height = if let (Some(front), Some(back)) = (&studying_state.small_front_layout_default, &studying_state.back_layout_default) {
-                        front.total_height + back.total_height + 20
-                    } else { 0 };
-                    match keycode {
-                        Keycode::Up => { studying_state.scroll_offset = (studying_state.scroll_offset - scroll_speed).max(0); }
-                        Keycode::Down => {
-                            let max_scroll = (total_height - viewport_height).max(0);
-                            studying_state.scroll_offset = (studying_state.scroll_offset + scroll_speed).min(max_scroll);
-                        }
-                        _ => {}
-                    }
-                }
-            } else if let Keycode::Up | Keycode::Down | Keycode::Left | Keycode::Right = keycode {
-                studying_state.is_answer_revealed = true;
-                let margin: u32 = 30;
-                let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
-                studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, state.config.window_width / 2 - margin * 2, studying_state.show_ruby_text)?);
-            }
-        }
-        if let Event::KeyUp { keycode: Some(Keycode::LShift), .. } = event {
-            studying_state.show_ruby_text = false;
-        }
-    }
-    Ok(())
-}
-
-fn draw_studying_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, studying_state: &mut StudyingState, font_manager: &mut FontManager, small_font_manager: &mut FontManager, hint_font_manager: &mut FontManager, sprite: &mut Sprite) -> Result<(), String> {
-    let margin: u32 = 30;
-    let total = studying_state.scheduler.total_session_cards();
-    if total > 0 {
-        let completed = studying_state.scheduler.reviews_complete();
-        let bar_height = 25_u32;
-        let bar_bg_rect = Rect::new(0, 0, 512, bar_height);
-        canvas.set_draw_color(Color::RGB(60, 60, 60));
-        canvas.fill_rect(bar_bg_rect)?;
-        let progress = completed as f32 / total as f32;
-        let progress_width = (512.0 * progress) as u32;
-        let bar_fg_rect = Rect::new(0, 0, progress_width, bar_height);
-        let r = (255.0 * (1.0 - progress)) as u8;
-        let g = (255.0 * progress) as u8;
-        canvas.set_draw_color(Color::RGB(r, g, 80));
-        canvas.fill_rect(bar_fg_rect)?;
-        let progress_text = format!("{}/{}", completed, total);
-        let (text_w, text_h) = hint_font_manager.size_of_text(&progress_text)?;
-        let text_x = (512 as i32 - text_w as i32 - 10).max(0);
-        let text_y = (bar_height as i32 - text_h as i32) / 2;
-        hint_font_manager.draw_single_line(canvas, &progress_text, text_x, text_y)?;
-    }
-    
-    sprite.draw(canvas)?;
-    let content_viewport = Rect::new(0, 25, 512, 305);
-    canvas.set_clip_rect(Some(content_viewport));
-
-    if !studying_state.is_answer_revealed {
-        let layout_to_draw = if studying_state.show_ruby_text { &studying_state.front_layout_ruby } else { &studying_state.front_layout_default };
-        if let Some(layout) = layout_to_draw {
-            font_manager.draw_layout(canvas, layout, margin as i32, 40, studying_state.show_ruby_text)?;
-        }
-    } else {
-        let mut y_pos = 40 - studying_state.scroll_offset;
-        let small_front_layout_to_draw = if studying_state.show_ruby_text { &studying_state.small_front_layout_ruby } else { &studying_state.small_front_layout_default };
-        let back_layout_to_draw = if studying_state.show_ruby_text { &studying_state.back_layout_ruby } else { &studying_state.back_layout_default };
-        if let Some(layout) = small_front_layout_to_draw {
-            small_font_manager.draw_layout(canvas, layout, margin as i32, y_pos, studying_state.show_ruby_text)?;
-            y_pos += layout.total_height + 20;
-        }
-        if let Some(layout) = back_layout_to_draw {
-            font_manager.draw_layout(canvas, layout, margin as i32, y_pos, studying_state.show_ruby_text)?;
-        }
-    }
-
-    if studying_state.is_done {
-        if let Some(layout) = &studying_state.done_layout {
-            font_manager.draw_layout(canvas, layout, 150, 150, studying_state.show_ruby_text)?;
-        }
-    }
-    
-    canvas.set_clip_rect(None);
-    if studying_state.is_answer_revealed {
-        if let Some(hint_layout) = &studying_state.hint_layout {
-            hint_font_manager.draw_layout(canvas, hint_layout, margin as i32, 335, studying_state.show_ruby_text)?;
-        }
-    }
-    Ok(())
-}
+// --- All studying-related functions are now REMOVED from main.rs ---
+// - handle_studying_input
+// - draw_studying_scene
+// - impl<'a> StudyingState<'a>
+// - load_next_card
+// - load_card_layouts
 
 fn draw_loading_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, layout: &TextLayout, progress: f32) -> Result<(), String> {
     font_manager.draw_layout(canvas, layout, 150, 150, false)?;
@@ -417,42 +260,4 @@ fn draw_error_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font
     let layout = font_manager.layout_text_binary(&error_spans, 512 - margin * 2, false)?;
     font_manager.draw_layout(canvas, &layout, margin as i32, 40, false)?;
     Ok(())
-}
-
-impl<'a> StudyingState<'a> {
-    fn new(scheduler: Box<dyn Scheduler + 'a>, db_manager: DatabaseManager, replay_logger: ReplayLogger) -> Self {
-        Self { is_done: false, scheduler, db_manager, replay_logger, current_card: None, is_answer_revealed: false, scroll_offset: 0, show_ruby_text: false, front_layout_default: None, front_layout_ruby: None, back_layout_default: None, back_layout_ruby: None, small_front_layout_default: None, small_front_layout_ruby: None, hint_layout: None, done_layout: None }
-    }
-}
-
-fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_font: &mut FontManager) {
-    state.current_card = state.scheduler.next_card();
-    if let Some(card) = state.current_card.clone() {
-        load_card_layouts(state, &card, font, small_font);
-    } else {
-        state.is_done = true;
-        let done_spans = html_parser::parse_html_to_spans("Deck Complete!");
-        state.done_layout = font.layout_text_binary(&done_spans, 400_u32, false).ok();
-    }
-}
-
-fn load_card_layouts(state: &mut StudyingState, card: &Card, font: &mut FontManager, small_font: &mut FontManager) {
-    #[cfg(debug_assertions)]
-    let _layout_tracer = Tracer::new("Load Card Layout");
-    state.is_answer_revealed = false;
-    state.scroll_offset = 0;
-    state.hint_layout = None;
-
-    if let Some(note) = state.scheduler.get_note(card.note_id) {
-        let content_width = 512 - 60;
-        let front_html = note.fields.get(0).map_or("", |s| s.as_str());
-        let back_html = note.fields.get(1).map_or("", |s| s.as_str());
-        
-        state.front_layout_default = font.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, false).ok();
-        state.small_front_layout_default = small_font.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, false).ok();
-        state.back_layout_default = font.layout_text_binary(&html_parser::parse_html_to_spans(back_html), content_width, false).ok();
-        state.front_layout_ruby = font.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, true).ok();
-        state.small_front_layout_ruby = small_font.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, true).ok();
-        state.back_layout_ruby = font.layout_text_binary(&html_parser::parse_html_to_spans(back_html), content_width, true).ok();
-    }
 }

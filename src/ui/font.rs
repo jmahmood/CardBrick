@@ -7,7 +7,7 @@ use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::ttf::{Font, Sdl2TtfContext, FontStyle};
 use sdl2::video::Window;
-use crate::Tracer;
+use crate::debug::Tracer;
 use crate::deck::html_parser::TextSpan;
 
 /// Holds a pre-calculated text layout for efficient rendering and scrolling.
