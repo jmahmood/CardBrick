@@ -6,26 +6,28 @@ use sdl2::keyboard::Keycode;
 use crate::{AppState, GameState};
 use crate::deck::html_parser;
 use crate::scheduler::Rating;
+use crate::scenes::deck_selection::DeckSelectionState; // <-- Import the state struct
 use super::logic::{load_card_layouts, load_next_card};
 
 /// Handles input events for the studying scene.
-/// This function was moved from main.rs.
 pub fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), String> {
     if let GameState::Studying(studying_state) = &mut state.game_state {
         if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
             if keycode == Keycode::Backspace {
-                // Transition back to Deck Selection
+                // Pre-calculate layouts for the DeckSelection screen again
                 let max_width = state.config.window_width - 40;
                 let layouts = state.available_decks.iter().map(|deck| {
                     let spans = html_parser::parse_html_to_spans(&deck.name);
                     state.small_font_manager.layout_text_binary(&spans, max_width, false)
                 }).collect::<Result<Vec<_>,_>>()?;
 
-                state.game_state = GameState::DeckSelection {
+                // --- FIX: Construct the state struct first, then the enum variant ---
+                let new_state = DeckSelectionState {
                     decks: state.available_decks.clone(),
                     deck_layouts: layouts,
                     selected_index: 0,
                 };
+                state.game_state = GameState::DeckSelection(new_state);
                 return Ok(());
             }
 

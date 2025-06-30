@@ -5,9 +5,10 @@ use sdl2::keyboard::Keycode;
 
 use crate::{AppState, GameState};
 use crate::deck::html_parser;
+use crate::scenes::deck_selection::DeckSelectionState; // <-- Import the state struct
+use super::MainMenuState;
 
 /// Handles input events for the main menu.
-/// This function was moved from main.rs.
 pub fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), String> {
     if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
         if let GameState::MainMenu(main_menu_state) = &mut state.game_state {
@@ -18,18 +19,19 @@ pub fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), 
                 Keycode::Return => {
                     match main_menu_state.selected_index {
                         0 => { // Study
-                            // Pre-calculate layouts on state transition
                             let max_width = state.config.window_width - 40;
                             let layouts = state.available_decks.iter().map(|deck| {
                                 let spans = html_parser::parse_html_to_spans(&deck.name);
                                 state.small_font_manager.layout_text_binary(&spans, max_width, false)
                             }).collect::<Result<Vec<_>, _>>()?;
 
-                            state.game_state = GameState::DeckSelection {
+                            // --- FIX: Construct the state struct first, then the enum variant ---
+                            let new_state = DeckSelectionState {
                                 decks: state.available_decks.clone(),
                                 deck_layouts: layouts,
                                 selected_index: 0,
                             };
+                            state.game_state = GameState::DeckSelection(new_state);
                         }
                         1 => { /* Go to Profile state */ }
                         2 => return Err("User quit".to_string()),

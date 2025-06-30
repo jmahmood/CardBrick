@@ -1,4 +1,4 @@
-// CardBrick - main.rs (Refactor Step 5: Studying Scene)
+// CardBrick - main.rs (Refactor Step 6: Deck Selection Scene)
 
 mod config;
 mod deck;
@@ -11,8 +11,8 @@ mod scenes;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::sync::mpsc::{self, Receiver};
-use std::thread;
+// --- FIX: Removed unused `self` and `thread` imports ---
+use std::sync::mpsc::{Receiver};
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -26,7 +26,8 @@ use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
-use scenes::studying::StudyingState; // <-- Import the new state
+use scenes::studying::StudyingState;
+use scenes::deck_selection::DeckSelectionState;
 
 // --- Data Structures for the State Machine ---
 
@@ -44,32 +45,26 @@ pub enum LoaderMessage {
 
 pub enum GameState<'a> {
     MainMenu(MainMenuState),
-    DeckSelection {
-        decks: Vec<DeckMetadata>,
-        deck_layouts: Vec<TextLayout>,
-        selected_index: usize,
-    },
+    DeckSelection(DeckSelectionState),
     Loading {
         rx: Receiver<LoaderMessage>,
         loading_layout: TextLayout,
         progress: f32,
         deck_id_to_load: String,
     },
-    Studying(StudyingState<'a>), // <-- Now uses the imported StudyingState
+    Studying(StudyingState<'a>),
     Error(String),
 }
 
-// --- StudyingState struct is now REMOVED from main.rs ---
-
 pub struct AppState<'a> {
-    game_state: GameState<'a>,
-    available_decks: Vec<DeckMetadata>,
-    canvas_manager: CanvasManager<'a>,
-    font_manager: FontManager<'a, 'a>,
-    small_font_manager: FontManager<'a, 'a>,
-    hint_font_manager: FontManager<'a, 'a>,
-    sprite: Sprite,
-    config: Config,
+    pub game_state: GameState<'a>,
+    pub available_decks: Vec<DeckMetadata>,
+    pub canvas_manager: CanvasManager<'a>,
+    pub font_manager: FontManager<'a, 'a>,
+    pub small_font_manager: FontManager<'a, 'a>,
+    pub hint_font_manager: FontManager<'a, 'a>,
+    pub sprite: Sprite,
+    pub config: Config,
 }
 
 pub fn main() -> Result<(), String> {
@@ -132,8 +127,7 @@ fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), Str
 fn handle_input(state: &mut AppState, event: Event) -> Result<(), String> {
     match &mut state.game_state {
         GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(state, event),
-        GameState::DeckSelection { .. } => handle_deck_selection_input(state, event),
-        // --- Delegate to the new scene-specific handler ---
+        GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(state, event),
         GameState::Studying(_) => scenes::studying::input::handle_studying_input(state, event),
         _ => Ok(()),
     }
@@ -146,13 +140,12 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             GameState::MainMenu(main_menu_state) => {
                 scenes::main_menu::draw_main_menu_scene(canvas, &mut state.font_manager, main_menu_state)
             },
-            GameState::DeckSelection { deck_layouts, selected_index, .. } => {
-                draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_layouts, *selected_index, &state.config)
+            GameState::DeckSelection(deck_selection_state) => {
+                scenes::deck_selection::draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_selection_state, &state.config)
             },
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(canvas, &mut state.font_manager, loading_layout, *progress)
             },
-            // --- Delegate to the new scene-specific drawing function ---
             GameState::Studying(studying_state) => {
                 scenes::studying::draw_studying_scene(canvas, studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, &mut state.sprite)
             },
@@ -160,51 +153,6 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
         }
     })?;
     state.canvas_manager.end_frame();
-    Ok(())
-}
-
-fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(), String> {
-    if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
-        if let GameState::DeckSelection { decks, selected_index, .. } = &mut state.game_state {
-            match keycode {
-                Keycode::Up => *selected_index = selected_index.saturating_sub(1),
-                Keycode::Down => *selected_index = (*selected_index + 1).min(decks.len().saturating_sub(1)),
-                Keycode::Backspace => {
-                    state.game_state = GameState::MainMenu(MainMenuState::new());
-                }
-                Keycode::Return => {
-                    let selected_deck = &decks[*selected_index];
-                    let deck_path = selected_deck.path.clone();
-                    let deck_id = selected_deck.id.clone();
-                    let (tx, rx) = mpsc::channel();
-                    thread::spawn(move || { deck::loader::load_apkg(&deck_path, tx); });
-                    let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
-                    let loading_layout = state.font_manager.layout_text_binary(&loading_spans, 400, false)?;
-                    state.game_state = GameState::Loading { rx, loading_layout, progress: 0.0, deck_id_to_load: deck_id };
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
-}
-
-fn draw_deck_selection_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, small_font_manager: &mut FontManager, layouts: &[TextLayout], selected_index: usize, config: &Config) -> Result<(), String> {
-    font_manager.draw_single_line(canvas, "Select a Deck", 20, 20)?;
-    small_font_manager.draw_single_line(canvas, "Press Backspace to return to Main Menu", 20, 70)?;
-
-    let mut y_pos = 150;
-    let max_width = config.window_width - 40;
-
-    for (i, layout) in layouts.iter().enumerate() {
-        if i == selected_index {
-            let highlight_rect = Rect::new(18, y_pos, max_width, layout.total_height as u32);
-            canvas.set_draw_color(Color::RGB(80, 80, 80));
-            canvas.fill_rect(highlight_rect)?;
-        }
-        small_font_manager.draw_layout(canvas, layout, 20, y_pos, false)?;
-        y_pos += layout.total_height + 10;
-    }
     Ok(())
 }
 
@@ -218,7 +166,6 @@ fn update_state(state: &mut AppState) -> Result<(), String> {
                         let scheduler = Box::new(Sm2Scheduler::new(deck));
                         let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
                         let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                        // --- Use the new paths for state creation and logic ---
                         let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
                         scenes::studying::logic::load_next_card(&mut studying_state, &mut state.font_manager, &mut state.small_font_manager);
                         GameState::Studying(studying_state)
@@ -235,12 +182,6 @@ fn update_state(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
-// --- All studying-related functions are now REMOVED from main.rs ---
-// - handle_studying_input
-// - draw_studying_scene
-// - impl<'a> StudyingState<'a>
-// - load_next_card
-// - load_card_layouts
 
 fn draw_loading_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, layout: &TextLayout, progress: f32) -> Result<(), String> {
     font_manager.draw_layout(canvas, layout, 150, 150, false)?;
