@@ -24,6 +24,17 @@ pub struct FontManager<'a, 'b> {
     font: Font<'a, 'b>,
 }
 
+impl TextSpan {
+    pub fn text_to_use(&self, use_ruby: bool) -> &str {
+        if use_ruby {
+            // Use the ruby text if available, otherwise fall back to the base text.
+            self.ruby_text.as_deref().unwrap_or(&self.text)
+        } else {
+            &self.text
+        }
+    }
+}
+
 impl<'a, 'b> FontManager<'a, 'b> {
     pub fn new(ttf_context: &'a Sdl2TtfContext, font_path: &str, font_size: u16) -> Result<Self, String> {
         let font = ttf_context.load_font(font_path, font_size)?;
@@ -46,8 +57,8 @@ impl<'a, 'b> FontManager<'a, 'b> {
 
     /// Finds the character index to split a TextSpan so it fits within the available width.
     /// This is the efficient binary search method.
-    fn find_split_index(&mut self, span: &TextSpan, available_width: u32) -> Result<usize, String> {
-        let text = &span.text;
+    fn find_split_index(&mut self, span: &TextSpan, available_width: u32, use_ruby: bool) -> Result<usize, String> {
+        let text = &span.text_to_use(use_ruby);
         let mut low = 0;
         let mut high = text.chars().count();
         let mut best_fit_char_index = 0;
@@ -76,11 +87,11 @@ impl<'a, 'b> FontManager<'a, 'b> {
     }
 
 
-    pub fn layout_text_binary(&mut self, spans: &[TextSpan], max_width: u32) -> Result<TextLayout, String> {
+    pub fn layout_text_binary(&mut self, spans: &[TextSpan], max_width: u32, use_ruby: bool) -> Result<TextLayout, String> {
         #[cfg(debug_assertions)]
         let _layout_tracer = Tracer::new("Load Card Layout");
 
-        // --- STAGE 1: Pre-processing (Your excellent suggestion) ---
+        // --- STAGE 1: Pre-processing (creating new spans if there is a newline) ---
         let mut processed_spans = VecDeque::new();
         for span in spans {
             let mut parts = span.text.split('\n').peekable();
@@ -115,8 +126,9 @@ impl<'a, 'b> FontManager<'a, 'b> {
                 continue;
             }
 
+            let text_for_layout = span.text_to_use(use_ruby);
             let space_left = max_width.saturating_sub(current_line_width);
-            let (span_width, _) = self.size_of_text_with_style(&span.text, span.is_bold, span.is_italic)?;
+            let (span_width, _) = self.size_of_text_with_style(text_for_layout, span.is_bold, span.is_italic)?;
 
             if span_width <= space_left {
                 // The whole span fits on the current line.
@@ -124,7 +136,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
                 current_line_width += span_width;
             } else {
                 // The span does NOT fit. We must split it.
-                let split_byte_index = self.find_split_index(&span, space_left)?;
+                let split_byte_index = self.find_split_index(&span, space_left, use_ruby)?;
 
                 if split_byte_index > 0 {
                     // Part of the span fits.
@@ -346,7 +358,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
     // }
 
     /// Renders a pre-calculated TextLayout to the screen.
-    pub fn draw_layout(&mut self, canvas: &mut Canvas<Window>, layout: &TextLayout, x: i32, y: i32) -> Result<(), String> {
+    pub fn draw_layout(&mut self, canvas: &mut Canvas<Window>, layout: &TextLayout, x: i32, y: i32, show_ruby: bool) -> Result<(), String> {
         let line_height = self.font.height() as i32;
         let mut current_y = y - layout.scroll_offset;
 
@@ -355,9 +367,21 @@ impl<'a, 'b> FontManager<'a, 'b> {
             if current_y > -line_height && current_y < canvas.viewport().height() as i32 {
                 let mut current_x = x;
                 for span in line_spans {
-                    let (text_w, _) = self.draw_text_span_segment(canvas, &span.text, current_x, current_y, span.is_bold, span.is_italic)?;
+                    // Decide which text to draw based on the show_ruby flag.
+                    let text_to_draw = if show_ruby && span.is_ruby_base {
+                        // If show_ruby is true and this is a ruby span,
+                        // use the ruby_text. Fall back to the base text if for some
+                        // reason ruby_text is None.
+                        span.ruby_text.as_deref().unwrap_or(&span.text)
+                    } else {
+                        // Otherwise, draw the normal base text.
+                        &span.text
+                    };
+
+                    let (text_w, _) = self.draw_text_span_segment(canvas, text_to_draw, current_x, current_y, span.is_bold, span.is_italic)?;
                     current_x += text_w as i32;
                 }
+
             }
             current_y += line_height;
         }
