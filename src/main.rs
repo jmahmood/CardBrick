@@ -1,10 +1,15 @@
-// CardBrick - main.rs (Refactor Step 3: Main Menu)
+// CardBrick - main.rs (Refactor Step 4: Main Menu Scene)
 
-// ---Add the new config module here---
 mod config;
+mod deck;
+mod scheduler;
+mod ui;
+mod storage;
+mod debug;
+mod scenes; // <-- Add scenes module
 
 use std::env;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -14,20 +19,15 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 
-mod deck;
-mod scheduler;
-mod ui;
-mod storage;
-mod debug;
-
+use config::Config;
 use deck::{Card, Deck};
 use scheduler::{Rating, Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use debug::Tracer;
-use config::Config;
- 
+use scenes::main_menu::MainMenuState; // <-- Import the new state
+
 // --- Data Structures for the State Machine ---
 
 #[derive(Clone)]
@@ -42,11 +42,9 @@ pub enum LoaderMessage {
     Complete(Result<Deck, String>),
 }
 
+// --- GameState Enum is now cleaner ---
 pub enum GameState<'a> {
-    MainMenu {
-        selected_index: usize,
-    },
-    // FIX: DeckSelection now caches layouts for deck names.
+    MainMenu(MainMenuState), // <-- Use the new MainMenuState struct
     DeckSelection {
         decks: Vec<DeckMetadata>,
         deck_layouts: Vec<TextLayout>,
@@ -118,7 +116,7 @@ pub fn main() -> Result<(), String> {
     ];
 
     let mut app_state = AppState {
-        game_state: GameState::MainMenu { selected_index: 0 },
+        game_state: GameState::MainMenu(MainMenuState::new()), // <-- Start with the new state
         available_decks,
         canvas_manager: CanvasManager::new(sdl_canvas, &texture_creator)?,
         font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_large.try_into().unwrap())?,
@@ -149,23 +147,24 @@ fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), Str
     Ok(())
 }
 
+// --- handle_input now delegates to the scene-specific handler ---
 fn handle_input(state: &mut AppState, event: Event) -> Result<(), String> {
     match &mut state.game_state {
-        GameState::MainMenu { .. } => handle_main_menu_input(state, event),
+        GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(state, event),
         GameState::DeckSelection { .. } => handle_deck_selection_input(state, event),
         GameState::Studying(_) => handle_studying_input(state, event),
         _ => Ok(()),
     }
 }
 
+// --- draw_scene now delegates to the scene-specific drawing function ---
 fn draw_scene(state: &mut AppState) -> Result<(), String> {
     state.canvas_manager.start_frame()?;
     state.canvas_manager.with_canvas(|canvas| {
         match &mut state.game_state {
-            GameState::MainMenu { selected_index } => {
-                draw_main_menu_scene(canvas, &mut state.font_manager, *selected_index)
+            GameState::MainMenu(main_menu_state) => {
+                scenes::main_menu::draw_main_menu_scene(canvas, &mut state.font_manager, main_menu_state)
             },
-            // FIX: Pass the pre-calculated layouts to the draw function.
             GameState::DeckSelection { deck_layouts, selected_index, .. } => {
                 draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_layouts, *selected_index, &state.config)
             },
@@ -182,58 +181,9 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), String> {
-    if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
-        if let GameState::MainMenu { selected_index } = &mut state.game_state {
-            let options = ["Study", "Profile", "Quit"];
-            match keycode {
-                Keycode::Up => *selected_index = selected_index.saturating_sub(1),
-                Keycode::Down => *selected_index = (*selected_index + 1).min(options.len() - 1),
-                Keycode::Return => {
-                    match *selected_index {
-                        0 => { // Study
-                            // --- FIX: Pre-calculate layouts on state transition ---
-                            let max_width = state.config.window_width - 40;
-                            let layouts: Result<Vec<TextLayout>, String> = state.available_decks.iter().map(|deck| {
-                                let spans = html_parser::parse_html_to_spans(&deck.name);
-                                state.small_font_manager.layout_text_binary(&spans, max_width, false)
-                            }).collect();
+// --- handle_main_menu_input function is now REMOVED from main.rs ---
 
-                            state.game_state = GameState::DeckSelection {
-                                decks: state.available_decks.clone(),
-                                deck_layouts: layouts?,
-                                selected_index: 0,
-                            };
-                        }
-                        1 => { /* Go to Profile state */ }
-                        2 => return Err("User quit".to_string()),
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
-}
-
-fn draw_main_menu_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, selected_index: usize) -> Result<(), String> {
-    let options = ["Study", "Profile", "Quit"];
-    font_manager.draw_single_line(canvas, "CardBrick", 20, 20)?;
-
-    let mut y_pos = 150;
-    for (i, option) in options.iter().enumerate() {
-        if i == selected_index {
-            let (text_w, text_h) = font_manager.size_of_text(option)?;
-            let highlight_rect = Rect::new(18, y_pos, text_w + 4, text_h);
-            canvas.set_draw_color(Color::RGB(80, 80, 80));
-            canvas.fill_rect(highlight_rect)?;
-        }
-        font_manager.draw_single_line(canvas, option, 20, y_pos)?;
-        y_pos += 40;
-    }
-    Ok(())
-}
+// --- draw_main_menu_scene function is now REMOVED from main.rs ---
 
 fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(), String> {
     if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
@@ -242,7 +192,7 @@ fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(),
                 Keycode::Up => *selected_index = selected_index.saturating_sub(1),
                 Keycode::Down => *selected_index = (*selected_index + 1).min(decks.len().saturating_sub(1)),
                 Keycode::Backspace => {
-                    state.game_state = GameState::MainMenu { selected_index: 0 };
+                    state.game_state = GameState::MainMenu(MainMenuState::new());
                 }
                 Keycode::Return => {
                     let selected_deck = &decks[*selected_index];
