@@ -11,13 +11,11 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 
-// Modules for our application
 mod deck;
 mod scheduler;
 mod ui;
 mod storage;
 
-// Bring our structs and traits into scope
 use deck::{Card, Deck};
 use scheduler::{Rating, Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
@@ -52,10 +50,7 @@ struct AppState<'a> {
 pub fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 { return Err(format!("Usage: {} <path/to/deck.apkg>", args.get(0).unwrap_or(&"cardbrick".to_string()))); }
-    // Use PathBuf for an owned path
-    let deck_path = PathBuf::from(&args[1]); 
-    
-    // --- FIX: Create deck_id BEFORE deck_path is moved ---
+    let deck_path = PathBuf::from(&args[1]);     // Use PathBuf for an owned path
     let deck_id = deck_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -64,7 +59,7 @@ pub fn main() -> Result<(), String> {
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
-    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
+    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1"); // Enable anti-aliasing et al
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
 
     let window = video_subsystem.window("CardBrick v0.1", 1024, 768).position_centered().build().map_err(|e| e.to_string())?;
@@ -74,10 +69,13 @@ pub fn main() -> Result<(), String> {
     let (tx, rx) = mpsc::channel::<LoaderMessage>();
     thread::spawn(move || { deck::loader::load_apkg(&deck_path, tx); });
 
+    // TODO: Move the font into a local directory.
     let font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
 
     // Initialize FontManager instances first, as they are needed for loading_layout
     let mut font_manager = FontManager::new(&ttf_context, font_path, 32)?;
+
+    // This needs to be mutable because we want the user to be able to change the size of the font among other things.
     let mut small_font_manager = FontManager::new(&ttf_context, font_path, 24)?;
     let mut hint_font_manager = FontManager::new(&ttf_context, font_path, 20)?;
 

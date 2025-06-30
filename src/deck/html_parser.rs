@@ -5,6 +5,7 @@ use tl::{parse, NodeHandle, ParserOptions};
 #[derive(Debug, Clone, Default)]
 pub struct TextSpan {
     pub text: String,
+    pub new_text_block: bool,
     pub is_bold: bool,
     pub is_italic: bool,
     pub is_ruby_base: bool,
@@ -34,6 +35,7 @@ pub fn parse_html_to_spans(html: &str) -> Vec<TextSpan> {
     for h in queue {
         process_node(h, parser, &mut spans, TextSpan::default());
     }
+    println!("{:?}", spans);
     spans
 }
 
@@ -51,23 +53,27 @@ fn process_node(
         let mut is_br = false;
 
         match tag.name().as_utf8_str().as_ref() {
-            "b" => nf.is_bold = true,
-            "i" => nf.is_italic = true,
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => nf.is_bold = true, // Treat other headings as bold
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                nf.is_bold = true; // Treat other headings as bold
+                nf.new_text_block = true;
+            } 
             "br" => {
                 is_br = true;
+                nf.new_text_block = true;
                 spans.push(TextSpan {
                     text: "\n".into(),
                     ..fmt.clone()
                 });
             }
+            "b" => nf.is_bold = true,
+            "i" => nf.is_italic = true,
             "hr/" => {
+                nf.new_text_block = true;
                 spans.push(TextSpan {
                     text: "\n".into(),
                     ..fmt.clone()
                 });
             }
-            // --- NEW: Ruby handling (placeholder for now, will be implemented fully later) ---
             "ruby" => {
                 // This is a placeholder for now. The logic below will handle children.
             }
@@ -79,7 +85,6 @@ fn process_node(
                 // For now, it's just processed as normal text within a span.
                 // The parent `ruby` tag processing will fill the `ruby_text` field.
             }
-            // --- END NEW ---
             _ => {}
         }
 
@@ -121,6 +126,7 @@ fn process_node(
                     is_italic: nf.is_italic,
                     is_ruby_base: true,
                     ruby_text: ruby_text_content,
+                    new_text_block: false,
                 });
             }
         } else if !is_br { // Normal element, process children recursively, if not a <br> or <ruby>
@@ -134,8 +140,6 @@ fn process_node(
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "hr" | "li" | "hr/" | "ul" => {
                 // Ensure a single newline is added after these block elements.
                 // Check if the last span is *not* already a newline.
-                println!("{:?}", tag.name() );
-
                 if spans.last().map_or(true, |s| s.text != "\n") { // Add if empty or last is not newline
                     spans.push(TextSpan { text: "\n".into(), ..fmt.clone() });
                 }

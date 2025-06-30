@@ -6,6 +6,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
 
+
 /// Represents the user's rating for a card.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Rating {
@@ -26,6 +27,7 @@ pub trait Scheduler {
     fn hard_cards(&self) -> &[i64];
     fn rewind_last_answer(&mut self) -> Option<Card>;
     fn add_card_to_front(&mut self, card_id: i64);
+    fn introduce_new_cards(&mut self, count: usize) -> usize;
 }
 
 /// Implementation of the SM-2 algorithm.
@@ -90,18 +92,40 @@ impl Scheduler for Sm2Scheduler {
             }
             _ => { // Hard, Good, or Easy
                 self.session_reviews_complete += 1;
-               
+               let ease_factor_multiplier = card.ease_factor as f32 / 1000.0;
+
                 match rating {
-                    Rating::Good => { /* ... interval logic ... */ }
+                    Rating::Good => { 
+                        let new_interval = if card.interval == 0 {
+                            1
+                        } else {
+                            (card.interval as f32 * ease_factor_multiplier).round() as u32
+                        };
+                        // The new interval should be at least one day longer than the previous one.
+                        card.interval = new_interval.max(card.interval + 1);
+                    }
                     Rating::Hard => {
                         if !self.hard_cards_this_session.contains(&card_id) {
                             self.hard_cards_this_session.push(card_id);
                         }
                         card.ease_factor = (card.ease_factor as i32 - 150).max(1300) as u32;
+                        // "Hard" interval multiplier is 1.2
                         let new_interval = (card.interval as f32 * 1.2).round() as u32;
                         card.interval = new_interval.max(card.interval + 1);
                     }
-                    Rating::Easy => { /* ... interval logic ... */ }
+                    Rating::Easy => {
+                    // Increase ease by 150 (15%)
+                    card.ease_factor = (card.ease_factor as i32 + 150) as u32;
+                    // "Easy" bonus multiplier is typically 1.3
+                    let easy_bonus = 1.3;
+                    let new_interval = if card.interval == 0 {
+                        // A common default for the first "Easy" rating is 4 days
+                        4
+                    } else {
+                        (card.interval as f32 * ease_factor_multiplier * easy_bonus).round() as u32
+                    };
+                    card.interval = new_interval.max(card.interval + 1);
+                }
                     Rating::Again => {} // Already handled
                 }
             }
@@ -136,6 +160,34 @@ impl Scheduler for Sm2Scheduler {
     fn reviews_complete(&self) -> usize { self.session_reviews_complete }
     fn total_session_cards(&self) -> usize { self.session_total }
     fn hard_cards(&self) -> &[i64] { &self.hard_cards_this_session }
+    
+    fn introduce_new_cards(&mut self, count: usize) -> usize {
+        // In this scheduler, all cards are in the review queue from the beginning.
+        // "Introducing new cards" means bringing cards from the back of the line
+        // (the start of the vector) to the front (the end of the vector, where .pop()
+        // takes from).
+        
+        let queue_len = self.review_queue.len();
+        if queue_len < 2 { // Not enough cards to reorder
+            return 0;
+        }
+
+        // Determine how many cards to move. We can't move more than are available.
+        let num_to_move = count.min(queue_len);
+        
+        // Take `num_to_move` cards from the front of the queue (the bottom of the pile).
+        let cards_to_promote: Vec<i64> = self.review_queue.drain(0..num_to_move).collect();
+        
+        // Add them to the end of the queue, making them available to be popped soon.
+        self.review_queue.extend(cards_to_promote);
+        
+        // Shuffle the entire queue to mix the newly promoted cards with the
+        // existing ones, providing a real change of pace.
+        self.review_queue.shuffle(&mut thread_rng());
+        
+        num_to_move
+    }
+
 }
 
 #[cfg(test)]
