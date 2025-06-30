@@ -1,7 +1,7 @@
 // CardBrick - main.rs (Refactor Step 3: Main Menu)
 
 use std::env;
-use std::path::{PathBuf}; // FIX: Removed unused `Path` import
+use std::path::{PathBuf};
 use std::time::Duration;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -24,9 +24,8 @@ use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use debug::Tracer;
  
-// --- STEP 1: DEFINE DATA STRUCTURES FOR THE NEW STATE ---
+// --- Data Structures for the State Machine ---
 
-/// Holds information about a single deck for display on the Welcome screen.
 #[derive(Clone)]
 pub struct DeckMetadata {
     pub id: String,
@@ -39,13 +38,14 @@ pub enum LoaderMessage {
     Complete(Result<Deck, String>),
 }
 
-/// The state machine enum, now with a multi-level menu structure.
 pub enum GameState<'a> {
     MainMenu {
         selected_index: usize,
     },
+    // FIX: DeckSelection now caches layouts for deck names.
     DeckSelection {
         decks: Vec<DeckMetadata>,
+        deck_layouts: Vec<TextLayout>,
         selected_index: usize,
     },
     Loading {
@@ -58,7 +58,6 @@ pub enum GameState<'a> {
     Error(String),
 }
 
-/// This struct holds all data specific to a study session.
 pub struct StudyingState<'a> {
     is_done: bool,
     scheduler: Box<dyn Scheduler + 'a>,
@@ -78,10 +77,9 @@ pub struct StudyingState<'a> {
     done_layout: Option<TextLayout>,
 }
 
-/// AppState holds the current state and globally shared resources.
 pub struct AppState<'a> {
     game_state: GameState<'a>,
-    available_decks: Vec<DeckMetadata>, // Store discovered decks here
+    available_decks: Vec<DeckMetadata>,
     canvas_manager: CanvasManager<'a>,
     font_manager: FontManager<'a, 'a>,
     small_font_manager: FontManager<'a, 'a>,
@@ -148,37 +146,27 @@ fn handle_input(state: &mut AppState, event: Event) -> Result<(), String> {
     match &mut state.game_state {
         GameState::MainMenu { .. } => handle_main_menu_input(state, event),
         GameState::DeckSelection { .. } => handle_deck_selection_input(state, event),
-        GameState::Studying(studying_state) => handle_studying_input(studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, event),
+        GameState::Studying(_) => handle_studying_input(state, event),
         _ => Ok(()),
     }
 }
 
-// --- FIX: Correct the function signature and calls in `draw_scene` ---
 fn draw_scene(state: &mut AppState) -> Result<(), String> {
     state.canvas_manager.start_frame()?;
     state.canvas_manager.with_canvas(|canvas| {
-        // We can't hold a borrow on `state.game_state` while also borrowing `state.font_manager`.
-        // So we pass the global resources into the state-specific draw functions.
         match &mut state.game_state {
             GameState::MainMenu { selected_index } => {
                 draw_main_menu_scene(canvas, &mut state.font_manager, *selected_index)
             },
-            GameState::DeckSelection { decks, selected_index } => {
-                draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, decks, *selected_index)
+            // FIX: Pass the pre-calculated layouts to the draw function.
+            GameState::DeckSelection { deck_layouts, selected_index, .. } => {
+                draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_layouts, *selected_index)
             },
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(canvas, &mut state.font_manager, loading_layout, *progress)
             },
             GameState::Studying(studying_state) => {
-                // Pass the managers individually to avoid the double-borrow.
-                draw_studying_scene(
-                    canvas,
-                    studying_state,
-                    &mut state.font_manager,
-                    &mut state.small_font_manager,
-                    &mut state.hint_font_manager,
-                    &mut state.sprite,
-                )
+                draw_studying_scene(canvas, studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, &mut state.sprite)
             },
             GameState::Error(e) => draw_error_scene(canvas, &mut state.font_manager, e),
         }
@@ -197,8 +185,16 @@ fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), Stri
                 Keycode::Return => {
                     match *selected_index {
                         0 => { // Study
+                            // --- FIX: Pre-calculate layouts on state transition ---
+                            let max_width = 1024 - 40;
+                            let layouts: Result<Vec<TextLayout>, String> = state.available_decks.iter().map(|deck| {
+                                let spans = html_parser::parse_html_to_spans(&deck.name);
+                                state.small_font_manager.layout_text_binary(&spans, max_width, false)
+                            }).collect();
+
                             state.game_state = GameState::DeckSelection {
                                 decks: state.available_decks.clone(),
+                                deck_layouts: layouts?,
                                 selected_index: 0,
                             };
                         }
@@ -234,7 +230,7 @@ fn draw_main_menu_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, 
 
 fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(), String> {
     if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
-        if let GameState::DeckSelection { decks, selected_index } = &mut state.game_state {
+        if let GameState::DeckSelection { decks, selected_index, .. } = &mut state.game_state {
             match keycode {
                 Keycode::Up => *selected_index = selected_index.saturating_sub(1),
                 Keycode::Down => *selected_index = (*selected_index + 1).min(decks.len().saturating_sub(1)),
@@ -258,23 +254,20 @@ fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(),
     Ok(())
 }
 
-fn draw_deck_selection_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, small_font_manager: &mut FontManager, decks: &[DeckMetadata], selected_index: usize) -> Result<(), String> {
+fn draw_deck_selection_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, small_font_manager: &mut FontManager, layouts: &[TextLayout], selected_index: usize) -> Result<(), String> {
     font_manager.draw_single_line(canvas, "Select a Deck", 20, 20)?;
     small_font_manager.draw_single_line(canvas, "Press Backspace to return to Main Menu", 20, 70)?;
 
     let mut y_pos = 150;
     let max_width = 1024 - 40;
 
-    for (i, deck) in decks.iter().enumerate() {
-        let spans = html_parser::parse_html_to_spans(&deck.name);
-        let layout = small_font_manager.layout_text_binary(&spans, max_width, false)?;
-        
+    for (i, layout) in layouts.iter().enumerate() {
         if i == selected_index {
-            let highlight_rect = Rect::new(18, y_pos, (max_width as i32).try_into().unwrap(), layout.total_height.try_into().unwrap());
+            let highlight_rect = Rect::new(18, y_pos, max_width, layout.total_height as u32);
             canvas.set_draw_color(Color::RGB(80, 80, 80));
             canvas.fill_rect(highlight_rect)?;
         }
-        small_font_manager.draw_layout(canvas, &layout, 20, y_pos, false)?;
+        small_font_manager.draw_layout(canvas, layout, 20, y_pos, false)?;
         y_pos += layout.total_height + 10;
     }
     Ok(())
@@ -306,66 +299,85 @@ fn update_state(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_studying_input(studying_state: &mut StudyingState, font_manager: &mut FontManager, small_font_manager: &mut FontManager, hint_font_manager: &mut FontManager, event: Event) -> Result<(), String> {
-    if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
-        if keycode == Keycode::LShift {
-            studying_state.show_ruby_text = true;
-            return Ok(());
-        }
-
-        if keycode == Keycode::Return {
-            if let Some(card) = &studying_state.current_card {
-                studying_state.scheduler.add_card_to_front(card.id);
+fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), String> {
+    if let GameState::Studying(studying_state) = &mut state.game_state {
+        if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
+            if keycode == Keycode::Backspace {
+                state.game_state = GameState::DeckSelection {
+                    decks: state.available_decks.clone(),
+                    deck_layouts: vec![], // This will be recalculated next time
+                    selected_index: 0,
+                };
+                // Pre-calculate layouts for the DeckSelection screen again
+                if let GameState::DeckSelection { deck_layouts, .. } = &mut state.game_state {
+                    let max_width = 1024 - 40;
+                     *deck_layouts = state.available_decks.iter().map(|deck| {
+                        let spans = html_parser::parse_html_to_spans(&deck.name);
+                        state.small_font_manager.layout_text_binary(&spans, max_width, false)
+                    }).collect::<Result<Vec<_>,_>>()?;
+                }
+                return Ok(());
             }
-            if let Some(rewound_card) = studying_state.scheduler.rewind_last_answer() {
-                studying_state.current_card = Some(rewound_card.clone());
-                load_card_layouts(studying_state, &rewound_card, font_manager, small_font_manager);
-            } else {
-                load_next_card(studying_state, font_manager, small_font_manager);
-            }
-            return Ok(());
-        }
 
-        if studying_state.is_answer_revealed {
-            let rating = match keycode {
-                Keycode::B => Some(Rating::Again),
-                Keycode::Y => Some(Rating::Hard),
-                Keycode::A => Some(Rating::Good),
-                Keycode::X => Some(Rating::Easy),
-                _ => None,
-            };
-            if let Some(r) = rating {
+            if keycode == Keycode::LShift {
+                studying_state.show_ruby_text = true;
+                return Ok(());
+            }
+
+            if keycode == Keycode::Return {
                 if let Some(card) = &studying_state.current_card {
-                    if let Some(updated_card) = studying_state.scheduler.answer_card(card.id, r) {
-                        studying_state.replay_logger.log_action(&updated_card, r).map_err(|e| e.to_string())?;
-                        studying_state.db_manager.update_card_state(&updated_card).map_err(|e| e.to_string())?;
-                    }
+                    studying_state.scheduler.add_card_to_front(card.id);
                 }
-                load_next_card(studying_state, font_manager, small_font_manager);
-            } else {
-                let scroll_speed = 30;
-                let viewport_height = 290;
-                let total_height = if let (Some(front), Some(back)) = (&studying_state.small_front_layout_default, &studying_state.back_layout_default) {
-                    front.total_height + back.total_height + 20
-                } else { 0 };
-                match keycode {
-                    Keycode::Up => { studying_state.scroll_offset = (studying_state.scroll_offset - scroll_speed).max(0); }
-                    Keycode::Down => {
-                        let max_scroll = (total_height - viewport_height).max(0);
-                        studying_state.scroll_offset = (studying_state.scroll_offset + scroll_speed).min(max_scroll);
-                    }
-                    _ => {}
+                if let Some(rewound_card) = studying_state.scheduler.rewind_last_answer() {
+                    studying_state.current_card = Some(rewound_card.clone());
+                    load_card_layouts(studying_state, &rewound_card, &mut state.font_manager, &mut state.small_font_manager);
+                } else {
+                    load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
                 }
+                return Ok(());
             }
-        } else if let Keycode::Up | Keycode::Down | Keycode::Left | Keycode::Right = keycode {
-            studying_state.is_answer_revealed = true;
-            let margin: u32 = 30;
-            let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
-            studying_state.hint_layout = Some(hint_font_manager.layout_text_binary(&hint_spans, 512 - margin * 2, studying_state.show_ruby_text)?);
+
+            if studying_state.is_answer_revealed {
+                let rating = match keycode {
+                    Keycode::B => Some(Rating::Again),
+                    Keycode::Y => Some(Rating::Hard),
+                    Keycode::A => Some(Rating::Good),
+                    Keycode::X => Some(Rating::Easy),
+                    _ => None,
+                };
+                if let Some(r) = rating {
+                    if let Some(card) = &studying_state.current_card {
+                        if let Some(updated_card) = studying_state.scheduler.answer_card(card.id, r) {
+                            studying_state.replay_logger.log_action(&updated_card, r).map_err(|e| e.to_string())?;
+                            studying_state.db_manager.update_card_state(&updated_card).map_err(|e| e.to_string())?;
+                        }
+                    }
+                    load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
+                } else {
+                    let scroll_speed = 30;
+                    let viewport_height = 290;
+                    let total_height = if let (Some(front), Some(back)) = (&studying_state.small_front_layout_default, &studying_state.back_layout_default) {
+                        front.total_height + back.total_height + 20
+                    } else { 0 };
+                    match keycode {
+                        Keycode::Up => { studying_state.scroll_offset = (studying_state.scroll_offset - scroll_speed).max(0); }
+                        Keycode::Down => {
+                            let max_scroll = (total_height - viewport_height).max(0);
+                            studying_state.scroll_offset = (studying_state.scroll_offset + scroll_speed).min(max_scroll);
+                        }
+                        _ => {}
+                    }
+                }
+            } else if let Keycode::Up | Keycode::Down | Keycode::Left | Keycode::Right = keycode {
+                studying_state.is_answer_revealed = true;
+                let margin: u32 = 30;
+                let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
+                studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, 512 - margin * 2, studying_state.show_ruby_text)?);
+            }
         }
-    }
-    if let Event::KeyUp { keycode: Some(Keycode::LShift), .. } = event {
-        studying_state.show_ruby_text = false;
+        if let Event::KeyUp { keycode: Some(Keycode::LShift), .. } = event {
+            studying_state.show_ruby_text = false;
+        }
     }
     Ok(())
 }
