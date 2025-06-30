@@ -1,5 +1,8 @@
 // CardBrick - main.rs (Refactor Step 3: Main Menu)
 
+// ---Add the new config module here---
+mod config;
+
 use std::env;
 use std::path::{PathBuf};
 use std::time::Duration;
@@ -23,6 +26,7 @@ use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use debug::Tracer;
+use config::Config;
  
 // --- Data Structures for the State Machine ---
 
@@ -85,6 +89,7 @@ pub struct AppState<'a> {
     small_font_manager: FontManager<'a, 'a>,
     hint_font_manager: FontManager<'a, 'a>,
     sprite: Sprite,
+    config: Config,
 }
 
 pub fn main() -> Result<(), String> {
@@ -92,16 +97,17 @@ pub fn main() -> Result<(), String> {
     if args.len() < 2 {
         return Err(format!("Usage: {} <path/to/deck.apkg>", args.get(0).unwrap_or(&"cardbrick".to_string())));
     }
+
+    let config = Config::new();
     
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
     sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
 
-    let window = video_subsystem.window("CardBrick v0.1", 1024, 768).position_centered().build().map_err(|e| e.to_string())?;
+    let window = video_subsystem.window(config.window_title, config.window_width, config.window_height).position_centered().build().map_err(|e| e.to_string())?;
     let sdl_canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     let texture_creator = sdl_canvas.texture_creator();
-    let font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
     
     let initial_deck_path = PathBuf::from(&args[1]);
     let deck_id = initial_deck_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
@@ -115,10 +121,11 @@ pub fn main() -> Result<(), String> {
         game_state: GameState::MainMenu { selected_index: 0 },
         available_decks,
         canvas_manager: CanvasManager::new(sdl_canvas, &texture_creator)?,
-        font_manager: FontManager::new(&ttf_context, font_path, 32)?,
-        small_font_manager: FontManager::new(&ttf_context, font_path, 24)?,
-        hint_font_manager: FontManager::new(&ttf_context, font_path, 20)?,
+        font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_large.try_into().unwrap())?,
+        small_font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_medium.try_into().unwrap())?,
+        hint_font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_small.try_into().unwrap())?,
         sprite: Sprite::new(),
+        config,
     };
     
     run(&mut app_state, &mut sdl_context.event_pump()?)
@@ -160,7 +167,7 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
             },
             // FIX: Pass the pre-calculated layouts to the draw function.
             GameState::DeckSelection { deck_layouts, selected_index, .. } => {
-                draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_layouts, *selected_index)
+                draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_layouts, *selected_index, &state.config)
             },
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(canvas, &mut state.font_manager, loading_layout, *progress)
@@ -186,7 +193,7 @@ fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), Stri
                     match *selected_index {
                         0 => { // Study
                             // --- FIX: Pre-calculate layouts on state transition ---
-                            let max_width = 1024 - 40;
+                            let max_width = state.config.window_width - 40;
                             let layouts: Result<Vec<TextLayout>, String> = state.available_decks.iter().map(|deck| {
                                 let spans = html_parser::parse_html_to_spans(&deck.name);
                                 state.small_font_manager.layout_text_binary(&spans, max_width, false)
@@ -254,12 +261,12 @@ fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result<(),
     Ok(())
 }
 
-fn draw_deck_selection_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, small_font_manager: &mut FontManager, layouts: &[TextLayout], selected_index: usize) -> Result<(), String> {
+fn draw_deck_selection_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, small_font_manager: &mut FontManager, layouts: &[TextLayout], selected_index: usize, config: &Config) -> Result<(), String> {
     font_manager.draw_single_line(canvas, "Select a Deck", 20, 20)?;
     small_font_manager.draw_single_line(canvas, "Press Backspace to return to Main Menu", 20, 70)?;
 
     let mut y_pos = 150;
-    let max_width = 1024 - 40;
+    let max_width = config.window_width - 40;
 
     for (i, layout) in layouts.iter().enumerate() {
         if i == selected_index {
@@ -310,7 +317,7 @@ fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), Strin
                 };
                 // Pre-calculate layouts for the DeckSelection screen again
                 if let GameState::DeckSelection { deck_layouts, .. } = &mut state.game_state {
-                    let max_width = 1024 - 40;
+                    let max_width = state.config.window_width - 40;
                      *deck_layouts = state.available_decks.iter().map(|deck| {
                         let spans = html_parser::parse_html_to_spans(&deck.name);
                         state.small_font_manager.layout_text_binary(&spans, max_width, false)
@@ -372,7 +379,7 @@ fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), Strin
                 studying_state.is_answer_revealed = true;
                 let margin: u32 = 30;
                 let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard (Up/Down) [Enter:Rewind]");
-                studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, 512 - margin * 2, studying_state.show_ruby_text)?);
+                studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, state.config.window_width / 2 - margin * 2, studying_state.show_ruby_text)?);
             }
         }
         if let Event::KeyUp { keycode: Some(Keycode::LShift), .. } = event {
