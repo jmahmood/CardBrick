@@ -1,13 +1,17 @@
 // src/ui/font.rs
+
 // Manages loading fonts, calculating text layouts, and rendering text.
 
+use sdl2::surface::Surface;
+
+use crate::Config;
 use sdl2::pixels::Color;
 use std::collections::VecDeque;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::ttf::{Font, Sdl2TtfContext, FontStyle};
 use sdl2::video::Window;
-use crate::Tracer;
+use crate::debug::Tracer;
 use crate::deck::html_parser::TextSpan;
 
 /// Holds a pre-calculated text layout for efficient rendering and scrolling.
@@ -41,6 +45,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(FontManager { ttf_context, font })
     }
 
+
     /// Get the pixel dimensions of a string of text.
     /// This considers the current style the font is set to.
     pub fn size_of_text_with_style(&mut self, text: &str, is_bold: bool, is_italic: bool) -> Result<(u32, u32), String> {
@@ -57,33 +62,28 @@ impl<'a, 'b> FontManager<'a, 'b> {
 
     /// Finds the character index to split a TextSpan so it fits within the available width.
     /// This is the efficient binary search method.
-    fn find_split_index(&mut self, span: &TextSpan, available_width: u32, use_ruby: bool) -> Result<usize, String> {
-        let text = &span.text_to_use(use_ruby);
-        let mut low = 0;
-        let mut high = text.chars().count();
-        let mut best_fit_char_index = 0;
+    fn find_split_index(&mut self, span: &TextSpan, space_left: u32, use_ruby: bool) -> Result<usize, String> {
+        let text = span.text_to_use(use_ruby);
+        let mut current_width = 0;
+        let mut last_valid_split_point = 0;
 
-        // Binary search to find the maximum number of characters that fit.
-        while low <= high {
-            let mid = low + (high - low) / 2;
-            if mid == 0 {
-                low = mid + 1;
-                continue;
+        // Iterate character by character to respect UTF-8 boundaries
+        for (byte_index, char) in text.char_indices() {
+            let char_str = char.to_string();
+            let (char_width, _) = self.size_of_text_with_style(&char_str, span.is_bold, span.is_italic)?;
+            
+            if current_width + char_width > space_left {
+                // This character does not fit, so the split point is before it.
+                return Ok(last_valid_split_point);
             }
-
-            let substring: String = text.chars().take(mid).collect();
-            let (substr_width, _) = self.size_of_text_with_style(&substring, span.is_bold, span.is_italic)?;
-
-            if substr_width <= available_width {
-                best_fit_char_index = mid; // This substring fits.
-                low = mid + 1;             // Try a longer one.
-            } else {
-                high = mid - 1;            // Substring is too long.
-            }
+            
+            current_width += char_width;
+            // The split point is after the current character.
+            last_valid_split_point = byte_index + char.len_utf8();
         }
 
-        // Convert the character count back to a byte index for `split_at`.
-        Ok(text.char_indices().nth(best_fit_char_index).map_or(0, |(idx, _)| idx))
+        // If the whole string fits, the split point is at the end.
+        Ok(last_valid_split_point)
     }
 
 
@@ -117,8 +117,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
         let mut current_line_width = 0;
         let line_height = self.font.height();
 
-        while let Some(mut span) = processed_spans.pop_front() {
-            // Handle dedicated newline spans from our pre-processing.
+        while let Some(span) = processed_spans.pop_front() {
             if span.is_newline {
                 lines.push(current_line_spans);
                 current_line_spans = Vec::new();
@@ -131,41 +130,81 @@ impl<'a, 'b> FontManager<'a, 'b> {
             let (span_width, _) = self.size_of_text_with_style(text_for_layout, span.is_bold, span.is_italic)?;
 
             if span_width <= space_left {
-                // The whole span fits on the current line.
                 current_line_spans.push(span);
                 current_line_width += span_width;
             } else {
-                // The span does NOT fit. We must split it.
                 let split_byte_index = self.find_split_index(&span, space_left, use_ruby)?;
 
                 if split_byte_index > 0 {
-                    // Part of the span fits.
-                    let (fits, remaining) = span.text.split_at(split_byte_index);
+                    // FIX: By calling .to_string(), we create an owned String and drop the borrow on `span`.
+                    // This allows `span` to be moved into `remaining_span` later without a borrow checker error.
+                    let text_to_split = span.text_to_use(use_ruby).to_string();
+                    let (fits, remaining) = text_to_split.split_at(split_byte_index);
                     
-                    // Add the part that fits to the current line.
                     let mut fit_span = span.clone();
-                    fit_span.text = fits.to_string();
-                    current_line_spans.push(fit_span);
+                    let mut remaining_span = span;
+
+                    if use_ruby {
+                        fit_span.ruby_text = Some(fits.to_string());
+                        remaining_span.ruby_text = Some(remaining.to_string());
+                        remaining_span.text = String::new();
+                    } else {
+                        fit_span.text = fits.to_string();
+                        remaining_span.text = remaining.to_string();
+                    }
                     
-                    // Put the remainder back at the front of the queue to be processed next.
-                    span.text = remaining.to_string();
-                    processed_spans.push_front(span);
+                    current_line_spans.push(fit_span);
+                    processed_spans.push_front(remaining_span);
 
                 } else {
-                    // Not even a single character fits on the current line.
-                    // (This happens if `current_line_width` is > 0).
-                    // So, we put the whole span back and start a new line.
-                    processed_spans.push_front(span);
+                    // #################################################################
+                    // ### BUG FIX STARTS HERE: PREVENTING THE INFINITE LOOP ###
+                    // #################################################################
+                    if !current_line_spans.is_empty() {
+                        // The current line has content, so it's full.
+                        // Finalize it and re-process the current span on a new line.
+                        processed_spans.push_front(span);
+                    } else {
+                        // The line is empty, but the word is still too long.
+                        // Force a split by taking at least one character to prevent an infinite loop.
+                        let text_to_split = span.text_to_use(use_ruby).to_string();
+                        let mut char_iter = text_to_split.chars();
+                        if let Some(first_char) = char_iter.next() {
+                            let split_at = first_char.len_utf8();
+                            let (fits, remaining) = text_to_split.split_at(split_at);
+                            
+                            let mut fit_span = span.clone();
+                            let mut remaining_span = span;
+
+                            if use_ruby {
+                                fit_span.ruby_text = Some(fits.to_string());
+                                remaining_span.ruby_text = Some(remaining.to_string());
+                                // We keep the base text with the first part and clear it for the rest.
+                                remaining_span.text = String::new(); 
+                            } else {
+                                fit_span.text = fits.to_string();
+                                remaining_span.text = remaining.to_string();
+                            }
+
+                            current_line_spans.push(fit_span);
+                            if !remaining.is_empty() {
+                                processed_spans.push_front(remaining_span);
+                            }
+                        } else {
+                             // The span was empty, do nothing.
+                        }
+                    }
+                    // #################################################################
+                    // ### BUG FIX ENDS HERE ###
+                    // #################################################################
                 }
 
-                // Finalize the current line and start fresh.
                 lines.push(current_line_spans);
                 current_line_spans = Vec::new();
                 current_line_width = 0;
             }
         }
 
-        // Add the very last line.
         if !current_line_spans.is_empty() {
             lines.push(current_line_spans);
         }
@@ -177,211 +216,19 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(TextLayout { lines, total_height, scroll_offset: 0 })
     }
 
-
-    // /// Calculates how to wrap text and returns a layout object.
-    // /// This processes TextSpans, handles explicit newlines, and implements
-    // /// character-by-character wrapping to ensure content fits within max_width
-    // pub fn layout_text(&mut self, spans: &[TextSpan], max_width: u32) -> Result<TextLayout, String> {
-    //     let mut lines: Vec<Vec<TextSpan>> = Vec::new();
-    //     let mut current_line_spans: Vec<TextSpan> = Vec::new();
-    //     let mut current_line_width = 0;
-    //     let line_height = self.font.height();
-    //     let mut overflow = false;
-
-    //     // Ensure at least one line to start with if spans are empty or to handle leading newlines
-    //     if spans.is_empty() {
-    //         lines.push(Vec::new());
-    //         return Ok(TextLayout { lines, total_height: line_height as i32, scroll_offset: 0 });
-    //     }
-
-    //     for span in spans {
-
-    //         // Get the text from the span. We will add it step-by-step to the current list of spans in this line.
-    //         // If the line gets too long, we will split this span into two and add the current "line spans" to the line array.
-
-    //         if span.new_text_block {
-    //             if !current_line_spans.is_empty() {
-    //                 lines.push(current_line_spans);
-    //                 current_line_spans = Vec::new();
-    //                 current_line_width = 0;
-    //             }
-    //         }
-
-
-    //         let mut remaining_text_in_span: String = span.text.clone().trim().to_string();
-
-    //         // Loop while there's text left in the current span to process
-    //         while !remaining_text_in_span.is_empty() {
-    //             let mut line_segment_chars_to_add = String::new(); // Reset the chars to add to the line from the current span.
-    //             let mut chars_consumed_from_remaining = 0; // Chars in remaining_text_in_span that were processed for this line
-    //             let mut current_segment_width_temp = 0; // Width of `line_segment_chars_to_add`
-    //             let mut hard_break_encountered = false;
-
-    //             // Iterate through characters of the remaining span text to build a line segment, until we run out of characters or space.
-    //             for char_c in remaining_text_in_span.chars() {
-    //                 if char_c == '\n' {
-    //                     // Found a hard newline character, break the line here
-    //                     hard_break_encountered = true;
-    //                     chars_consumed_from_remaining += 1; // Consume the newline char
-    //                     break; // Stop accumulating chars for this line segment
-    //                 }
-
-    //                 let (char_width, _) = self.size_of_text_with_style(
-    //                     &char_c.to_string(),
-    //                     span.is_bold, // Use original span's style for width calculation
-    //                     span.is_italic
-    //                 )?;
-
-    //                 let potential_line_width = current_line_width + current_segment_width_temp + char_width;
-    //                 if potential_line_width <= max_width {
-    //                     line_segment_chars_to_add.push(char_c);
-    //                     current_segment_width_temp += char_width;
-    //                     chars_consumed_from_remaining += 1; // Count char taken from remaining_text_in_span
-
-    //                     // println!("Characters to add; {:?}", line_segment_chars_to_add);
-    //                 } else {
-    //                     // Overflow.  Perform line processing and then return to the remaining characters via the for loop.
-    //                     overflow = true;
-    //                     break;
-    //                 }
-    //             }
-
-    //             // println!("{:?}", line_segment_chars_to_add);
-    //             // println!("{:?}", chars_consumed_from_remaining);
-    //             // println!("{:?}", current_segment_width_temp);
-    //             // println!("{:?}", hard_break_encountered);
-
-    //             // This happens when a hard break (\n) is encountered, or a character is encountered, or we run out of characters in this current span.
-
-    //             let requires_newline = hard_break_encountered || overflow;
-
-    //             if requires_newline {
-    //                 if hard_break_encountered {
-    //                     // println!("LINEBREAK: Hard Break encountered", );
-    //                     if !line_segment_chars_to_add.is_empty() {
-    //                         let span = TextSpan {
-    //                             text: line_segment_chars_to_add.clone(),
-    //                             is_bold: span.is_bold,
-    //                             is_italic: span.is_italic,
-    //                             is_ruby_base: span.is_ruby_base,
-    //                             ruby_text: span.ruby_text.clone(),
-    //                             new_text_block: false,
-    //                             is_newline: true,
-    //                         };
-    //                         // println!("{:?}", span);
-    //                         current_line_spans.push(span);
-    //                         current_line_width += current_segment_width_temp; // Use the accumulated width for efficiency
-    //                     }
-    //                     if !current_line_spans.is_empty() {
-    //                         lines.push(current_line_spans);
-    //                         current_line_spans = Vec::new();
-    //                         current_line_width = 0;
-    //                     } else {
-    //                         lines.push(Vec::new());
-    //                     }
-    //                     overflow = false
-    //                 }
-
-    //                 if overflow {
-    //                     // Create a span with the same properties and add it to the line.
-    //                     // println!("LINEBREAK: Overflow encountered", );
-
-    //                     let span = TextSpan {
-    //                         text: line_segment_chars_to_add.clone(),
-    //                         is_bold: span.is_bold,
-    //                         is_italic: span.is_italic,
-    //                         is_ruby_base: span.is_ruby_base,
-    //                         ruby_text: span.ruby_text.clone(),
-    //                         new_text_block: false,
-    //                         is_newline: false,
-    //                     };
-    //                     current_line_spans.push(span);
-    //                     // println!("Adding current line spans to lines: {:?}", current_line_spans);
-
-    //                     lines.push(current_line_spans);
-    //                     current_line_spans = Vec::new();
-    //                     current_line_width = 0;
-    //                     overflow = false
-    //                 }
-    //             }
-
-    //             remaining_text_in_span = remaining_text_in_span.chars().skip(chars_consumed_from_remaining).collect();
-
-    //             if remaining_text_in_span.is_empty() {
-    //                 // println!("No text left in span", );
-
-    //                 // The new line may or may not start a newline, but we aren't sure yet.  
-    //                 let span = TextSpan {
-    //                     text: line_segment_chars_to_add.clone(),
-    //                     is_bold: span.is_bold,
-    //                     is_italic: span.is_italic,
-    //                     is_ruby_base: span.is_ruby_base,
-    //                     ruby_text: span.ruby_text.clone(),
-    //                     new_text_block: false,
-    //                     is_newline: false,
-    //                 };
-
-    //                 current_line_spans.push(span);
-    //                 // println!("Appending Span to current line spans: {:?}", current_line_spans);
-    //                 current_line_width += current_segment_width_temp; // Use the accumulated width for efficiency
-    //             }
-
-    //         }
-
-    //         // End the previously line and start a new one if we have a new text block span.
-    //         if span.new_text_block {
-    //             lines.push(current_line_spans);
-    //             current_line_spans = Vec::new();
-    //             current_line_width = 0;
-    //         }
-
-    //     }
-
-    //     if !current_line_spans.is_empty() {
-    //         lines.push(current_line_spans); // Always add the last line even if empty.
-    //     }
-
-        
-    //     // Final check: if no lines were formed at all, ensure there's at least one empty line.
-    //     if lines.is_empty() {
-    //         lines.push(Vec::new());
-    //     }
-
-    //     let total_height = line_height * lines.len() as i32;
-    //     // println!("{:?} Lines", lines);
-
-    //     Ok(TextLayout {
-    //         lines,
-    //         total_height,
-    //         scroll_offset: 0,
-    //     })
-    // }
-
     /// Renders a pre-calculated TextLayout to the screen.
     pub fn draw_layout(&mut self, canvas: &mut Canvas<Window>, layout: &TextLayout, x: i32, y: i32, show_ruby: bool) -> Result<(), String> {
         let line_height = self.font.height() as i32;
         let mut current_y = y - layout.scroll_offset;
 
         for line_spans in &layout.lines {
-            // Only draw the line if it's within the visible area to improve performance.
             if current_y > -line_height && current_y < canvas.viewport().height() as i32 {
                 let mut current_x = x;
                 for span in line_spans {
-                    // Decide which text to draw based on the show_ruby flag.
-                    let text_to_draw = if show_ruby && span.is_ruby_base {
-                        // If show_ruby is true and this is a ruby span,
-                        // use the ruby_text. Fall back to the base text if for some
-                        // reason ruby_text is None.
-                        span.ruby_text.as_deref().unwrap_or(&span.text)
-                    } else {
-                        // Otherwise, draw the normal base text.
-                        &span.text
-                    };
-
+                    let text_to_draw = span.text_to_use(show_ruby);
                     let (text_w, _) = self.draw_text_span_segment(canvas, text_to_draw, current_x, current_y, span.is_bold, span.is_italic)?;
                     current_x += text_w as i32;
                 }
-
             }
             current_y += line_height;
         }
@@ -422,5 +269,193 @@ impl<'a, 'b> FontManager<'a, 'b> {
     
     pub fn size_of_text(&mut self, text: &str) -> Result<(u32, u32), String> {
         self.size_of_text_with_style(text, false, false)
+    }
+
+    fn find_fitting_size(
+        &self,
+        text: &str,
+        box_width: u32,
+        box_height: u32,
+        min_pt: u16,
+        max_pt: u16,
+    ) -> Result<u16, String> {
+        let mut low = min_pt;
+        let mut high = max_pt;
+        let mut best = min_pt;
+        let config = Config::new();
+        while low <= high {
+            let mid = (low + high) / 2;
+            // load font at trial size
+            let trial = self.ttf_context
+                .load_font(&config.font_path, mid)
+                .map_err(|e| e.to_string())?;
+            // wrap & measure
+            let surf = trial
+                .render(text)
+                .blended_wrapped(Color::RGBA(255,255,255,255), box_width)
+                .map_err(|e| e.to_string())?;
+
+            eprintln!(
+              " pt={} → wrapped size: w={} h={}",
+              mid,
+              surf.width(),
+              surf.height()
+            );
+
+            let h = surf.height();
+
+            if h <= box_height {
+                best = mid;       // fits, try larger
+                low  = mid + 1;
+            } else {
+                if mid == 0 { break; }
+                high = mid - 1;   // too tall, try smaller
+            }
+        }
+
+        Ok(best)
+    }
+
+    pub fn render_text_to_surface(
+        &self,
+        text: &str,
+        box_width: u32,
+        box_height: u32,
+        min_pt: u16,
+        max_pt: u16,
+    ) -> Result<(Surface<'static>, u32, u32), String> {
+        let config = Config::new();
+        let best_pt = self.find_fitting_size(text, box_width, box_height, min_pt, max_pt)?;
+        let font = self
+            .ttf_context
+            .load_font(&config.font_path, best_pt)
+            .map_err(|e| e.to_string())?;
+        let surface = font
+            .render(text)
+            .blended_wrapped(Color::RGBA(255, 255, 255, 255), box_width)
+            .map_err(|e| e.to_string())?;
+        let (width, height) = (surface.width(), surface.height());
+        Ok((surface, width, height))
+    }
+
+
+    pub fn draw_text_in_box(
+        &mut self,
+        canvas: &mut Canvas<Window>,
+        text: &str,
+        x: i32,
+        y: i32,
+        box_width: u32,
+        box_height: u32,
+        min_pt: u16,
+        max_pt: u16,
+        highlight: bool
+    ) -> Result<(u32, u32), String> {
+        if text.is_empty() {
+            return Ok((0, 0));
+        }
+
+        // 1) pick best size (largest pt that wraps ≤ box_height)
+        let best_pt = self.find_fitting_size(text, box_width, box_height, min_pt, max_pt)?;
+        println!("{:?}", best_pt);
+        let config = Config::new();
+
+        // 2) reload font at that size
+        let new_font = self.ttf_context
+            .load_font(config.font_path, best_pt)
+            .map_err(|e| e.to_string())?;
+
+        // 3) wrap & render into a surface
+        let surface = new_font
+            .render(text)
+            .blended_wrapped(Color::RGBA(255, 255, 255, 255), box_width)
+            .map_err(|e| e.to_string())?;
+
+        // 4) create the texture
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator
+            .create_texture_from_surface(&surface)
+            .map_err(|e| e.to_string())?;
+
+        let w = surface.width();
+        let h = surface.height();
+
+        if highlight {
+            let highlight_rect = Rect::new(18, y - 2, w + 4, h + 4);
+            canvas.set_draw_color(Color::RGB(80, 80, 80));
+            canvas.fill_rect(highlight_rect)?;
+
+        }
+
+        let target_rect = Rect::new(x, y, w, h);
+        canvas.copy(&texture, None, Some(target_rect))?;
+        Ok((w, h))
+    }
+}
+
+// #################################################################
+// ### UNIT TESTS TO PREVENT REGRESSIONS ###
+// #################################################################
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+
+    // FIX: Use a static OnceLock to ensure the TTF context is initialized exactly once for all tests.
+    static TTF_CONTEXT: OnceLock<Sdl2TtfContext> = OnceLock::new();
+
+    // Test helper to create a FontManager.
+    fn setup_font_manager() -> FontManager<'static, 'static> {
+        // This will initialize the context on the first call and simply return
+        // the existing context on all subsequent calls from other tests.
+        let ttf_context = TTF_CONTEXT.get_or_init(|| {
+            sdl2::ttf::init().expect("Failed to initialize SDL2 TTF context for tests")
+        });
+
+        // NOTE: This test requires a font file at the specified path.
+        // A common font like DejaVuSans is used here, which is often found on Linux.
+        // For other systems, you may need to change this path or place a font at `tests/font.ttf`.
+        let font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        FontManager::new(ttf_context, font_path, 16).expect("Failed to load font for testing")
+    }
+
+    #[test]
+    fn test_simple_ascii_wrapping() {
+        let mut fm = setup_font_manager();
+        let spans = vec![TextSpan {
+            text: "This is a simple test.".to_string(),
+            is_bold: false, is_italic: false, is_newline: false, is_ruby_base: false, ruby_text: None, new_text_block: false,
+        }];
+        let layout = fm.layout_text_binary(&spans, 80, false).unwrap();
+        println!("{:?}", layout.lines);
+        assert_eq!(layout.lines.len(), 2, "Text should wrap to 2 lines");
+        assert_eq!(layout.lines[0][0].text, "This is a ");
+        assert_eq!(layout.lines[1][0].text, "simple test.");
+    }
+
+    #[test]
+    fn test_japanese_wrapping_no_panic() {
+        let mut fm = setup_font_manager();
+        let spans = vec![TextSpan {
+            text: "これは長い日本の文章です。".to_string(),
+            is_bold: false, is_italic: false, is_newline: false, is_ruby_base: false, ruby_text: None, new_text_block: false,
+        }];
+        // A narrow width to force wrapping
+        let layout = fm.layout_text_binary(&spans, 100, false).unwrap();
+        assert!(layout.lines.len() > 1, "Japanese text should wrap");
+    }
+
+    #[test]
+    fn test_long_word_does_not_inf_loop() {
+        let mut fm = setup_font_manager();
+        let spans = vec![TextSpan {
+            text: "Supercalifragilisticexpialidocious".to_string(),
+            is_bold: false, is_italic: false, is_newline: false, is_ruby_base: false, ruby_text: None, new_text_block: false,
+        }];
+        // Use a width smaller than the first character
+        let layout = fm.layout_text_binary(&spans, 5, false).unwrap();
+        // The first line should contain just the first character, and the rest should wrap.
+        assert!(layout.lines.len() > 1, "Very long word should wrap to multiple lines");
+        assert_eq!(layout.lines[0][0].text, "S");
     }
 }
