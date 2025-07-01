@@ -28,6 +28,7 @@ pub enum LoaderMessage {
 /// Represents the current screen or state of the application.
 pub enum GameState<'a> {
     MainMenu(MainMenuState),
+    GoToDeckSelection,
     DeckSelection(DeckSelectionState),
     Loading {
         rx: Receiver<LoaderMessage>,

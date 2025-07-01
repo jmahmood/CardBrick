@@ -9,6 +9,7 @@ mod debug;
 mod scenes;
 mod state;
 
+use scenes::deck_selection::DeckSelectionState;
 use std::fs;
 use std::path::{Path};
 use std::time::Duration;
@@ -131,7 +132,7 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
                 scenes::main_menu::draw_main_menu_scene(canvas, &mut state.font_manager, main_menu_state)
             },
             GameState::DeckSelection(deck_selection_state) => {
-                scenes::deck_selection::draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_selection_state, &state.config)
+                scenes::deck_selection::draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_selection_state)
             },
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(canvas, &mut state.font_manager, loading_layout, *progress)
@@ -140,6 +141,16 @@ fn draw_scene(state: &mut AppState) -> Result<(), String> {
                 scenes::studying::draw_studying_scene(canvas, studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, &mut state.sprite)
             },
             GameState::Error(e) => draw_error_scene(canvas, &mut state.font_manager, e),
+            GameState::GoToDeckSelection => {
+                let new_state = DeckSelectionState::new(
+                    state.available_decks.clone(),
+                    &mut state.small_font_manager,
+                    &state.config,
+                )?;
+                state.game_state = GameState::DeckSelection(new_state);
+                Ok(()) // <-- Add this line
+            }
+
         }
     })?;
     state.canvas_manager.end_frame();

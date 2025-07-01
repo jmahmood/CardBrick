@@ -1,8 +1,8 @@
 // src/ui/font.rs
+
 // Manages loading fonts, calculating text layouts, and rendering text.
 
-use sdl2::render::{Texture, TextureCreator};
-use sdl2::video::WindowContext;
+use sdl2::surface::Surface;
 
 use crate::Config;
 use sdl2::pixels::Color;
@@ -316,6 +316,29 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(best)
     }
 
+    pub fn render_text_to_surface(
+        &self,
+        text: &str,
+        box_width: u32,
+        box_height: u32,
+        min_pt: u16,
+        max_pt: u16,
+    ) -> Result<(Surface<'static>, u32, u32), String> {
+        let config = Config::new();
+        let best_pt = self.find_fitting_size(text, box_width, box_height, min_pt, max_pt)?;
+        let font = self
+            .ttf_context
+            .load_font(&config.font_path, best_pt)
+            .map_err(|e| e.to_string())?;
+        let surface = font
+            .render(text)
+            .blended_wrapped(Color::RGBA(255, 255, 255, 255), box_width)
+            .map_err(|e| e.to_string())?;
+        let (width, height) = (surface.width(), surface.height());
+        Ok((surface, width, height))
+    }
+
+
     pub fn draw_text_in_box(
         &mut self,
         canvas: &mut Canvas<Window>,
@@ -338,7 +361,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
         let config = Config::new();
 
         // 2) reload font at that size
-        let mut new_font = self.ttf_context
+        let new_font = self.ttf_context
             .load_font(config.font_path, best_pt)
             .map_err(|e| e.to_string())?;
 
