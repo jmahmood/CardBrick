@@ -7,12 +7,11 @@ mod ui;
 mod storage;
 mod debug;
 mod scenes;
+mod state;
 
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
-// --- FIX: Removed unused `self` and `thread` imports ---
-use std::sync::mpsc::{Receiver};
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -20,52 +19,15 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 
 use config::Config;
-use deck::{Deck};
 use scheduler::{Scheduler, Sm2Scheduler};
 use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
-use scenes::studying::StudyingState;
-use scenes::deck_selection::DeckSelectionState;
+use state::{LoaderMessage, DeckMetadata, AppState, GameState};
+
 
 // --- Data Structures for the State Machine ---
-
-#[derive(Clone)]
-pub struct DeckMetadata {
-    pub id: String,
-    pub name: String,
-    pub path: PathBuf,
-}
-
-pub enum LoaderMessage {
-    Progress(f32),
-    Complete(Result<Deck, String>),
-}
-
-pub enum GameState<'a> {
-    MainMenu(MainMenuState),
-    DeckSelection(DeckSelectionState),
-    Loading {
-        rx: Receiver<LoaderMessage>,
-        loading_layout: TextLayout,
-        progress: f32,
-        deck_id_to_load: String,
-    },
-    Studying(StudyingState<'a>),
-    Error(String),
-}
-
-pub struct AppState<'a> {
-    pub game_state: GameState<'a>,
-    pub available_decks: Vec<DeckMetadata>,
-    pub canvas_manager: CanvasManager<'a>,
-    pub font_manager: FontManager<'a, 'a>,
-    pub small_font_manager: FontManager<'a, 'a>,
-    pub hint_font_manager: FontManager<'a, 'a>,
-    pub sprite: Sprite,
-    pub config: Config,
-}
 
 pub fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
