@@ -1,6 +1,10 @@
 // src/ui/font.rs
 // Manages loading fonts, calculating text layouts, and rendering text.
 
+use sdl2::render::{Texture, TextureCreator};
+use sdl2::video::WindowContext;
+
+use crate::Config;
 use sdl2::pixels::Color;
 use std::collections::VecDeque;
 use sdl2::rect::Rect;
@@ -40,6 +44,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
         let font = ttf_context.load_font(font_path, font_size)?;
         Ok(FontManager { ttf_context, font })
     }
+
 
     /// Get the pixel dimensions of a string of text.
     /// This considers the current style the font is set to.
@@ -264,6 +269,104 @@ impl<'a, 'b> FontManager<'a, 'b> {
     
     pub fn size_of_text(&mut self, text: &str) -> Result<(u32, u32), String> {
         self.size_of_text_with_style(text, false, false)
+    }
+
+    fn find_fitting_size(
+        &self,
+        text: &str,
+        box_width: u32,
+        box_height: u32,
+        min_pt: u16,
+        max_pt: u16,
+    ) -> Result<u16, String> {
+        let mut low = min_pt;
+        let mut high = max_pt;
+        let mut best = min_pt;
+        let config = Config::new();
+        while low <= high {
+            let mid = (low + high) / 2;
+            // load font at trial size
+            let trial = self.ttf_context
+                .load_font(&config.font_path, mid)
+                .map_err(|e| e.to_string())?;
+            // wrap & measure
+            let surf = trial
+                .render(text)
+                .blended_wrapped(Color::RGBA(255,255,255,255), box_width)
+                .map_err(|e| e.to_string())?;
+
+            eprintln!(
+              " pt={} → wrapped size: w={} h={}",
+              mid,
+              surf.width(),
+              surf.height()
+            );
+
+            let h = surf.height();
+
+            if h <= box_height {
+                best = mid;       // fits, try larger
+                low  = mid + 1;
+            } else {
+                if mid == 0 { break; }
+                high = mid - 1;   // too tall, try smaller
+            }
+        }
+
+        Ok(best)
+    }
+
+    pub fn draw_text_in_box(
+        &mut self,
+        canvas: &mut Canvas<Window>,
+        text: &str,
+        x: i32,
+        y: i32,
+        box_width: u32,
+        box_height: u32,
+        min_pt: u16,
+        max_pt: u16,
+        highlight: bool
+    ) -> Result<(u32, u32), String> {
+        if text.is_empty() {
+            return Ok((0, 0));
+        }
+
+        // 1) pick best size (largest pt that wraps ≤ box_height)
+        let best_pt = self.find_fitting_size(text, box_width, box_height, min_pt, max_pt)?;
+        println!("{:?}", best_pt);
+        let config = Config::new();
+
+        // 2) reload font at that size
+        let mut new_font = self.ttf_context
+            .load_font(config.font_path, best_pt)
+            .map_err(|e| e.to_string())?;
+
+        // 3) wrap & render into a surface
+        let surface = new_font
+            .render(text)
+            .blended_wrapped(Color::RGBA(255, 255, 255, 255), box_width)
+            .map_err(|e| e.to_string())?;
+
+        // 4) create the texture
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator
+            .create_texture_from_surface(&surface)
+            .map_err(|e| e.to_string())?;
+
+        let w = surface.width();
+        let h = surface.height();
+
+        if highlight {
+            let highlight_rect = Rect::new(18, y - 2, w + 4, h + 4);
+            canvas.set_draw_color(Color::RGB(80, 80, 80));
+            canvas.fill_rect(highlight_rect)?;
+
+        }
+
+        let target_rect = Rect::new(x, y, w, h);
+        canvas.copy(&texture, None, Some(target_rect))?;
+        Ok((w, h))
     }
 }
 

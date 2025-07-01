@@ -19,7 +19,7 @@ pub fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), 
                 Keycode::Return => {
                     match main_menu_state.selected_index {
                         0 => { // Study
-                            let max_width = state.config.window_width - 40;
+                            let max_width = state.config.logical_window_width - 40;
                             let layouts = state.available_decks.iter().map(|deck| {
                                 let spans = html_parser::parse_html_to_spans(&deck.name);
                                 state.small_font_manager.layout_text_binary(&spans, max_width, false)

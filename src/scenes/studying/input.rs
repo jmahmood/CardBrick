@@ -15,7 +15,7 @@ pub fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), S
         if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
             if keycode == Keycode::Backspace {
                 // Pre-calculate layouts for the DeckSelection screen again
-                let max_width = state.config.window_width - 40;
+                let max_width = state.config.logical_window_width - 40;
                 let layouts = state.available_decks.iter().map(|deck| {
                     let spans = html_parser::parse_html_to_spans(&deck.name);
                     state.small_font_manager.layout_text_binary(&spans, max_width, false)

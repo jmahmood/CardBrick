@@ -1,5 +1,3 @@
-// src/scenes/deck_selection/mod.rs
-
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
@@ -14,7 +12,7 @@ pub mod input;
 /// Contains the state specific to the deck selection screen.
 pub struct DeckSelectionState {
     pub decks: Vec<DeckMetadata>,
-    pub deck_layouts: Vec<TextLayout>,
+    pub deck_layouts: Vec<TextLayout>, // This is no longer used for drawing but may be used elsewhere.
     pub selected_index: usize,
 }
 
@@ -29,17 +27,34 @@ pub fn draw_deck_selection_scene(
     font_manager.draw_single_line(canvas, "Select a Deck", 20, 20)?;
     small_font_manager.draw_single_line(canvas, "Press Backspace to return to Main Menu", 20, 70)?;
 
-    let mut y_pos = 150;
-    let max_width = config.window_width - 40;
+    // Handle the case where there are no decks to display.
+    if state.decks.is_empty() {
+        small_font_manager.draw_single_line(canvas, "No decks found.", 20, 150)?;
+        small_font_manager.draw_single_line(canvas, "Please add .apkg files to the 'decks' directory.", 20, 180)?;
+        return Ok(());
+    }
 
-    for (i, layout) in state.deck_layouts.iter().enumerate() {
-        if i == state.selected_index {
-            let highlight_rect = Rect::new(18, y_pos, max_width, layout.total_height as u32);
-            canvas.set_draw_color(Color::RGB(80, 80, 80));
-            canvas.fill_rect(highlight_rect)?;
-        }
-        small_font_manager.draw_layout(canvas, layout, 20, y_pos, false)?;
-        y_pos += layout.total_height + 10;
+    let mut y_pos = 150;
+    let max_width = config.logical_window_width - 80; // max width for deck titles
+
+    // Iterate over the actual deck metadata.
+    for (i, deck) in state.decks.iter().enumerate() {
+        let display_title = deck.name.replace('_', " ");
+        let highlight_text_box = i == state.selected_index;
+        let (_natural_w, natural_h) = small_font_manager.draw_text_in_box(
+            canvas,
+            &display_title,
+            20,             // x
+            y_pos,          // y
+            max_width,      // box width
+            80, // box height
+            10,         // min point size
+            72,         // max point size
+            highlight_text_box
+        )?;
+
+        // Increment y_pos for the next deck title, using the actual height of the wrapped text.
+        y_pos += natural_h as i32 + 10; // Add padding
     }
     Ok(())
 }
