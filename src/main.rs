@@ -9,8 +9,8 @@ mod debug;
 mod scenes;
 mod state;
 
-use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path};
 use std::time::Duration;
 
 use sdl2::event::Event;
@@ -30,11 +30,6 @@ use state::{LoaderMessage, DeckMetadata, AppState, GameState};
 // --- Data Structures for the State Machine ---
 
 pub fn main() -> Result<(), String> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        return Err(format!("Usage: {} <path/to/deck.apkg>", args.get(0).unwrap_or(&"cardbrick".to_string())));
-    }
-
     let config = Config::new();
     
     let sdl_context = sdl2::init()?;
@@ -45,14 +40,16 @@ pub fn main() -> Result<(), String> {
     let window = video_subsystem.window(config.window_title, config.window_width, config.window_height).position_centered().build().map_err(|e| e.to_string())?;
     let sdl_canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     let texture_creator = sdl_canvas.texture_creator();
-    
-    let initial_deck_path = PathBuf::from(&args[1]);
-    let deck_id = initial_deck_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let deck_name = deck_id.clone();
-    
-    let available_decks = vec![
-        DeckMetadata { id: deck_id, name: deck_name, path: initial_deck_path }
-    ];
+
+    let available_decks = load_decks_from_directory(Path::new(config.decks_directory))?;
+
+    if available_decks.is_empty() {
+        return Err(format!(
+            "No .apkg decks found in the '{}' directory.",
+            config.decks_directory
+        ));
+    }
+
 
     let mut app_state = AppState {
         game_state: GameState::MainMenu(MainMenuState::new()),
@@ -67,6 +64,37 @@ pub fn main() -> Result<(), String> {
     
     run(&mut app_state, &mut sdl_context.event_pump()?)
 }
+
+fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, String> {
+    let mut decks = Vec::new();
+    let entries = fs::read_dir(dir_path)
+        .map_err(|e| format!("Failed to read directory '{}': {}", dir_path.display(), e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+
+        if path.is_file() {
+            if let Some(extension) = path.extension() {
+                if extension == "apkg" {
+                    let deck_id = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown_deck")
+                        .to_string();
+                    let deck_name = deck_id.clone(); // Or you could implement logic to read the name from the .apkg file
+                    decks.push(DeckMetadata {
+                        id: deck_id,
+                        name: deck_name,
+                        path: path.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(decks)
+}
+
 
 fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), String> {
     'running: loop {

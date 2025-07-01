@@ -6,6 +6,7 @@ pub struct Config {
     pub font_size_large: u32,
     pub font_size_medium: u32,
     pub font_size_small: u32,
+    pub decks_directory: &'static str,
 }
 
 impl Config {
@@ -18,6 +19,7 @@ impl Config {
             font_size_large: 32,
             font_size_medium: 24,
             font_size_small: 20,
+            decks_directory: "/home/jawaad/Downloads",
         }
     }
 }
