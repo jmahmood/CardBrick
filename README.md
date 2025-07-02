@@ -57,3 +57,7 @@ This project is being developed in Rust (2021 Edition) and uses the SDL2 library
     * `sprite.rs`: Manages the "mother" sprite's state and animation.
 * `tests/`: Integration tests (to be added).
 * `.github/workflows/ci.yml`: The continuous integration pipeline for automated builds and tests.
+
+## Other scripts
+
+- If you need SCP or RSYNC, you can get it from Dockerfile.scp_and_rsync

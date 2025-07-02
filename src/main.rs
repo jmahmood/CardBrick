@@ -1,5 +1,6 @@
 // CardBrick - main.rs (Refactor Step 6: Deck Selection Scene)
 
+use std::io::Write;
 mod config;
 mod deck;
 mod scheduler;
@@ -18,7 +19,6 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
-use sdl2::controller::{GameController, Button as CtlButton, Axis as CtlAxis};
 
 use config::Config;
 use scheduler::{Scheduler, Sm2Scheduler};
@@ -29,11 +29,13 @@ use scenes::main_menu::MainMenuState;
 use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, map_to_brick_input};
 
 
-// --- Data Structures for the State Machine ---
-
 pub fn main() -> Result<(), String> {
     let config = Config::new();
-    
+
+    if let Err(e) = test_file_creation() {
+        panic!("[File Creation Test] FAILED with error: {}", e);
+    }
+
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
@@ -44,19 +46,17 @@ pub fn main() -> Result<(), String> {
     let sdl_canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     let texture_creator = sdl_canvas.texture_creator();
 
-    let available_decks = load_decks_from_directory(Path::new(config.decks_directory))?;
+    let available_decks = load_decks_from_directory(Path::new(&config.decks_directory))?;
 
     if available_decks.is_empty() {
         return Err(format!(
             "No .apkg decks found in the '{}' directory.",
-            config.decks_directory
+            config.decks_directory.display()
         ));
     }
 
-    // 1) grab the controller subsystem
-    let mut gc_subsystem = sdl_context.game_controller()?;
-
-    // 2) scan & open every controller we find
+    // Setup joysticks
+    let gc_subsystem = sdl_context.game_controller()?;
     let n = gc_subsystem.num_joysticks()?;
     let mut controllers = Vec::new();
     for idx in 0..n {
@@ -75,9 +75,10 @@ pub fn main() -> Result<(), String> {
         game_state: GameState::MainMenu(MainMenuState::new()),
         available_decks,
         canvas_manager: CanvasManager::new(sdl_canvas, &texture_creator)?,
-        font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_large.try_into().unwrap())?,
-        small_font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_medium.try_into().unwrap())?,
-        hint_font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_small.try_into().unwrap())?,
+        font_manager: FontManager::new(&ttf_context, &config.font_path, config.font_size_large.try_into().unwrap())?,
+        small_font_manager: FontManager::new(&ttf_context, &config.font_path, config.font_size_medium.try_into().unwrap())?,
+        hint_font_manager: FontManager::new_with_fallback(&ttf_context,  
+            &config.command_font_path, Some(&config.emoji_font_path), config.font_size_small.try_into().unwrap())?,
         sprite: Sprite::new(),
         config,
         controllers: controllers
@@ -231,5 +232,23 @@ fn draw_error_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font
     let error_spans = html_parser::parse_html_to_spans(&format!("Error: {}", msg));
     let layout = font_manager.layout_text_binary(&error_spans, 512 - margin * 2, false)?;
     font_manager.draw_layout(canvas, &layout, margin as i32, 40, false)?;
+    Ok(())
+}
+
+fn test_file_creation() -> std::io::Result<()> {
+    println!("[File Test] Starting file creation test...");
+
+    println!("[File Test] Attempting to create a named temp file...");
+    let mut temp_file = tempfile::NamedTempFile::new()?;
+    println!("[File Test] Successfully created temp file at: {:?}", temp_file.path());
+
+    println!("[File Test] Attempting to write a small amount of data...");
+    temp_file.write_all(b"hello world")?;
+    println!("[File Test] Successfully wrote data.");
+
+    println!("[File Test] The file will now be closed and deleted.");
+    temp_file.close()?;
+    
+    println!("[File Test] PASSED.");
     Ok(())
 }

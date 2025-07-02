@@ -39,6 +39,8 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
         let conn = rusqlite::Connection::open(&temp_path)?;
         println!("Successfully opened Anki database.");
         
+        tx.send(LoaderMessage::Progress(0.50)).unwrap(); // 25% - DB extracted
+
         // --- Load Notes ---
         let mut stmt = conn.prepare("SELECT id, flds FROM notes")?;
         let notes_iter = stmt.query_map([], |row| {
