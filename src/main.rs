@@ -18,6 +18,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
+use sdl2::controller::{GameController, Button as CtlButton, Axis as CtlAxis};
 
 use config::Config;
 use scheduler::{Scheduler, Sm2Scheduler};
@@ -25,7 +26,7 @@ use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
-use state::{LoaderMessage, DeckMetadata, AppState, GameState};
+use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, map_to_brick_input};
 
 
 // --- Data Structures for the State Machine ---
@@ -35,6 +36,7 @@ pub fn main() -> Result<(), String> {
     
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
+
     sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
 
@@ -51,6 +53,23 @@ pub fn main() -> Result<(), String> {
         ));
     }
 
+    // 1) grab the controller subsystem
+    let mut gc_subsystem = sdl_context.game_controller()?;
+
+    // 2) scan & open every controller we find
+    let n = gc_subsystem.num_joysticks()?;
+    let mut controllers = Vec::new();
+    for idx in 0..n {
+        if gc_subsystem.is_game_controller(idx) {
+            match gc_subsystem.open(idx) {
+                Ok(controller) => {
+                    log::debug!("opened controller {}: {:?}", idx, controller.name());
+                    controllers.push(controller);
+                }
+                Err(e) => log::warn!("failed to open controller {}: {}", idx, e),
+            }
+        }
+    }
 
     let mut app_state = AppState {
         game_state: GameState::MainMenu(MainMenuState::new()),
@@ -61,6 +80,7 @@ pub fn main() -> Result<(), String> {
         hint_font_manager: FontManager::new(&ttf_context, config.font_path, config.font_size_small.try_into().unwrap())?,
         sprite: Sprite::new(),
         config,
+        controllers: controllers
     };
     
     run(&mut app_state, &mut sdl_context.event_pump()?)
@@ -100,6 +120,7 @@ fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, Strin
 fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), String> {
     'running: loop {
         for event in event_pump.poll_iter() {
+            println!("{:?}", event);
             if let Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } = event {
                 break 'running;
             }
@@ -116,6 +137,15 @@ fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), Str
 }
 
 fn handle_input(state: &mut AppState, event: Event) -> Result<(), String> {
+
+    // These controls are consistent throughout the app.
+    if let Some(input) = map_to_brick_input(&event) {
+         match input {
+             BrickInput::ButtonDown(BrickButton::Guide) => return Err("User quit".into()),
+             _ => {}
+        }
+    }
+
     match &mut state.game_state {
         GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(state, event),
         GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(state, event),
