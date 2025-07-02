@@ -1,0 +1,9 @@
+# Ignore git history
+.git
+
+# Ignore Cargo build artifacts
+target/
+
+# Ignore IDE/editor configuration
+.vscode/
+.idea/

@@ -19,11 +19,11 @@ impl Config {
             window_height: 768,
             logical_window_width: 512,
             logical_window_height: 384,
-            font_path: "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            font_path: "/mnt/SDCARD/Tools/tg5040/CardBrick64.pak/fonts/NotoSansCJK-Regular.ttc",
             font_size_large: 32,
             font_size_medium: 24,
             font_size_small: 20,
-            decks_directory: "/home/jawaad/Downloads",
+            decks_directory: "/mnt/SDCARD/Tools/tg5040/CardBrick64.pak/decks",
         }
     }
 }
