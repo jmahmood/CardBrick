@@ -1,0 +1,3 @@
+[build]
+# Restricts Cargo to using only 2 parallel compilation jobs due to overall slowness.
+jobs = 8
