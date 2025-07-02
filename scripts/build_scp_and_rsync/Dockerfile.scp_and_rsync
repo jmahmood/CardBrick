@@ -1,0 +1,80 @@
+FROM debian:bullseye AS builder
+
+ENV TARGET=aarch64-linux-musl \
+    CROSS_URL=https://musl.cc/aarch64-linux-musl-cross.tgz \
+    BUILD_DIR=/build \
+    OUTPUT_DIR=/output \
+    PATH=/build/aarch64-linux-musl-cross/bin:$PATH
+
+# Install build deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3 python3-pip build-essential git curl autoconf automake libtool pkg-config bison flex ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install commonmark
+
+# Fetch musl toolchain
+RUN mkdir -p ${BUILD_DIR} \
+ && curl -fsSL ${CROSS_URL} | tar xz -C ${BUILD_DIR}
+
+# Build rsync
+RUN git clone https://github.com/WayneD/rsync.git ${BUILD_DIR}/rsync \
+ && cd ${BUILD_DIR}/rsync \
+ && git checkout v3.2.7 \
+ && ./prepare-source \
+ && ./configure \
+      --host=aarch64-linux-musl \
+      --build=x86_64-linux-gnu \
+      CC=aarch64-linux-musl-gcc \
+      CFLAGS="--static" \
+      LDFLAGS="--static" \
+      --disable-debug \
+      --disable-xattr \
+      --disable-acl \
+      --disable-iconv \
+      --disable-debug \
+      --disable-xattr \
+      --disable-acl \
+      --disable-iconv \
+      --disable-openssl \
+      --disable-xxhash \
+      --disable-zstd \
+      --disable-lz4 \
+      --prefix=${OUTPUT_DIR}/rsync \
+ && make -j$(nproc) \
+ && make install \
+ && aarch64-linux-musl-strip ${OUTPUT_DIR}/rsync/bin/rsync \
+ && cp ${OUTPUT_DIR}/rsync/bin/rsync ${OUTPUT_DIR}/rsync
+
+# Build Dropbear with scp support
+RUN git clone https://github.com/mkj/dropbear.git ${BUILD_DIR}/dropbear \
+ && cd ${BUILD_DIR}/dropbear \
+ && git checkout DROPBEAR_2022.83 \
+ && ./configure \
+      --host=aarch64-linux-musl \
+      CC=aarch64-linux-musl-gcc \
+      --disable-zlib --disable-lastlog --disable-utmp --disable-utmpx \
+      --disable-wtmp --disable-wtmpx --disable-loginfunc \
+      --disable-pututline --disable-pututxline \
+      --disable-shadow --disable-pam \
+      --enable-static \
+ && make PROGRAMS="dropbear dbclient scp dropbearkey" MULTI=1 -j$(nproc) \
+ && aarch64-linux-musl-strip dropbearmulti \
+ && install -Dm755 dropbearmulti ${OUTPUT_DIR}/dropbearmulti \
+ && ln -s dropbearmulti ${OUTPUT_DIR}/scp \
+ && ln -s dropbearmulti ${OUTPUT_DIR}/ssh \
+ && ln -s dropbearmulti ${OUTPUT_DIR}/dbclient \
+ && ln -s dropbearmulti ${OUTPUT_DIR}/dropbearkey \
+ && ln -s dropbearmulti ${OUTPUT_DIR}/dropbear
+
+# Final minimal image
+FROM debian:bullseye-slim
+
+COPY --from=builder /output /output
+
+# Directory for output mount
+RUN mkdir /host_output
+
+# At runtime, copy binaries to mounted host path
+CMD ["sh", "-c", "cp -r /output/* /host_output/"]
