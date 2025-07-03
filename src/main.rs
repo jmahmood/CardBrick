@@ -19,7 +19,6 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
-use sdl2::controller::{GameController, Button as CtlButton, Axis as CtlAxis};
 
 use config::Config;
 use scheduler::{Scheduler, Sm2Scheduler};
@@ -36,6 +35,7 @@ pub fn main() -> Result<(), String> {
     if let Err(e) = test_file_creation() {
         panic!("[File Creation Test] FAILED with error: {}", e);
     }
+    println!("{:?}", &config.font_path);
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;

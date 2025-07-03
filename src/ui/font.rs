@@ -176,9 +176,6 @@ impl<'a, 'b> FontManager<'a, 'b> {
                     processed_spans.push_front(remaining_span);
 
                 } else {
-                    // #################################################################
-                    // ### BUG FIX STARTS HERE: PREVENTING THE INFINITE LOOP ###
-                    // #################################################################
                     if !current_line_spans.is_empty() {
                         // The current line has content, so it's full.
                         // Finalize it and re-process the current span on a new line.
@@ -213,9 +210,6 @@ impl<'a, 'b> FontManager<'a, 'b> {
                              // The span was empty, do nothing.
                         }
                     }
-                    // #################################################################
-                    // ### BUG FIX ENDS HERE ###
-                    // #################################################################
                 }
 
                 lines.push(current_line_spans);
@@ -398,7 +392,7 @@ use super::*;
         // A common font like DejaVuSans is used here, which is often found on Linux.
         // For other systems, you may need to change this path or place a font at `tests/font.ttf`.
         let font_path = Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
-        FontManager::new(ttf_context, font_path.to_path_buf(), 16).expect("Failed to load font for testing")
+        FontManager::new(ttf_context, &font_path.to_path_buf(), 16).expect("Failed to load font for testing")
     }
 
     #[test]
