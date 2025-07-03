@@ -7,7 +7,7 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect; // Removed unused `Point`
 
 const LOGICAL_WIDTH: u32 = 512;
-const LOGICAL_HEIGHT: u32 = 364;
+const LOGICAL_HEIGHT: u32 = 384;
 
 pub struct CanvasManager<'a> {
     // The main SDL canvas that draws to the window.
