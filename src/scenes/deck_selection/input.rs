@@ -45,14 +45,18 @@ pub fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result
 
         if let Event::KeyDown { keycode: Some(keycode), repeat: false, .. } = event {
             if let GameState::DeckSelection(deck_selection_state) = &mut state.game_state {
+
                 match keycode {
                     Keycode::Up => {
-                        deck_selection_state.selected_index = deck_selection_state.selected_index.saturating_sub(1);
+                        // deck_selection_state.selected_index = deck_selection_state.selected_index.saturating_sub(1);
+                        deck_selection_state.move_selection(-1, deck_selection_state.decks.len(), 3);
+
                     }
                     Keycode::Down => {
                         // Ensure we don't go out of bounds if there are decks.
                         if !deck_selection_state.decks.is_empty() {
-                            deck_selection_state.selected_index = (deck_selection_state.selected_index + 1).min(deck_selection_state.decks.len() - 1);
+                            // deck_selection_state.selected_index = (deck_selection_state.selected_index + 1).min(deck_selection_state.decks.len() - 1);
+                            deck_selection_state.move_selection( 1, deck_selection_state.decks.len(), 3);
                         }
                     }
                     Keycode::Backspace => {

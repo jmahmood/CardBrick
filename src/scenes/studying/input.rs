@@ -113,6 +113,11 @@ pub fn handle_studying_input(state: &mut AppState, event: Event) -> Result<(), S
                     studying_state.show_ruby_text = false;
                     return Ok(());
                 },
+                BrickInput::ButtonDown(BrickButton::Back) => {
+                    state.game_state = GameState::GoToDeckSelection;
+                    return Ok(());
+                },
+
 
                 _ => {}
             }

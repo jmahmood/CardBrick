@@ -123,13 +123,21 @@ pub fn map_to_brick_input(ev: &Event) -> Option<BrickInput> {
         Event::ControllerButtonUp { button, .. } => {
             let b = match button {
                 CtrlBtn::B        => BrickButton::A,
+                // …but you know it’s really the A button on the Brick.
                 CtrlBtn::A        => BrickButton::B,
-                CtrlBtn::X        => BrickButton::X,
-                CtrlBtn::Y        => BrickButton::Y,
+                CtrlBtn::Y        => BrickButton::X,
+                CtrlBtn::X        => BrickButton::Y,
                 CtrlBtn::DPadUp   => BrickButton::DPadUp,
                 CtrlBtn::DPadDown => BrickButton::DPadDown,
                 CtrlBtn::DPadLeft => BrickButton::DPadLeft,
                 CtrlBtn::DPadRight=> BrickButton::DPadRight,
+                CtrlBtn::Start    => BrickButton::Start,
+                CtrlBtn::Back     => BrickButton::Back,
+                CtrlBtn::Guide    => BrickButton::Guide,
+                CtrlBtn::LeftShoulder    => BrickButton::LeftShoulder,
+                CtrlBtn::RightShoulder    => BrickButton::RightShoulder,
+                CtrlBtn::RightStick    => BrickButton::RightStick,
+                CtrlBtn::LeftStick    => BrickButton::LeftStick,
                 _                 => return None,
             };
             Some(BrickInput::ButtonUp(b))

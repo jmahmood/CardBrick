@@ -35,7 +35,6 @@ pub fn main() -> Result<(), String> {
     if let Err(e) = test_file_creation() {
         panic!("[File Creation Test] FAILED with error: {}", e);
     }
-    println!("{:?}", &config.font_path);
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -122,7 +121,6 @@ fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, Strin
 fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), String> {
     'running: loop {
         for event in event_pump.poll_iter() {
-            println!("{:?}", event);
             if let Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } = event {
                 break 'running;
             }
