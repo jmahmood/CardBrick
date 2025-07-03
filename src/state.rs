@@ -14,6 +14,8 @@ use sdl2::controller::{GameController};
 use sdl2::controller::Button as CtrlBtn;
 use sdl2::keyboard::Keycode;
 use sdl2::event::Event;
+use sdl2::mixer::{self, Chunk};
+
 
 /// Holds metadata about a single deck, used for selection screens.
 #[derive(Clone)]
@@ -44,6 +46,12 @@ pub enum GameState<'a> {
     Error(String),
 }
 
+pub struct Sfx {
+    pub up_down_sound: Chunk,
+    pub open_sound: Chunk,
+    pub mixer_ctx: mixer::Sdl2MixerContext
+}
+
 /// The top-level state for the entire application.
 pub struct AppState<'a> {
     pub game_state: GameState<'a>,
@@ -54,7 +62,8 @@ pub struct AppState<'a> {
     pub hint_font_manager: FontManager<'a, 'a>,
     pub sprite: Sprite,
     pub config: Config,
-    pub controllers: Vec<GameController>
+    pub controllers: Vec<GameController>,
+    pub sfx: Sfx
 }
 
 /// All the *buttons* as they’re silkscreened (or logically present) on the Brick.

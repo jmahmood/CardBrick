@@ -1,6 +1,5 @@
+use crate::Channel;
 use sdl2::event::Event;
-use sdl2::controller::Button as CtrlBtn;
-use sdl2::joystick::HatState;
 use sdl2::keyboard::Keycode;
 use crate::state::{map_to_brick_input, BrickInput, BrickButton};
 
@@ -17,11 +16,14 @@ pub fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), 
             match input {
                 BrickInput::ButtonDown(BrickButton::DPadDown) => {
                         main_menu.selected_index = (main_menu.selected_index + 1).min(options.len() - 1);
+                        Channel::all().play(&state.sfx.up_down_sound, 0)?;
                 }
                 BrickInput::ButtonDown(BrickButton::DPadUp) => {
                         main_menu.selected_index = main_menu.selected_index.saturating_sub(1);
+                        Channel::all().play(&state.sfx.up_down_sound, 0)?;
                 },
                 BrickInput::ButtonDown(BrickButton::A) => {
+                    Channel::all().play(&state.sfx.open_sound, 0)?;
                     match main_menu.selected_index {
                         0 => state.game_state = GameState::GoToDeckSelection,
                         1 => { /* to Profile */ }
@@ -38,11 +40,15 @@ pub fn handle_main_menu_input(state: &mut AppState, event: Event) -> Result<(), 
                     match key {
                         Keycode::Up   => {
                             main_menu.selected_index = main_menu.selected_index.saturating_sub(1);
+                            Channel::all().play(&state.sfx.up_down_sound, 0)?;
                         }
                         Keycode::Down => {
                             main_menu.selected_index = (main_menu.selected_index + 1).min(options.len() - 1);
+                            Channel::all().play(&state.sfx.up_down_sound, 0)?;
+
                         }
                         Keycode::Return => {
+                            Channel::all().play(&state.sfx.open_sound, 0)?;
                             match main_menu.selected_index {
                                 0 => state.game_state = GameState::GoToDeckSelection,
                                 1 => { /* to Profile */ }

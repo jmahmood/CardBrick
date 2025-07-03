@@ -1,5 +1,8 @@
 // CardBrick - main.rs (Refactor Step 6: Deck Selection Scene)
 
+use crate::mixer::Channel;
+use crate::mixer::Chunk;
+use crate::state::Sfx;
 use std::io::Write;
 mod config;
 mod deck;
@@ -28,6 +31,7 @@ use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
 use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, map_to_brick_input};
 
+use sdl2::mixer::{self, InitFlag, AUDIO_S16LSB, DEFAULT_CHANNELS};
 
 pub fn main() -> Result<(), String> {
     let config = Config::new();
@@ -38,6 +42,22 @@ pub fn main() -> Result<(), String> {
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
+    let _mixer_context = mixer::init(InitFlag::MP3 | InitFlag::FLAC | InitFlag::MOD)?;
+    mixer::open_audio(44_100, AUDIO_S16LSB, DEFAULT_CHANNELS, 1_024)?;
+    mixer::allocate_channels(4);
+
+    let _audio_subsystem = sdl_context.audio()?;
+
+    let sfx = Sfx{
+        up_down_sound: Chunk::from_file(config.sfx_directory.join("click.wav"))?,
+        open_sound: Chunk::from_file(config.sfx_directory.join("open.wav"))?,
+        mixer_ctx: _mixer_context
+    };
+
+    let card = Chunk::from_file(config.sfx_directory.join("card-shuffle.wav"))?;
+
+    Channel::all().play(&card, 0)?;
+
 
     sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
@@ -81,7 +101,8 @@ pub fn main() -> Result<(), String> {
             &config.command_font_path, Some(&config.emoji_font_path), config.font_size_small.try_into().unwrap())?,
         sprite: Sprite::new(),
         config,
-        controllers: controllers
+        controllers: controllers,
+        sfx: sfx,
     };
     
     run(&mut app_state, &mut sdl_context.event_pump()?)

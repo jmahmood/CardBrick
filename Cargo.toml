@@ -6,7 +6,7 @@ license     = "GPL-3.0-or-later"
 description = "An Anki-compatible flash-card app for the TrimUI Brick"
 
 [dependencies]
-sdl2 = { version = "0.35", default-features = false, features = ["ttf", "image"] }
+sdl2 = { version = "0.35", default-features = false, features = ["ttf", "image", "mixer"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 zip      = "1.1"
 image    = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

@@ -1,3 +1,4 @@
+use crate::mixer::Channel;
 use std::sync::mpsc;
 use std::thread;
 
@@ -17,10 +18,12 @@ pub fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result
             match input {
                 BrickInput::ButtonDown(BrickButton::DPadUp) => {
                     deck_selection_state.selected_index = deck_selection_state.selected_index.saturating_sub(1);
+                    Channel::all().play(&state.sfx.up_down_sound, 0)?;
                 },
                 BrickInput::ButtonDown(BrickButton::DPadDown) => {
                     // Ensure we don't go out of bounds if there are decks.
                     if !deck_selection_state.decks.is_empty() {
+                        Channel::all().play(&state.sfx.up_down_sound, 0)?;
                         deck_selection_state.selected_index = (deck_selection_state.selected_index + 1).min(deck_selection_state.decks.len() - 1);
                     }
                 }
@@ -33,6 +36,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result
                         thread::spawn(move || { crate::deck::loader::load_apkg(&deck_path, tx); });
                         let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
                         let loading_layout = state.font_manager.layout_text_binary(&loading_spans, 400, false)?;
+                        Channel::all().play(&state.sfx.open_sound, 0)?;
                         state.game_state = GameState::Loading { rx, loading_layout, progress: 0.0, deck_id_to_load: deck_id };
                     }
                 },
@@ -50,6 +54,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result
                     Keycode::Up => {
                         // deck_selection_state.selected_index = deck_selection_state.selected_index.saturating_sub(1);
                         deck_selection_state.move_selection(-1, deck_selection_state.decks.len(), 3);
+                        Channel::all().play(&state.sfx.up_down_sound, 0)?;
 
                     }
                     Keycode::Down => {
@@ -57,6 +62,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result
                         if !deck_selection_state.decks.is_empty() {
                             // deck_selection_state.selected_index = (deck_selection_state.selected_index + 1).min(deck_selection_state.decks.len() - 1);
                             deck_selection_state.move_selection( 1, deck_selection_state.decks.len(), 3);
+                            Channel::all().play(&state.sfx.up_down_sound, 0)?;
                         }
                     }
                     Keycode::Backspace => {
@@ -72,6 +78,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, event: Event) -> Result
                             thread::spawn(move || { crate::deck::loader::load_apkg(&deck_path, tx); });
                             let loading_spans = html_parser::parse_html_to_spans("Loading Deck...");
                             let loading_layout = state.font_manager.layout_text_binary(&loading_spans, 400, false)?;
+                            Channel::all().play(&state.sfx.open_sound, 0)?;
                             state.game_state = GameState::Loading { rx, loading_layout, progress: 0.0, deck_id_to_load: deck_id };
                         }
                     }

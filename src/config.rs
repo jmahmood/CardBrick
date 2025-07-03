@@ -15,6 +15,7 @@ pub struct Config {
     pub font_size_medium: u32,
     pub font_size_small: u32,
     pub decks_directory: PathBuf,
+    pub sfx_directory: PathBuf,
 }
 
 impl Config {
@@ -23,21 +24,28 @@ impl Config {
         let exe_path = env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
         let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
 
-        let base_assets1 = exe_dir.join("assets");
-        let base_decks1 = exe_dir.join("decks");
+        let base_assets_dir = exe_dir.join("assets");
+        let base_decks_dir = exe_dir.join("decks");
+        let sfx_dir = exe_dir.join("sfx");
 
 
-        let (base_assets, base_decks) = if is_trimui {
+        let (base_assets, base_decks, sfx_directory) = if is_trimui {
             (
-                Path::new(&base_assets1),
-                Path::new(&base_decks1),
+                Path::new(&base_assets_dir),
+                Path::new(&base_decks_dir),
+                Path::new(&sfx_dir),
             )
         } else {
             (
-                Path::new("./assets"), // desktop/dev build
-                Path::new("./decks"),
+                Path::new("/home/jawaad/CardBrick/assets"),
+                Path::new("/home/jawaad/CardBrick/assets/decks"),
+                Path::new("/home/jawaad/CardBrick/assets/sfx"),
             )
         };
+
+        println!("{:?}", base_assets);
+        println!("{:?}", base_decks);
+        println!("{:?}", sfx_directory);
 
         Self {
             window_title: "CardBrick v0.1",
@@ -52,6 +60,7 @@ impl Config {
             font_size_medium: 24,
             font_size_small: 10,
             decks_directory: base_decks.to_path_buf(),
+            sfx_directory: sfx_directory.to_path_buf(),
         }
     }
 }
