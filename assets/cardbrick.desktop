@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=CardBrick
+Exec=env LD_LIBRARY_PATH=$APPDIR/lib $APPDIR/cardbrick
+Icon=cardbrick
+Terminal=false
+Categories=applications;

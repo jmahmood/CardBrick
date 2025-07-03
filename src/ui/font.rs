@@ -2,6 +2,7 @@
 
 // Manages loading fonts, calculating text layouts, and rendering text.
 
+use std::path::PathBuf;
 use sdl2::surface::Surface;
 
 use crate::Config;
@@ -26,6 +27,7 @@ pub struct FontManager<'a, 'b> {
     #[allow(dead_code)] // ttf_context must be kept alive, but is not read directly.
     ttf_context: &'a Sdl2TtfContext,
     font: Font<'a, 'b>,
+    fallback_font: Option<Font<'a, 'b>>,  // e.g., for emoji
 }
 
 impl TextSpan {
@@ -40,9 +42,26 @@ impl TextSpan {
 }
 
 impl<'a, 'b> FontManager<'a, 'b> {
-    pub fn new(ttf_context: &'a Sdl2TtfContext, font_path: &str, font_size: u16) -> Result<Self, String> {
+    pub fn new_with_fallback(
+        ttf_context: &'a Sdl2TtfContext,
+        primary_path: &PathBuf,
+        fallback_path: Option<&PathBuf>,
+        font_size: u16
+    ) -> Result<Self, String> {
+        let primary_font = ttf_context.load_font(primary_path, font_size)?;
+        let fallback_font = match fallback_path {
+            Some(path) => Some(ttf_context.load_font(path, font_size)?),
+            None => None,
+        };
+        Ok(FontManager {
+            ttf_context,
+            font: primary_font,
+            fallback_font,
+        })
+    }
+    pub fn new(ttf_context: &'a Sdl2TtfContext, font_path: & PathBuf, font_size: u16) -> Result<Self, String> {
         let font = ttf_context.load_font(font_path, font_size)?;
-        Ok(FontManager { ttf_context, font })
+        Ok(FontManager { ttf_context, font, fallback_font: None })
     }
 
 
@@ -157,9 +176,6 @@ impl<'a, 'b> FontManager<'a, 'b> {
                     processed_spans.push_front(remaining_span);
 
                 } else {
-                    // #################################################################
-                    // ### BUG FIX STARTS HERE: PREVENTING THE INFINITE LOOP ###
-                    // #################################################################
                     if !current_line_spans.is_empty() {
                         // The current line has content, so it's full.
                         // Finalize it and re-process the current span on a new line.
@@ -194,9 +210,6 @@ impl<'a, 'b> FontManager<'a, 'b> {
                              // The span was empty, do nothing.
                         }
                     }
-                    // #################################################################
-                    // ### BUG FIX ENDS HERE ###
-                    // #################################################################
                 }
 
                 lines.push(current_line_spans);
@@ -235,33 +248,49 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(())
     }
 
-    /// Renders a single segment of text with specified bold/italic styles.
     fn draw_text_span_segment(&mut self, canvas: &mut Canvas<Window>, text: &str, x: i32, y: i32, is_bold: bool, is_italic: bool) -> Result<(u32, u32), String> {
         if text.is_empty() {
             return Ok((0, 0));
         }
 
-        let original_style = self.font.get_style();
-        let mut current_style = original_style;
-        if is_bold { current_style = current_style | FontStyle::BOLD; }
-        if is_italic { current_style = current_style | FontStyle::ITALIC; }
-        self.font.set_style(current_style);
-
         let texture_creator = canvas.texture_creator();
-        let surface = self.font
-            .render(text)
-            .blended(Color::RGBA(255, 255, 255, 255))
-            .map_err(|e| e.to_string())?;
-        let texture = texture_creator
-            .create_texture_from_surface(&surface)
-            .map_err(|e| e.to_string())?;
-        let target_rect = Rect::new(x, y, surface.width(), surface.height());
-        canvas.copy(&texture, None, Some(target_rect))?;
+        
+        let primary = &mut self.font;
+        let fallback = self.fallback_font.as_mut();
 
-        self.font.set_style(original_style); // Reset style
-        Ok((surface.width(), surface.height()))
+        let mut try_fonts: Vec<&mut Font<'a, 'b>> = vec![primary];
+        if let Some(fb) = fallback {
+            try_fonts.push(fb);
+        }
+
+
+
+        for font in try_fonts {
+            let original_style = font.get_style();
+            let mut style = original_style;
+            if is_bold { style |= FontStyle::BOLD; }
+            if is_italic { style |= FontStyle::ITALIC; }
+            font.set_style(style);
+
+            match font.render(text).blended(Color::RGBA(255, 255, 255, 255)) {
+                Ok(surface) => {
+                    let texture = texture_creator.create_texture_from_surface(&surface).map_err(|e| e.to_string())?;
+                    let target_rect = Rect::new(x, y, surface.width(), surface.height());
+                    canvas.copy(&texture, None, Some(target_rect))?;
+                    font.set_style(original_style);
+                    return Ok((surface.width(), surface.height()));
+                }
+                Err(_) => {
+                    font.set_style(original_style);
+                    continue; // Try fallback
+                }
+            }
+        }
+
+        Err(format!("Failed to render text: {}", text))
     }
-    
+
+
     pub fn draw_single_line(&mut self, canvas: &mut Canvas<Window>, text: &str, x: i32, y: i32, ) -> Result<(), String> {
         self.draw_text_span_segment(canvas, text, x, y, false, false)?;
         Ok(())
@@ -337,60 +366,6 @@ impl<'a, 'b> FontManager<'a, 'b> {
         let (width, height) = (surface.width(), surface.height());
         Ok((surface, width, height))
     }
-
-
-    pub fn draw_text_in_box(
-        &mut self,
-        canvas: &mut Canvas<Window>,
-        text: &str,
-        x: i32,
-        y: i32,
-        box_width: u32,
-        box_height: u32,
-        min_pt: u16,
-        max_pt: u16,
-        highlight: bool
-    ) -> Result<(u32, u32), String> {
-        if text.is_empty() {
-            return Ok((0, 0));
-        }
-
-        // 1) pick best size (largest pt that wraps ≤ box_height)
-        let best_pt = self.find_fitting_size(text, box_width, box_height, min_pt, max_pt)?;
-        println!("{:?}", best_pt);
-        let config = Config::new();
-
-        // 2) reload font at that size
-        let new_font = self.ttf_context
-            .load_font(config.font_path, best_pt)
-            .map_err(|e| e.to_string())?;
-
-        // 3) wrap & render into a surface
-        let surface = new_font
-            .render(text)
-            .blended_wrapped(Color::RGBA(255, 255, 255, 255), box_width)
-            .map_err(|e| e.to_string())?;
-
-        // 4) create the texture
-        let texture_creator = canvas.texture_creator();
-        let texture = texture_creator
-            .create_texture_from_surface(&surface)
-            .map_err(|e| e.to_string())?;
-
-        let w = surface.width();
-        let h = surface.height();
-
-        if highlight {
-            let highlight_rect = Rect::new(18, y - 2, w + 4, h + 4);
-            canvas.set_draw_color(Color::RGB(80, 80, 80));
-            canvas.fill_rect(highlight_rect)?;
-
-        }
-
-        let target_rect = Rect::new(x, y, w, h);
-        canvas.copy(&texture, None, Some(target_rect))?;
-        Ok((w, h))
-    }
 }
 
 // #################################################################
@@ -398,7 +373,8 @@ impl<'a, 'b> FontManager<'a, 'b> {
 // #################################################################
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::Path;
+use super::*;
     use std::sync::OnceLock;
 
     // FIX: Use a static OnceLock to ensure the TTF context is initialized exactly once for all tests.
@@ -415,8 +391,8 @@ mod tests {
         // NOTE: This test requires a font file at the specified path.
         // A common font like DejaVuSans is used here, which is often found on Linux.
         // For other systems, you may need to change this path or place a font at `tests/font.ttf`.
-        let font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-        FontManager::new(ttf_context, font_path, 16).expect("Failed to load font for testing")
+        let font_path = Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+        FontManager::new(ttf_context, &font_path.to_path_buf(), 16).expect("Failed to load font for testing")
     }
 
     #[test]
