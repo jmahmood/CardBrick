@@ -42,7 +42,8 @@ pub fn main() -> Result<(), String> {
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
-    let _mixer_context = mixer::init(InitFlag::MP3 | InitFlag::FLAC | InitFlag::MOD)?;
+    let _mixer_context = mixer::init(InitFlag::empty())?;
+    
     mixer::open_audio(44_100, AUDIO_S16LSB, DEFAULT_CHANNELS, 1_024)?;
     mixer::allocate_channels(4);
 
