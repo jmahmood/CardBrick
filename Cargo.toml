@@ -6,28 +6,36 @@ license     = "GPL-3.0-or-later"
 description = "An Anki-compatible flash-card app for the TrimUI Brick"
 
 [dependencies]
+# Pure Rust graphics and windowing
+macroquad = "0.4"
+
+# Input handling
+evdev = "0.12"
+nix = { version = "0.29", features = ["fs"] }
+
+# Font rendering and layout
+fontdue = "0.8"
+ab_glyph = "0.2"
+
+# Audio (pure Rust)
+rodio = { version = "0.19", default-features = false, features = ["wav", "mp3"] }
+
+# Core dependencies
+anyhow = "1.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
-zip      = "1.1"
-image    = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-tl       = { version = "0.7" }
-tiny_http = "0.12"
-chrono   = { version = "0.4", features = ["serde"] }
-log      = "0.4"
+zip = "1.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+tl = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
 env_logger = "0.11"
-serde    = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.10"
-rand     = "0.8"
+rand = "0.8"
 
-[dependencies.sdl2]
-version = "0.35"
-default-features = false
-features = ["bundled", "ttf","image","gfx","mixer","static-link","use-vcpkg"]
-
-[package.metadata.vcpkg]
-dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "sdl2-gfx", "sdl2-mixer"]
-git = "https://github.com/microsoft/vcpkg"
-rev = "2024.05.24" # release 2024.05.24 # to check for a new one, check https://github.com/microsoft/vcpkg/releases
+# Remove web server for embedded version
+# tiny_http = "0.12"
 
 [package.metadata.vcpkg.target]
 x86_64-pc-windows-msvc = { triplet = "x64-windows-static-md" }
@@ -38,4 +46,16 @@ default = []
 
 [[bin]]
 name = "cardbrick"
-path = "src/main.rs"
+path = "src/final_main.rs"
+
+[[bin]]
+name = "test_display"
+path = "src/test_display.rs"
+
+[[bin]]
+name = "test_minimal"
+path = "src/test_minimal.rs"
+
+[[bin]]
+name = "simple_main"
+path = "src/simple_main.rs"
