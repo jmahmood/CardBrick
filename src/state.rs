@@ -5,10 +5,9 @@ use std::sync::mpsc::Receiver;
 
 use crate::config::Config;
 use crate::deck::Deck;
-// TODO: Re-enable when scenes are fixed
 use crate::scenes::deck_selection::DeckSelectionState;
 use crate::scenes::main_menu::MainMenuState;
-// use crate::scenes::studying::StudyingState;
+use crate::scenes::studying::StudyingState;
 use crate::ui::font::TextLayout;
 use crate::ui::{CanvasManager, FontManager, sprite::Sprite};
 use rodio::{OutputStream, OutputStreamHandle, Decoder, Source};
@@ -34,7 +33,6 @@ pub enum LoaderMessage {
 pub enum GameState {
     MainMenu(MainMenuState),
     GoToDeckSelection,
-    // TODO: Re-enable when scenes are fixed
     DeckSelection(DeckSelectionState),
     Loading {
         rx: Receiver<LoaderMessage>,
@@ -42,8 +40,7 @@ pub enum GameState {
         progress: f32,
         deck_id_to_load: String,
     },
-    // Studying(StudyingState<'a>),
-    Studying(String), // Temporary placeholder
+    Studying(StudyingState<'static>),
     Error(String),
 }
 

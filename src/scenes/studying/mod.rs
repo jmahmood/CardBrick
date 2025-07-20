@@ -53,8 +53,8 @@ impl<'a> StudyingState<'a> {
     }
 }
 
-/// Draws the studying scene.
-/// This function was moved from main.rs.
+/// Draws the studying scene using macroquad rendering
+/// Maintains all Japanese learning functionality including ruby text support
 pub fn draw_studying_scene(
     studying_state: &mut StudyingState,
     font_manager: &FontManager,
@@ -65,6 +65,8 @@ pub fn draw_studying_scene(
 ) -> Result<(), String> {
     let margin: u32 = 30;
     let total = studying_state.scheduler.total_session_cards();
+    
+    // Draw progress bar
     if total > 0 {
         let completed = studying_state.scheduler.reviews_complete();
         let bar_height = 25.0;
@@ -75,7 +77,7 @@ pub fn draw_studying_scene(
         let bg_h = bar_height * canvas_manager.get_scale_factor();
         draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(60, 60, 60, 255));
         
-        // Draw progress bar foreground
+        // Draw progress bar foreground with color gradient
         let progress = completed as f32 / total as f32;
         let progress_width = 512.0 * progress;
         let fg_w = progress_width * canvas_manager.get_scale_factor();
@@ -91,40 +93,65 @@ pub fn draw_studying_scene(
         hint_font_manager.draw_single_line(&progress_text, text_x, text_y, canvas_manager)?;
     }
     
+    // Draw animated sprite
     sprite.draw(canvas_manager)?;
     
-    // Note: Macroquad doesn't have built-in clipping, so we'll need to handle this in the drawing
+    // Set clipping rectangle for scrollable content area
     canvas_manager.set_clip_rect(0, 25, 512, 305);
 
     if !studying_state.is_answer_revealed {
-        let layout_to_draw = if studying_state.show_ruby_text { &studying_state.front_layout_ruby } else { &studying_state.front_layout_default };
+        // Question mode: Show large front text only
+        let layout_to_draw = if studying_state.show_ruby_text { 
+            &studying_state.front_layout_ruby 
+        } else { 
+            &studying_state.front_layout_default 
+        };
+        
         if let Some(layout) = layout_to_draw {
             font_manager.draw_layout(layout, margin as i32, 40, studying_state.show_ruby_text, canvas_manager)?;
         }
     } else {
+        // Answer mode: Show small front + full back text with scrolling
         let mut y_pos = 40 - studying_state.scroll_offset;
-        let small_front_layout_to_draw = if studying_state.show_ruby_text { &studying_state.small_front_layout_ruby } else { &studying_state.small_front_layout_default };
-        let back_layout_to_draw = if studying_state.show_ruby_text { &studying_state.back_layout_ruby } else { &studying_state.back_layout_default };
+        
+        // Draw small front text
+        let small_front_layout_to_draw = if studying_state.show_ruby_text { 
+            &studying_state.small_front_layout_ruby 
+        } else { 
+            &studying_state.small_front_layout_default 
+        };
+        
         if let Some(layout) = small_front_layout_to_draw {
             small_font_manager.draw_layout(layout, margin as i32, y_pos, studying_state.show_ruby_text, canvas_manager)?;
             y_pos += layout.total_height + 20;
         }
+        
+        // Draw back text (the answer)
+        let back_layout_to_draw = if studying_state.show_ruby_text { 
+            &studying_state.back_layout_ruby 
+        } else { 
+            &studying_state.back_layout_default 
+        };
+        
         if let Some(layout) = back_layout_to_draw {
             font_manager.draw_layout(layout, margin as i32, y_pos, studying_state.show_ruby_text, canvas_manager)?;
         }
     }
 
+    // Draw "Deck Complete!" message if done
     if studying_state.is_done {
         if let Some(layout) = &studying_state.done_layout {
             font_manager.draw_layout(layout, 150, 150, studying_state.show_ruby_text, canvas_manager)?;
         }
     }
     
+    // Clear clipping and draw hint text at bottom
     canvas_manager.clear_clip_rect();
     if studying_state.is_answer_revealed {
         if let Some(hint_layout) = &studying_state.hint_layout {
             hint_font_manager.draw_layout(hint_layout, margin as i32, 335, studying_state.show_ruby_text, canvas_manager)?;
         }
     }
+    
     Ok(())
 }

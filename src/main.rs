@@ -810,9 +810,8 @@ impl CardBrickApp {
 
         match &mut self.app_state.game_state {
             GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(&mut self.app_state, input),
-            // TODO: Fix deck_selection and studying input handlers
             GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(&mut self.app_state, input),
-            // GameState::Studying(_) => scenes::studying::input::handle_studying_input(&mut self.app_state, input),
+            GameState::Studying(_) => scenes::studying::input::handle_studying_input(&mut self.app_state, input),
             _ => Ok(()),
         }
     }
@@ -824,14 +823,12 @@ impl CardBrickApp {
                 if let Ok(msg) = rx.try_recv() {
                     match msg {
                         LoaderMessage::Complete(Ok(deck)) => {
-                            let _scheduler = Box::new(Sm2Scheduler::new(deck));
-                            let _db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                            let _replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                            // TODO: Re-enable when studying is fixed
-                            // let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
-                            // TODO: Fix studying logic when implementing studying scene
-                            // scenes::studying::logic::load_next_card(&mut studying_state, &mut self.app_state.font_manager, &mut self.app_state.small_font_manager);
-                            GameState::Studying("Studying not implemented yet".to_string())
+                            let scheduler = Box::new(Sm2Scheduler::new(deck));
+                            let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
+                            scenes::studying::logic::load_next_card(&mut studying_state, &mut self.app_state.font_manager, &mut self.app_state.small_font_manager);
+                            GameState::Studying(studying_state)
                         }
                         LoaderMessage::Complete(Err(e)) => GameState::Error(e),
                         LoaderMessage::Progress(p) => GameState::Loading { rx, loading_layout, progress: p, deck_id_to_load },
@@ -874,9 +871,15 @@ impl CardBrickApp {
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, loading_layout, *progress)
             },
-            GameState::Studying(message) => {
-                // TODO: Fix studying scene drawing
-                draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, message)
+            GameState::Studying(studying_state) => {
+                scenes::studying::draw_studying_scene(
+                    studying_state,
+                    &self.app_state.font_manager,
+                    &self.app_state.small_font_manager,
+                    &self.app_state.hint_font_manager,
+                    &mut self.app_state.sprite,
+                    &self.app_state.canvas_manager,
+                )
             },
             GameState::Error(e) => draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, e),
             GameState::GoToDeckSelection => {

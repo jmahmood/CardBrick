@@ -10,4 +10,3 @@ rsync -avz ~/CardBrick/assets/cardbrick.png root@10.0.0.159:/storage/application
 rsync -avz ~/CardBrick/assets/decks root@10.0.0.159:/storage/applications/CardBrick/decks
 scp ~/CardBrick/target/aarch64-unknown-linux-gnu/release/cardbrick root@10.0.0.159:/storage/applications/CardBrick/
 scp ~/CardBrick/CardBrick.sh root@10.0.0.159:/storage/applications
-
