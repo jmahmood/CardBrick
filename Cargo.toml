@@ -3,6 +3,7 @@ name        = "cardbrick"
 version     = "0.1.0"
 edition     = "2021"
 license     = "GPL-3.0-or-later"
+license-file = "LICENSE"
 description = "An Anki-compatible flash-card app for the TrimUI Brick"
 
 [dependencies]
