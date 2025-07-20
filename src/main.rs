@@ -1,4 +1,5 @@
 // CardBrick - Macroquad Version with Device Compatibility
+use crate::scenes::deck_selection::draw_deck_selection_scene;
 use std::time::Duration;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,8 +26,7 @@ use scheduler::{Scheduler, Sm2Scheduler};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
-// TODO: Re-enable when deck_selection is fixed
-// use scenes::deck_selection::DeckSelectionState;
+use scenes::deck_selection::DeckSelectionState;
 use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, AudioManager, map_evdev_to_brick_input};
 use ui::{CanvasManager, FontManager, sprite::Sprite};
 
@@ -811,7 +811,7 @@ impl CardBrickApp {
         match &mut self.app_state.game_state {
             GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(&mut self.app_state, input),
             // TODO: Fix deck_selection and studying input handlers
-            // GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(&mut self.app_state, input),
+            GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(&mut self.app_state, input),
             // GameState::Studying(_) => scenes::studying::input::handle_studying_input(&mut self.app_state, input),
             _ => Ok(()),
         }
@@ -824,9 +824,9 @@ impl CardBrickApp {
                 if let Ok(msg) = rx.try_recv() {
                     match msg {
                         LoaderMessage::Complete(Ok(deck)) => {
-                            let scheduler = Box::new(Sm2Scheduler::new(deck));
-                            let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                            let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            let _scheduler = Box::new(Sm2Scheduler::new(deck));
+                            let _db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            let _replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
                             // TODO: Re-enable when studying is fixed
                             // let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
                             // TODO: Fix studying logic when implementing studying scene
@@ -841,8 +841,11 @@ impl CardBrickApp {
                 }
             }
             GameState::GoToDeckSelection => {
-                // TODO: Create proper deck selection state
-                GameState::DeckSelection("Deck selection not implemented yet".to_string())
+                let new_state = DeckSelectionState::new(
+                    self.app_state.available_decks.clone(),
+                )?;
+
+                GameState::DeckSelection(new_state)
             }
             other_state => other_state,
         };
@@ -860,9 +863,13 @@ impl CardBrickApp {
                     main_menu_state
                 )
             },
-            GameState::DeckSelection(message) => {
+            GameState::DeckSelection(deck_selection_state) => {
                 // TODO: Fix deck_selection scene drawing
-                draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, message)
+                draw_deck_selection_scene(
+                    &self.app_state.font_manager, 
+                    &self.app_state.small_font_manager, 
+                    &self.app_state.canvas_manager,
+                    deck_selection_state)
             },
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, loading_layout, *progress)

@@ -6,7 +6,7 @@ use std::sync::mpsc::Receiver;
 use crate::config::Config;
 use crate::deck::Deck;
 // TODO: Re-enable when scenes are fixed
-// use crate::scenes::deck_selection::DeckSelectionState;
+use crate::scenes::deck_selection::DeckSelectionState;
 use crate::scenes::main_menu::MainMenuState;
 // use crate::scenes::studying::StudyingState;
 use crate::ui::font::TextLayout;
@@ -35,8 +35,7 @@ pub enum GameState {
     MainMenu(MainMenuState),
     GoToDeckSelection,
     // TODO: Re-enable when scenes are fixed
-    // DeckSelection(DeckSelectionState),
-    DeckSelection(String), // Temporary placeholder
+    DeckSelection(DeckSelectionState),
     Loading {
         rx: Receiver<LoaderMessage>,
         loading_layout: TextLayout,
