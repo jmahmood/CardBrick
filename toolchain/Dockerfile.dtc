@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM debian:bookworm AS builder
+
+ARG DTC_REF=v1.7.0           # or any commit / tag
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential git flex bison pkg-config \
+        libfdt-dev           \
+        zlib1g-dev           \
+        libyaml-dev ca-certificates libyaml*
+
+WORKDIR /src
+RUN git clone --depth 1 --branch "v1.7.0" https://github.com/dgibson/dtc.git .
+
+# full static build — we don’t care about size
+RUN make -C /src -j"$(nproc)" \
+        HAVE_LIBYAML=0 \
+        CFLAGS="-O2 -pipe -static" \
+        LDFLAGS="-static" \
+        dtc
+
+RUN strip /src/dtc
+
+
+ENTRYPOINT ["/src/dtc"]
+
+FROM --platform=$TARGETARCH scratch
+COPY --from=builder /src/dtc /
+ENTRYPOINT ["/dtc"]
