@@ -43,7 +43,13 @@ default = []
 
 [[bin]]
 name = "cardbrick"
+path = "src/main.rs"
+
+
+[[bin]]
+name = "demo_cardbrick"
 path = "src/demo_main.rs"
+
 
 [[bin]]
 name = "test_display"

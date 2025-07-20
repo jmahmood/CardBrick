@@ -1,11 +1,7 @@
 // src/scenes/main_menu/mod.rs
 
-use sdl2::pixels::Color;
-use sdl2::rect::Rect;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
-
-use crate::ui::FontManager;
+use macroquad::prelude::*;
+use crate::ui::{FontManager, CanvasManager};
 
 // This line was missing. It tells the main_menu module
 // that the input.rs file is part of it.
@@ -26,22 +22,34 @@ impl MainMenuState {
 /// Draws the main menu scene.
 /// This function was moved from main.rs.
 pub fn draw_main_menu_scene(
-    canvas: &mut Canvas<Window>,
-    font_manager: &mut FontManager,
+    font_manager: &FontManager,
+    canvas_manager: &CanvasManager,
     state: &MainMenuState,
 ) -> Result<(), String> {
     let options = ["Study", "Profile", "Quit"];
-    font_manager.draw_single_line(canvas, "CardBrick", 20, 20)?;
+    
+    // Draw background for logical canvas area
+    let (logical_width, logical_height) = canvas_manager.logical_size();
+    let (screen_x, screen_y) = canvas_manager.logical_to_screen(0.0, 0.0);
+    let screen_w = logical_width * canvas_manager.get_scale_factor();
+    let screen_h = logical_height * canvas_manager.get_scale_factor();
+    
+    draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 40, 45, 255));
+    
+    // Draw title
+    font_manager.draw_single_line("CardBrick", 20, 20, canvas_manager)?;
 
     let mut y_pos = 150;
     for (i, option) in options.iter().enumerate() {
         if i == state.selected_index {
             let (text_w, text_h) = font_manager.size_of_text(option)?;
-            let highlight_rect = Rect::new(18, y_pos, text_w + 4, text_h);
-            canvas.set_draw_color(Color::RGB(80, 80, 80));
-            canvas.fill_rect(highlight_rect)?;
+            let (highlight_x, highlight_y) = canvas_manager.logical_to_screen(18.0, y_pos as f32);
+            let highlight_w = (text_w + 4) as f32 * canvas_manager.get_scale_factor();
+            let highlight_h = text_h as f32 * canvas_manager.get_scale_factor();
+            
+            draw_rectangle(highlight_x, highlight_y, highlight_w, highlight_h, Color::from_rgba(80, 80, 80, 255));
         }
-        font_manager.draw_single_line(canvas, option, 20, y_pos)?;
+        font_manager.draw_single_line(option, 20, y_pos, canvas_manager)?;
         y_pos += 40;
     }
     Ok(())

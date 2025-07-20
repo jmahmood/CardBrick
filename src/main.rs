@@ -1,9 +1,16 @@
-// CardBrick - main.rs (Refactor Step 6: Deck Selection Scene)
-
-use crate::mixer::Channel;
-use crate::mixer::Chunk;
-use crate::state::Sfx;
+// CardBrick - Macroquad Version with Device Compatibility
+use std::time::Duration;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::io::Write;
+
+use macroquad::prelude::*;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Source};
+use std::io::Cursor;
+use log::{info, warn, error, debug};
+use evdev::Device as EvdevDevice;
+use std::os::fd::AsRawFd;
+
 mod config;
 mod deck;
 mod scheduler;
@@ -13,100 +20,895 @@ mod debug;
 mod scenes;
 mod state;
 
-use scenes::deck_selection::DeckSelectionState;
-use std::fs;
-use std::path::{Path};
-use std::time::Duration;
-
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
-use sdl2::rect::Rect;
-
 use config::Config;
 use scheduler::{Scheduler, Sm2Scheduler};
-use ui::{CanvasManager, FontManager, font::TextLayout, sprite::Sprite};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
-use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, map_to_brick_input};
+// TODO: Re-enable when deck_selection is fixed
+// use scenes::deck_selection::DeckSelectionState;
+use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, AudioManager, map_evdev_to_brick_input};
+use ui::{CanvasManager, FontManager, sprite::Sprite};
 
-use sdl2::mixer::{self, InitFlag, AUDIO_S16LSB, DEFAULT_CHANNELS};
+mod assets {
+    // Small menu font for fast startup
+    pub const MENU_FONT: &[u8] = include_bytes!("../assets/font/Ac437_Tandy1K-II_200L.ttf");
+    // Large font that supports Japanese characters (loaded in background)
+    pub const JAPANESE_FONT: &[u8] = include_bytes!("../assets/font/NotoSansCJK-Regular.ttc");
+    pub const CLICK_SOUND: &[u8] = include_bytes!("../assets/sfx/click.wav");
+    pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/sfx/open.wav");
+}
 
-pub fn main() -> Result<(), String> {
-    let config = Config::new();
+#[derive(Debug, Clone)]
+enum DeviceType { Desktop, TrimUIBrick, RG35XXPlus }
 
-    if let Err(e) = test_file_creation() {
-        panic!("[File Creation Test] FAILED with error: {}", e);
+/// Messages sent from background font loading thread
+pub enum BackgroundFontMessage {
+    Progress {
+        font_type: String,
+        progress: f32,
+        message: String,
+        size_info: String,
+    },
+    ReadyToLoadFont,
+}
+
+#[derive(Clone)]
+struct DeviceConfig {
+    device_type: DeviceType,
+    display_width: u32,
+    display_height: u32,
+    fullscreen: bool,
+}
+
+impl DeviceConfig {
+    fn detect_device() -> Self {
+        info!("Detecting device type...");
+        
+        // Check for TrimUI Brick
+        let trimui_path = "/mnt/SDCARD/Tools";
+        debug!("Checking for TrimUI Brick at: {}", trimui_path);
+        if std::path::Path::new(trimui_path).exists() {
+            info!("Detected TrimUI Brick device");
+            return Self {
+                device_type: DeviceType::TrimUIBrick,
+                display_width: 640,
+                display_height: 480,
+                fullscreen: true,
+            };
+        }
+        
+        // Check for RG35XX Plus
+        let rg35xx_path = "/storage/.config/distribution";
+        debug!("Checking for RG35XX Plus at: {}", rg35xx_path);
+        if std::path::Path::new(rg35xx_path).exists() {
+            info!("Detected RG35XX Plus device");
+            return Self {
+                device_type: DeviceType::RG35XXPlus,
+                display_width: 640,
+                display_height: 480,
+                fullscreen: true,
+            };
+        }
+        
+        // Default to desktop
+        info!("Defaulting to Desktop device");
+        Self {
+            device_type: DeviceType::Desktop,
+            display_width: 1024,
+            display_height: 768,
+            fullscreen: false,
+        }
     }
+}
 
-    let sdl_context = sdl2::init()?;
-    let video_subsystem = sdl_context.video()?;
-    let _mixer_context = mixer::init(InitFlag::empty())?;
+struct CardBrickApp {
+    app_state: AppState,
+    last_input_time: f64,
+    needs_redraw: bool,
+}
+
+impl CardBrickApp {
+    async fn new_with_progress(loading_canvas: &mut CanvasManager, loading_steps: &[&str]) -> Result<Self, String> {
+        info!("Initializing CardBrick application...");
+        
+        // Step 0: Initialize configuration
+        Self::show_loading_step(loading_canvas, loading_steps, 0).await;
+        let config = Config::new();
+
+        if let Err(e) = test_file_creation() {
+            return Err(format!("[File Creation Test] FAILED with error: {}", e));
+        }
+
+        // Initialize audio
+        let audio = AudioManager::new().map_err(|e| {
+            error!("Audio init failed: {}", e);
+            e
+        })?;
+
+        // Initialize gamepad
+        let gamepad = find_gamepad();
+
+        // Step 1: Load small menu font for immediate startup
+        info!("Loading small menu font from embedded bytes (size: {} bytes)", assets::MENU_FONT.len());
+        let _menu_font = Self::load_menu_font_with_progress(loading_canvas, loading_steps, 1).await?;
+
+        // Step 2: Create canvas manager
+        Self::show_loading_step(loading_canvas, loading_steps, 2).await;
+        let canvas_manager = CanvasManager::new()?;
+        
+        // Step 3: Create basic font managers using menu font for now
+        Self::show_loading_step(loading_canvas, loading_steps, 3).await;
+        let menu_font = load_ttf_font_from_bytes(assets::MENU_FONT)
+            .map_err(|e| format!("Failed to load menu font: {:?}", e))?;
+            
+        // Create temporary font managers using the small menu font
+        let font_manager = FontManager::from_loaded_font(
+            Some(menu_font.clone()), None, config.font_size_large.try_into().unwrap()
+        );
+        let small_font_manager = FontManager::from_loaded_font(
+            Some(menu_font.clone()), None, config.font_size_medium.try_into().unwrap()
+        );
+        let hint_font_manager = FontManager::from_loaded_font(
+            Some(menu_font.clone()), None, config.font_size_small.try_into().unwrap()
+        );
+
+        // Step 4: Load available decks
+        Self::show_loading_step(loading_canvas, loading_steps, 4).await;
+        let available_decks = load_decks_from_directory(Path::new(&config.decks_directory))?;
+        if available_decks.is_empty() {
+            return Err(format!(
+                "No .apkg decks found in the '{}' directory.",
+                config.decks_directory.display()
+            ));
+        }
+
+        // Step 5: Start background font loading (non-blocking)
+        Self::show_loading_step(loading_canvas, loading_steps, 5).await;
+        let background_font_receiver = Self::start_background_font_loading().await?;
+
+        // Step 6: Finalize setup
+        Self::show_loading_step(loading_canvas, loading_steps, 6).await;
+
+        let app_state = AppState {
+            game_state: GameState::MainMenu(MainMenuState::new()),
+            available_decks,
+            canvas_manager,
+            font_manager,
+            small_font_manager,
+            hint_font_manager,
+            sprite: Sprite::new(),
+            config,
+            gamepad,
+            audio,
+            background_font_receiver: Some(background_font_receiver),
+            japanese_font_ready: false,
+        };
+
+        info!("CardBrick application initialized successfully");
+        Ok(Self {
+            app_state,
+            last_input_time: 0.0,
+            needs_redraw: true,
+        })
+    }
     
-    mixer::open_audio(44_100, AUDIO_S16LSB, DEFAULT_CHANNELS, 1_024)?;
-    mixer::allocate_channels(4);
-
-    let _audio_subsystem = sdl_context.audio()?;
-
-    let sfx = Sfx{
-        up_down_sound: Chunk::from_file(config.sfx_directory.join("click.wav"))?,
-        open_sound: Chunk::from_file(config.sfx_directory.join("open.wav"))?,
-        mixer_ctx: _mixer_context
-    };
-
-    let card = Chunk::from_file(config.sfx_directory.join("card-shuffle.wav"))?;
-
-    Channel::all().play(&card, 0)?;
-
-
-    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
-    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
-
-    let window = video_subsystem.window(config.window_title, config.window_width, config.window_height).position_centered().build().map_err(|e| e.to_string())?;
-    let sdl_canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    let texture_creator = sdl_canvas.texture_creator();
-
-    let available_decks = load_decks_from_directory(Path::new(&config.decks_directory))?;
-
-    if available_decks.is_empty() {
-        return Err(format!(
-            "No .apkg decks found in the '{}' directory.",
-            config.decks_directory.display()
-        ));
+    async fn show_loading_step(loading_canvas: &mut CanvasManager, loading_steps: &[&str], step: usize) {
+        loading_canvas.start_frame().unwrap();
+        
+        // Draw loading background
+        let (logical_width, logical_height) = loading_canvas.logical_size();
+        let (screen_x, screen_y) = loading_canvas.logical_to_screen(0.0, 0.0);
+        let screen_w = logical_width * loading_canvas.get_scale_factor();
+        let screen_h = logical_height * loading_canvas.get_scale_factor();
+        
+        draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 40, 45, 255));
+        
+        // Draw current step
+        let progress = (step as f32 + 1.0) / loading_steps.len() as f32;
+        draw_text("Loading CardBrick...", screen_x + 100.0, screen_y + 180.0, 32.0, WHITE);
+        if step < loading_steps.len() {
+            draw_text(loading_steps[step], screen_x + 100.0, screen_y + 220.0, 20.0, Color::from_rgba(200, 200, 200, 255));
+        }
+        
+        // Draw progress bar
+        let (bg_x, bg_y) = loading_canvas.logical_to_screen(100.0, 260.0);
+        let bg_w = 312.0 * loading_canvas.get_scale_factor();
+        let bg_h = 30.0 * loading_canvas.get_scale_factor();
+        draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(80, 80, 80, 255));
+        
+        let fg_w = bg_w * progress;
+        draw_rectangle(bg_x, bg_y, fg_w, bg_h, Color::from_rgba(100, 180, 255, 255));
+        
+        loading_canvas.end_frame();
+        next_frame().await;
     }
-
-    // Setup joysticks
-    let gc_subsystem = sdl_context.game_controller()?;
-    let n = gc_subsystem.num_joysticks()?;
-    let mut controllers = Vec::new();
-    for idx in 0..n {
-        if gc_subsystem.is_game_controller(idx) {
-            match gc_subsystem.open(idx) {
-                Ok(controller) => {
-                    log::debug!("opened controller {}: {:?}", idx, controller.name());
-                    controllers.push(controller);
-                }
-                Err(e) => log::warn!("failed to open controller {}: {}", idx, e),
+    
+    async fn load_embedded_font_with_progress(
+        loading_canvas: &mut CanvasManager, 
+        loading_steps: &[&str], 
+        step: usize
+    ) -> Result<Font, String> {
+        let total_size = assets::JAPANESE_FONT.len();
+        let size_kb = total_size as f32 / 1024.0;
+        
+        // Show 25% progress increments for reading
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            "Starting embedded font load",
+            0.0
+        ).await;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Reading embedded font ({:.1}KB - 25%)", size_kb * 0.25),
+            0.25
+        ).await;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Reading embedded font ({:.1}KB - 50%)", size_kb * 0.50),
+            0.50
+        ).await;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Reading embedded font ({:.1}KB - 75%)", size_kb * 0.75),
+            0.75
+        ).await;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Read complete ({:.1}KB) - parsing font", size_kb),
+            0.85
+        ).await;
+        
+        // Actually load the font (this is the real work)
+        let font = load_ttf_font_from_bytes(assets::JAPANESE_FONT)
+            .map_err(|e| format!("Failed to load Japanese font: {:?}", e))?;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            "Embedded font ready",
+            1.0
+        ).await;
+        
+        Ok(font)
+    }
+    
+    async fn load_menu_font_with_progress(
+        loading_canvas: &mut CanvasManager, 
+        loading_steps: &[&str], 
+        step: usize
+    ) -> Result<Font, String> {
+        let size_kb = assets::MENU_FONT.len() as f32 / 1024.0;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Loading menu font ({:.1}KB)", size_kb),
+            0.5
+        ).await;
+        
+        // Load the small menu font (should be very fast)
+        let font = load_ttf_font_from_bytes(assets::MENU_FONT)
+            .map_err(|e| format!("Failed to load menu font: {:?}", e))?;
+        
+        Self::show_loading_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            "Menu font ready",
+            1.0
+        ).await;
+        
+        Ok(font)
+    }
+    
+    async fn load_font_manager_with_progress(
+        loading_canvas: &mut CanvasManager,
+        loading_steps: &[&str],
+        step: usize,
+        font_name: &str,
+        font_path: &PathBuf,
+        font_size: u16
+    ) -> Result<FontManager, String> {
+        if !font_path.exists() {
+            Self::show_loading_progress(
+                loading_canvas, 
+                loading_steps, 
+                step, 
+                &format!("Skipping {} (file not found)", font_name),
+                1.0
+            ).await;
+            return Ok(FontManager::from_loaded_font(None, None, font_size));
+        }
+        
+        // Get file size for progress calculation
+        let file_size = std::fs::metadata(font_path).map_err(|e| e.to_string())?.len() as usize;
+        
+        // Load file with real progress tracking
+        let buffer = Self::load_file_with_progress(
+            loading_canvas,
+            loading_steps,
+            step,
+            font_path,
+            &format!("Loading {} font", font_name),
+            0.0,
+            0.8  // File loading takes 80% of the step
+        ).await?;
+        
+        // Animate to parsing phase
+        Self::animate_progress_smooth(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Parsing {} font...", font_name),
+            0.8,
+            0.95,
+            300  // 300ms animation
+        ).await;
+        
+        // Parse font
+        let font = load_ttf_font_from_bytes(&buffer)
+            .map_err(|e| format!("Failed to load {}: {:?}", font_name, e))?;
+        
+        // Animate to completion
+        Self::animate_progress_smooth(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Completed {} font", font_name),
+            0.95,
+            1.0,
+            100  // 100ms to completion
+        ).await;
+        
+        Ok(FontManager::from_loaded_font(Some(font), None, font_size))
+    }
+    
+    async fn load_font_manager_with_fallback_progress(
+        loading_canvas: &mut CanvasManager,
+        loading_steps: &[&str],
+        step: usize,
+        font_name: &str,
+        primary_path: &PathBuf,
+        fallback_path: Option<&PathBuf>,
+        font_size: u16
+    ) -> Result<FontManager, String> {
+        // Load primary font (50% of total step)
+        let primary_font = if primary_path.exists() {
+            let buffer = Self::load_file_with_progress(
+                loading_canvas,
+                loading_steps,
+                step,
+                primary_path,
+                &format!("Loading primary {}", font_name),
+                0.0,
+                0.4
+            ).await?;
+            
+            Self::animate_progress_smooth(
+                loading_canvas,
+                loading_steps,
+                step,
+                &format!("Parsing primary {}", font_name),
+                0.4,
+                0.5,
+                200
+            ).await;
+            
+            Some(load_ttf_font_from_bytes(&buffer).map_err(|e| format!("Failed to load primary font: {:?}", e))?)
+        } else {
+            Self::animate_progress_smooth(
+                loading_canvas,
+                loading_steps,
+                step,
+                &format!("Primary {} not found", font_name),
+                0.0,
+                0.5,
+                100
+            ).await;
+            None
+        };
+        
+        // Load fallback font (remaining 50% of total step)
+        let fallback_font = match fallback_path {
+            Some(path) if path.exists() => {
+                let buffer = Self::load_file_with_progress(
+                    loading_canvas,
+                    loading_steps,
+                    step,
+                    path,
+                    &format!("Loading fallback {}", font_name),
+                    0.5,
+                    0.9
+                ).await?;
+                
+                Self::animate_progress_smooth(
+                    loading_canvas,
+                    loading_steps,
+                    step,
+                    &format!("Parsing fallback {}", font_name),
+                    0.9,
+                    0.95,
+                    200
+                ).await;
+                
+                Some(load_ttf_font_from_bytes(&buffer).map_err(|e| format!("Failed to load fallback font: {:?}", e))?)
+            },
+            _ => {
+                Self::animate_progress_smooth(
+                    loading_canvas,
+                    loading_steps,
+                    step,
+                    &format!("No fallback for {}", font_name),
+                    0.5,
+                    0.95,
+                    100
+                ).await;
+                None
             }
+        };
+        
+        Self::animate_progress_smooth(
+            loading_canvas,
+            loading_steps,
+            step,
+            &format!("Completed {}", font_name),
+            0.95,
+            1.0,
+            100
+        ).await;
+        
+        Ok(FontManager::from_loaded_font(primary_font, fallback_font, font_size))
+    }
+    
+    
+    async fn show_loading_progress(
+        loading_canvas: &mut CanvasManager,
+        loading_steps: &[&str],
+        step: usize,
+        detailed_msg: &str,
+        progress: f32
+    ) {
+        loading_canvas.start_frame().unwrap();
+        
+        // Draw loading background
+        let (logical_width, logical_height) = loading_canvas.logical_size();
+        let (screen_x, screen_y) = loading_canvas.logical_to_screen(0.0, 0.0);
+        let screen_w = logical_width * loading_canvas.get_scale_factor();
+        let screen_h = logical_height * loading_canvas.get_scale_factor();
+        
+        draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 40, 45, 255));
+        
+        // Draw current step with detailed progress
+        let overall_progress = (step as f32 + progress) / loading_steps.len() as f32;
+        draw_text("Loading CardBrick...", screen_x + 100.0, screen_y + 160.0, 32.0, WHITE);
+        if step < loading_steps.len() {
+            draw_text(loading_steps[step], screen_x + 100.0, screen_y + 190.0, 20.0, Color::from_rgba(200, 200, 200, 255));
+        }
+        draw_text(detailed_msg, screen_x + 100.0, screen_y + 220.0, 16.0, Color::from_rgba(150, 150, 150, 255));
+        
+        // Draw overall progress bar
+        let (bg_x, bg_y) = loading_canvas.logical_to_screen(100.0, 250.0);
+        let bg_w = 312.0 * loading_canvas.get_scale_factor();
+        let bg_h = 20.0 * loading_canvas.get_scale_factor();
+        draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(80, 80, 80, 255));
+        
+        let fg_w = bg_w * overall_progress;
+        draw_rectangle(bg_x, bg_y, fg_w, bg_h, Color::from_rgba(100, 180, 255, 255));
+        
+        // Draw step-specific progress bar
+        let (step_bg_x, step_bg_y) = loading_canvas.logical_to_screen(100.0, 280.0);
+        let step_bg_h = 15.0 * loading_canvas.get_scale_factor();
+        draw_rectangle(step_bg_x, step_bg_y, bg_w, step_bg_h, Color::from_rgba(60, 60, 60, 255));
+        
+        let step_fg_w = bg_w * progress;
+        draw_rectangle(step_bg_x, step_bg_y, step_fg_w, step_bg_h, Color::from_rgba(80, 160, 255, 255));
+        
+        loading_canvas.end_frame();
+        next_frame().await;
+    }
+    
+    async fn load_file_with_progress(
+        loading_canvas: &mut CanvasManager,
+        loading_steps: &[&str],
+        step: usize,
+        file_path: &PathBuf,
+        base_message: &str,
+        progress_start: f32,
+        progress_end: f32
+    ) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        
+        let file_size = std::fs::metadata(file_path).map_err(|e| e.to_string())?.len() as usize;
+        let mut file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
+        let mut buffer = Vec::with_capacity(file_size);
+        
+        // Determine chunk size based on file size for 5% increments
+        let target_updates = 20; // 20 updates = 5% increments
+        let chunk_size = (file_size / target_updates).max(4096).min(64 * 1024); // 4KB minimum, 64KB maximum
+        
+        let mut temp_buffer = vec![0u8; chunk_size];
+        let mut last_progress_update = 0.0;
+        
+        loop {
+            let bytes_read = file.read(&mut temp_buffer).map_err(|e| e.to_string())?;
+            if bytes_read == 0 { break; }
+            
+            buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+            
+            // Calculate progress within this step
+            let file_progress = buffer.len() as f32 / file_size as f32;
+            let step_progress = progress_start + (progress_end - progress_start) * file_progress;
+            
+            // Only update display every 5% (0.05) to avoid too many updates
+            if step_progress - last_progress_update >= 0.05 || file_progress >= 1.0 {
+                Self::show_loading_progress(
+                    loading_canvas,
+                    loading_steps,
+                    step,
+                    &format!("{} ({:.1}KB/{:.1}KB)", base_message, buffer.len() as f32 / 1024.0, file_size as f32 / 1024.0),
+                    step_progress
+                ).await;
+                last_progress_update = step_progress;
+            }
+        }
+        
+        Ok(buffer)
+    }
+    
+    async fn animate_progress_smooth(
+        loading_canvas: &mut CanvasManager,
+        loading_steps: &[&str],
+        step: usize,
+        message: &str,
+        start_progress: f32,
+        end_progress: f32,
+        duration_ms: u64
+    ) {
+        let start_time = macroquad::time::get_time();
+        let duration_seconds = duration_ms as f64 / 1000.0;
+        
+        loop {
+            let elapsed = macroquad::time::get_time() - start_time;
+            if elapsed >= duration_seconds {
+                // Ensure we end exactly at the target
+                Self::show_loading_progress(
+                    loading_canvas,
+                    loading_steps,
+                    step,
+                    message,
+                    end_progress
+                ).await;
+                break;
+            }
+            
+            // Smooth interpolation (ease-out curve)
+            let t = elapsed / duration_seconds;
+            let eased_t = 1.0 - (1.0 - t).powi(3); // Cubic ease-out
+            let current_progress = start_progress + (end_progress - start_progress) * eased_t as f32;
+            
+            Self::show_loading_progress(
+                loading_canvas,
+                loading_steps,
+                step,
+                message,
+                current_progress
+            ).await;
         }
     }
 
-    let mut app_state = AppState {
-        game_state: GameState::MainMenu(MainMenuState::new()),
-        available_decks,
-        canvas_manager: CanvasManager::new(sdl_canvas, &texture_creator)?,
-        font_manager: FontManager::new(&ttf_context, &config.font_path, config.font_size_large.try_into().unwrap())?,
-        small_font_manager: FontManager::new(&ttf_context, &config.font_path, config.font_size_medium.try_into().unwrap())?,
-        hint_font_manager: FontManager::new_with_fallback(&ttf_context,  
-            &config.command_font_path, Some(&config.emoji_font_path), config.font_size_small.try_into().unwrap())?,
-        sprite: Sprite::new(),
-        config,
-        controllers: controllers,
-        sfx: sfx,
-    };
-    
-    run(&mut app_state, &mut sdl_context.event_pump()?)
+    async fn start_background_font_loading() -> Result<std::sync::mpsc::Receiver<BackgroundFontMessage>, String> {
+        use std::sync::mpsc;
+        use std::thread;
+        
+        let (tx, rx) = mpsc::channel();
+        
+        // Start background thread for simulating font loading progress
+        thread::spawn(move || {
+            info!("Starting background font loading progress simulation...");
+            
+            let total_size = assets::JAPANESE_FONT.len();
+            let progress_points = [0.0, 0.25, 0.5, 0.75, 0.85];
+            
+            for (i, &progress) in progress_points.iter().enumerate() {
+                let message = match i {
+                    0 => "Starting Japanese font parsing...",
+                    1 => "Parsing font tables...",
+                    2 => "Loading character mappings...",
+                    3 => "Processing CJK glyphs...",
+                    4 => "Finalizing font data...",
+                    _ => "Loading Japanese font...",
+                };
+                
+                if let Err(e) = tx.send(BackgroundFontMessage::Progress {
+                    font_type: "Japanese".to_string(),
+                    progress,
+                    message: message.to_string(),
+                    size_info: format!("{:.1}KB", total_size as f32 / 1024.0),
+                }) {
+                    error!("Failed to send progress update: {}", e);
+                }
+                
+                // Simulate parsing work
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            
+            // Signal that we're ready to load the font on the main thread
+            if let Err(e) = tx.send(BackgroundFontMessage::ReadyToLoadFont) {
+                error!("Failed to send font loading signal: {}", e);
+            }
+            
+            info!("Background font loading progress simulation completed");
+        });
+        
+        Ok(rx)
+    }
+
+    fn handle_background_font_messages(&mut self) {
+        let mut messages_to_process = Vec::new();
+        let mut should_remove_receiver = false;
+        
+        if let Some(ref receiver) = self.app_state.background_font_receiver {
+            // Collect all available background font messages
+            while let Ok(message) = receiver.try_recv() {
+                messages_to_process.push(message);
+            }
+        }
+        
+        // Process the collected messages
+        for message in messages_to_process {
+            match message {
+                BackgroundFontMessage::Progress { font_type, progress, message, size_info } => {
+                    debug!("Background font loading progress: {} - {:.1}% - {} ({})", 
+                           font_type, progress * 100.0, message, size_info);
+                },
+                BackgroundFontMessage::ReadyToLoadFont => {
+                    info!("Loading Japanese font on main thread...");
+                    // Load the font on the main thread (macroquad requirement)
+                    match load_ttf_font_from_bytes(assets::JAPANESE_FONT) {
+                        Ok(font) => {
+                            info!("Japanese font loaded successfully on main thread");
+                            // Update font managers with the new Japanese font
+                            self.app_state.font_manager = FontManager::from_loaded_font(
+                                Some(font.clone()), 
+                                None, // No fallback needed since Japanese font is comprehensive
+                                32
+                            );
+                            self.app_state.small_font_manager = FontManager::from_loaded_font(
+                                Some(font.clone()), 
+                                None, // No fallback needed since Japanese font is comprehensive
+                                20
+                            );
+                            self.app_state.hint_font_manager = FontManager::from_loaded_font(
+                                Some(font), 
+                                None, // No fallback needed since Japanese font is comprehensive
+                                16
+                            );
+                            self.app_state.japanese_font_ready = true;
+                            should_remove_receiver = true;
+                        },
+                        Err(e) => {
+                            error!("Failed to load Japanese font on main thread: {:?}", e);
+                            // Keep using the menu font as fallback
+                            should_remove_receiver = true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Remove the receiver if we're done with font loading
+        if should_remove_receiver {
+            self.app_state.background_font_receiver = None;
+        }
+    }
+
+    fn can_enter_study_mode(&self) -> bool {
+        // For now, we allow study mode even if Japanese font isn't ready
+        // The menu font can display basic text, and Japanese font will load in background
+        // In the future, we could show a "Fonts loading..." message for Japanese content
+        true
+    }
+
+    fn update(&mut self) -> Result<(), String> {
+        let current_time = get_time();
+        let mut input_handled = false;
+
+        // Handle background font loading messages
+        self.handle_background_font_messages();
+
+        // Handle gamepad input
+        let events = if let Some(gamepad) = &mut self.app_state.gamepad {
+            match gamepad.fetch_events() {
+                Ok(events) => Some(events.collect::<Vec<_>>()),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // No events available, which is normal
+                    None
+                }
+                Err(e) => {
+                    warn!("Error reading gamepad events: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        // Process events after releasing the gamepad borrow
+        if let Some(events) = events {
+            for event in events {
+                if let Some(input) = map_evdev_to_brick_input(&event) {
+                    self.handle_input(input)?;
+                    input_handled = true;
+                }
+            }
+        }
+
+        // Handle keyboard input (for testing)
+        if is_key_pressed(KeyCode::Escape) {
+            return Err("User quit".into());
+        }
+
+        if is_key_pressed(KeyCode::Space) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::A))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::Enter) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::DPadRight))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::Left) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::DPadLeft))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::Up) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::DPadUp))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::Down) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::DPadDown))?;
+            input_handled = true;
+        }
+
+        if input_handled {
+            self.last_input_time = current_time;
+            self.needs_redraw = true;
+        }
+
+        // Update game state
+        self.update_state()?;
+        self.app_state.sprite.update();
+
+        Ok(())
+    }
+
+    fn handle_input(&mut self, input: BrickInput) -> Result<(), String> {
+        match input {
+            BrickInput::ButtonDown(BrickButton::Guide) => return Err("User quit".into()),
+            _ => {}
+        }
+
+        match &mut self.app_state.game_state {
+            GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(&mut self.app_state, input),
+            // TODO: Fix deck_selection and studying input handlers
+            // GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(&mut self.app_state, input),
+            // GameState::Studying(_) => scenes::studying::input::handle_studying_input(&mut self.app_state, input),
+            _ => Ok(()),
+        }
+    }
+
+    fn update_state(&mut self) -> Result<(), String> {
+        let old_state = std::mem::replace(&mut self.app_state.game_state, GameState::Error("Temporary state".to_string()));
+        self.app_state.game_state = match old_state {
+            GameState::Loading { rx, loading_layout, progress, deck_id_to_load } => {
+                if let Ok(msg) = rx.try_recv() {
+                    match msg {
+                        LoaderMessage::Complete(Ok(deck)) => {
+                            let scheduler = Box::new(Sm2Scheduler::new(deck));
+                            let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            // TODO: Re-enable when studying is fixed
+                            // let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
+                            // TODO: Fix studying logic when implementing studying scene
+                            // scenes::studying::logic::load_next_card(&mut studying_state, &mut self.app_state.font_manager, &mut self.app_state.small_font_manager);
+                            GameState::Studying("Studying not implemented yet".to_string())
+                        }
+                        LoaderMessage::Complete(Err(e)) => GameState::Error(e),
+                        LoaderMessage::Progress(p) => GameState::Loading { rx, loading_layout, progress: p, deck_id_to_load },
+                    }
+                } else {
+                    GameState::Loading { rx, loading_layout, progress, deck_id_to_load }
+                }
+            }
+            GameState::GoToDeckSelection => {
+                // TODO: Create proper deck selection state
+                GameState::DeckSelection("Deck selection not implemented yet".to_string())
+            }
+            other_state => other_state,
+        };
+        Ok(())
+    }
+
+    fn draw(&mut self) -> Result<(), String> {
+        self.app_state.canvas_manager.start_frame()?;
+
+        match &mut self.app_state.game_state {
+            GameState::MainMenu(main_menu_state) => {
+                scenes::main_menu::draw_main_menu_scene(
+                    &self.app_state.font_manager, 
+                    &self.app_state.canvas_manager, 
+                    main_menu_state
+                )
+            },
+            GameState::DeckSelection(message) => {
+                // TODO: Fix deck_selection scene drawing
+                draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, message)
+            },
+            GameState::Loading { loading_layout, progress, .. } => {
+                draw_loading_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, loading_layout, *progress)
+            },
+            GameState::Studying(message) => {
+                // TODO: Fix studying scene drawing
+                draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, message)
+            },
+            GameState::Error(e) => draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, e),
+            GameState::GoToDeckSelection => {
+                // This should be handled in update_state
+                Ok(())
+            }
+        }?;
+
+        self.app_state.canvas_manager.end_frame();
+        Ok(())
+    }
+}
+
+fn find_gamepad() -> Option<EvdevDevice> {
+    info!("Searching for gamepad...");
+    for i in 0..32 {
+        let path = format!("/dev/input/event{}", i);
+        if let Ok(mut dev) = EvdevDevice::open(&path) {
+            let name = dev.name().unwrap_or_default().to_lowercase();
+            if name.contains("h700 gamepad") {
+                info!("Success! Found device: {}", path);
+                
+                // Set non-blocking mode
+                let raw_fd = dev.as_raw_fd();
+                match nix::fcntl::fcntl(raw_fd, nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK)) {
+                    Ok(_) => {
+                        info!("Gamepad set to non-blocking mode");
+                        return Some(dev);
+                    }
+                    Err(e) => {
+                        error!("Failed to set gamepad to non-blocking: {}", e);
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    warn!("Could not find 'h700 gamepad' device.");
+    None
 }
 
 fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, String> {
@@ -126,7 +928,7 @@ fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, Strin
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown_deck")
                         .to_string();
-                    let deck_name = deck_id.clone(); // Or you could implement logic to read the name from the .apkg file
+                    let deck_name = deck_id.clone();
                     decks.push(DeckMetadata {
                         id: deck_id,
                         name: deck_name,
@@ -139,120 +941,28 @@ fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, Strin
     Ok(decks)
 }
 
-
-fn run(state: &mut AppState, event_pump: &mut sdl2::EventPump) -> Result<(), String> {
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            if let Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } = event {
-                break 'running;
-            }
-            handle_input(state, event)?;
-        }
-        
-        update_state(state)?;
-        state.sprite.update();
-        draw_scene(state)?;
-        
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
-    }
+fn draw_loading_scene(font_manager: &FontManager, canvas_manager: &CanvasManager, layout: &ui::font::TextLayout, progress: f32) -> Result<(), String> {
+    font_manager.draw_layout(layout, 150, 150, false, canvas_manager)?;
+    
+    // Draw progress bar background
+    let (bg_x, bg_y) = canvas_manager.logical_to_screen(100.0, 200.0);
+    let bg_w = 312.0 * canvas_manager.get_scale_factor();
+    let bg_h = 30.0 * canvas_manager.get_scale_factor();
+    draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(80, 80, 80, 255));
+    
+    // Draw progress bar foreground
+    let bar_width = 312.0 * progress;
+    let fg_w = bar_width * canvas_manager.get_scale_factor();
+    draw_rectangle(bg_x, bg_y, fg_w, bg_h, Color::from_rgba(100, 180, 255, 255));
+    
     Ok(())
 }
 
-fn handle_input(state: &mut AppState, event: Event) -> Result<(), String> {
-
-    // These controls are consistent throughout the app.
-    if let Some(input) = map_to_brick_input(&event) {
-         match input {
-             BrickInput::ButtonDown(BrickButton::Guide) => return Err("User quit".into()),
-             _ => {}
-        }
-    }
-
-    match &mut state.game_state {
-        GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(state, event),
-        GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(state, event),
-        GameState::Studying(_) => scenes::studying::input::handle_studying_input(state, event),
-        _ => Ok(()),
-    }
-}
-
-fn draw_scene(state: &mut AppState) -> Result<(), String> {
-    state.canvas_manager.start_frame()?;
-    state.canvas_manager.with_canvas(|canvas| {
-        match &mut state.game_state {
-            GameState::MainMenu(main_menu_state) => {
-                scenes::main_menu::draw_main_menu_scene(canvas, &mut state.font_manager, main_menu_state)
-            },
-            GameState::DeckSelection(deck_selection_state) => {
-                scenes::deck_selection::draw_deck_selection_scene(canvas, &mut state.font_manager, &mut state.small_font_manager, deck_selection_state)
-            },
-            GameState::Loading { loading_layout, progress, .. } => {
-                draw_loading_scene(canvas, &mut state.font_manager, loading_layout, *progress)
-            },
-            GameState::Studying(studying_state) => {
-                scenes::studying::draw_studying_scene(canvas, studying_state, &mut state.font_manager, &mut state.small_font_manager, &mut state.hint_font_manager, &mut state.sprite)
-            },
-            GameState::Error(e) => draw_error_scene(canvas, &mut state.font_manager, e),
-            GameState::GoToDeckSelection => {
-                let new_state = DeckSelectionState::new(
-                    state.available_decks.clone(),
-                    &mut state.small_font_manager,
-                    &state.config,
-                )?;
-                state.game_state = GameState::DeckSelection(new_state);
-                Ok(()) // <-- Add this line
-            }
-
-        }
-    })?;
-    state.canvas_manager.end_frame();
-    Ok(())
-}
-
-fn update_state(state: &mut AppState) -> Result<(), String> {
-    let old_state = std::mem::replace(&mut state.game_state, GameState::Error("Temporary state".to_string()));
-    state.game_state = match old_state {
-        GameState::Loading { rx, loading_layout, progress, deck_id_to_load } => {
-            if let Ok(msg) = rx.try_recv() {
-                match msg {
-                    LoaderMessage::Complete(Ok(deck)) => {
-                        let scheduler = Box::new(Sm2Scheduler::new(deck));
-                        let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                        let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
-                        let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
-                        scenes::studying::logic::load_next_card(&mut studying_state, &mut state.font_manager, &mut state.small_font_manager);
-                        GameState::Studying(studying_state)
-                    }
-                    LoaderMessage::Complete(Err(e)) => GameState::Error(e),
-                    LoaderMessage::Progress(p) => GameState::Loading { rx, loading_layout, progress: p, deck_id_to_load },
-                }
-            } else {
-                GameState::Loading { rx, loading_layout, progress, deck_id_to_load }
-            }
-        }
-        other_state => other_state,
-    };
-    Ok(())
-}
-
-
-fn draw_loading_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, layout: &TextLayout, progress: f32) -> Result<(), String> {
-    font_manager.draw_layout(canvas, layout, 150, 150, false)?;
-    let bar_bg_rect = Rect::new(100, 200, 312, 30);
-    canvas.set_draw_color(Color::RGB(80, 80, 80));
-    canvas.fill_rect(bar_bg_rect)?;
-    let bar_width = (312.0 * progress) as u32;
-    let bar_fg_rect = Rect::new(100, 200, bar_width.min(312), 30);
-    canvas.set_draw_color(Color::RGB(100, 180, 255));
-    canvas.fill_rect(bar_fg_rect)?;
-    Ok(())
-}
-
-fn draw_error_scene(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font_manager: &mut FontManager, msg: &str) -> Result<(), String> {
+fn draw_error_scene(font_manager: &FontManager, canvas_manager: &CanvasManager, msg: &str) -> Result<(), String> {
     let margin: u32 = 30;
     let error_spans = html_parser::parse_html_to_spans(&format!("Error: {}", msg));
     let layout = font_manager.layout_text_binary(&error_spans, 512 - margin * 2, false)?;
-    font_manager.draw_layout(canvas, &layout, margin as i32, 40, false)?;
+    font_manager.draw_layout(&layout, margin as i32, 40, false, canvas_manager)?;
     Ok(())
 }
 
@@ -272,4 +982,141 @@ fn test_file_creation() -> std::io::Result<()> {
     
     println!("[File Test] PASSED.");
     Ok(())
+}
+
+fn window_conf() -> Conf {
+    let config = DeviceConfig::detect_device();
+    info!("Window config: {}x{}, fullscreen: {}", 
+          config.display_width, config.display_height, config.fullscreen);
+    
+    // Try windowed mode first for debugging
+    let use_windowed = std::env::var("CARDBRICK_WINDOWED").is_ok();
+    let fullscreen = if use_windowed {
+        warn!("Using windowed mode for debugging (CARDBRICK_WINDOWED set)");
+        false
+    } else {
+        config.fullscreen
+    };
+    
+    Conf {
+        window_title: "CardBrick - Pure Rust".to_string(),
+        window_width: config.display_width as i32,
+        window_height: config.display_height as i32,
+        fullscreen,
+        sample_count: 1,
+        window_resizable: false,
+        ..Default::default()
+    }
+}
+
+#[macroquad::main(window_conf)]
+async fn main() {
+    // Initialize logging
+    env_logger::init();
+    const TARGET_FPS: f64 = 60.0;
+    const TARGET_DT: f64 = 1.0 / TARGET_FPS;
+
+    info!("Starting CardBrick application");
+    
+    // Show loading screen while initializing
+    info!("Initializing application...");
+    
+    // Create a minimal canvas manager for the loading screen
+    let mut loading_canvas = CanvasManager::new().unwrap_or_else(|e| {
+        error!("Failed to create canvas: {}", e);
+        std::process::exit(1);
+    });
+    
+    // Show actual loading progress during app initialization
+    let loading_steps = vec![
+        "Initializing configuration...",
+        "Loading menu font...",
+        "Creating canvas manager...",
+        "Creating basic font managers...",
+        "Loading available decks...",
+        "Starting background font loading...",
+        "Finalizing setup...",
+    ];
+    
+    for (i, step_msg) in loading_steps.iter().enumerate() {
+        loading_canvas.start_frame().unwrap();
+        
+        // Draw loading background
+        let (logical_width, logical_height) = loading_canvas.logical_size();
+        let (screen_x, screen_y) = loading_canvas.logical_to_screen(0.0, 0.0);
+        let screen_w = logical_width * loading_canvas.get_scale_factor();
+        let screen_h = logical_height * loading_canvas.get_scale_factor();
+        
+        draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 40, 45, 255));
+        
+        // Draw current step
+        let progress = (i as f32 + 1.0) / loading_steps.len() as f32;
+        draw_text("Loading CardBrick...", screen_x + 100.0, screen_y + 180.0, 32.0, WHITE);
+        draw_text(step_msg, screen_x + 100.0, screen_y + 220.0, 20.0, Color::from_rgba(200, 200, 200, 255));
+        
+        // Draw progress bar
+        let (bg_x, bg_y) = loading_canvas.logical_to_screen(100.0, 260.0);
+        let bg_w = 312.0 * loading_canvas.get_scale_factor();
+        let bg_h = 30.0 * loading_canvas.get_scale_factor();
+        draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(80, 80, 80, 255));
+        
+        let fg_w = bg_w * progress;
+        draw_rectangle(bg_x, bg_y, fg_w, bg_h, Color::from_rgba(100, 180, 255, 255));
+        
+        loading_canvas.end_frame();
+        next_frame().await;
+    }
+    
+    let mut app = match CardBrickApp::new_with_progress(&mut loading_canvas, &loading_steps).await {
+        Ok(app) => app,
+        Err(e) => {
+            error!("Failed to initialize application: {}", e);
+            return;
+        }
+    };
+    info!("Application initialized, entering main loop");
+
+    let mut frame_count = 0;
+    loop {
+        frame_count += 1;
+        
+        if frame_count % 60 == 0 {
+            info!("FPS {}", macroquad::time::get_fps());
+        }
+
+        let frame_start = macroquad::time::get_time();
+        
+        // Add error handling around update and draw
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Err(e) = app.update() {
+                error!("Update error: {}", e);
+                if e.contains("quit") {
+                    std::process::exit(0);
+                }
+            }
+            if let Err(e) = app.draw() {
+                error!("Draw error: {}", e);
+            }
+        })) {
+            Ok(()) => {
+                // Success
+            }
+            Err(e) => {
+                error!("Panic in main loop: {:?}", e);
+                // Continue running but log the error
+            }
+        }
+        
+        // Limit to 60 FPS
+        next_frame().await;
+
+        if cfg!(target_arch = "x86_64") {
+            let dt = macroquad::time::get_time() - frame_start;
+            if dt < TARGET_DT {
+                std::thread::sleep(
+                    std::time::Duration::from_secs_f64(TARGET_DT - dt)
+                );
+            }
+        }
+    }
 }

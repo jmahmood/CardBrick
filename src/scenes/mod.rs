@@ -1,5 +1,6 @@
 // src/scenes/mod.rs
 
 pub mod main_menu;
-pub mod studying;
-pub mod deck_selection;
+// TODO: Fix these scene modules for macroquad
+// pub mod studying;
+// pub mod deck_selection;
