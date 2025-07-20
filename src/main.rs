@@ -32,9 +32,9 @@ use ui::{CanvasManager, FontManager, sprite::Sprite};
 
 mod assets {
     // Small menu font for fast startup
-    pub const MENU_FONT: &[u8] = include_bytes!("../assets/font/Ac437_Tandy1K-II_200L.ttf");
+    pub const MENU_FONT: &[u8] = include_bytes!("../assets/font/PixelMplus10-Regular.ttf");
     // Large font that supports Japanese characters (loaded in background)
-    pub const JAPANESE_FONT: &[u8] = include_bytes!("../assets/font/NotoSansCJK-Regular.ttc");
+    pub const JAPANESE_FONT: &[u8] = include_bytes!("../assets/font/PixelMplus10-Regular.ttf");
     pub const CLICK_SOUND: &[u8] = include_bytes!("../assets/sfx/click.wav");
     pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/sfx/open.wav");
 }

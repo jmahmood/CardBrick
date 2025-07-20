@@ -37,17 +37,18 @@ pub fn draw_main_menu_scene(
     draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 40, 45, 255));
     
     // Draw title
-    font_manager.draw_single_line("CardBrick", 20, 20, canvas_manager)?;
+    font_manager.draw_single_line("CardBrick", 20, 50, canvas_manager)?;
 
     let mut y_pos = 150;
+    let font_size = 18.0;
     for (i, option) in options.iter().enumerate() {
         if i == state.selected_index {
             let (text_w, text_h) = font_manager.size_of_text(option)?;
-            let (highlight_x, highlight_y) = canvas_manager.logical_to_screen(18.0, y_pos as f32);
+            let (highlight_x, highlight_y) = canvas_manager.logical_to_screen(font_size, y_pos as f32);
             let highlight_w = (text_w + 4) as f32 * canvas_manager.get_scale_factor();
             let highlight_h = text_h as f32 * canvas_manager.get_scale_factor();
             
-            draw_rectangle(highlight_x, highlight_y, highlight_w, highlight_h, Color::from_rgba(80, 80, 80, 255));
+            draw_rectangle(highlight_x, highlight_y - (text_h as f32), highlight_w, highlight_h, Color::from_rgba(80, 80, 80, 255));
         }
         font_manager.draw_single_line(option, 20, y_pos, canvas_manager)?;
         y_pos += 40;
