@@ -44,8 +44,9 @@ This project is being developed in Rust (2021 Edition).  We use `evdev` for inpu
 
 4.  **Cross-compile for the TrimUI Brick / RG35XX Plus (ARM64):**
     ```bash
-cross build --release --target aarch64-unknown-linux-gnu
-```
+    cross build --release --target aarch64-unknown-linux-gnu
+    ```
+
     Cross will import all of the annoying dependecies without having to litter your Linux build with a different application.  You will get one binary with everything (other than decks and some metadata) being built into the executable.
 
 ## Project Structure Overview
