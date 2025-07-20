@@ -48,11 +48,3 @@ path = "src/demo_main.rs"
 [[bin]]
 name = "test_display"
 path = "src/test_display.rs"
-
-[[bin]]
-name = "test_minimal"
-path = "src/test_minimal.rs"
-
-[[bin]]
-name = "simple_main"
-path = "src/simple_main.rs"
