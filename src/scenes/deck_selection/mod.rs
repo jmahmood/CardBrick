@@ -7,8 +7,6 @@ use crate::ui::{CanvasManager, FontManager};
 
 pub mod input;
 
-// Note: The DeckRenderInfo struct is no longer needed, as text is rendered on the fly.
-
 /// Contains the state specific to the deck selection screen.
 /// The pre-caching of rendered surfaces has been removed in favor of
 /// drawing directly each frame, which simplifies state management.
@@ -55,7 +53,6 @@ impl DeckSelectionState {
 }
 
 
-/// Draws the deck selection scene using macroquad.
 pub fn draw_deck_selection_scene(
     font_manager: &FontManager,
     small_font_manager: &FontManager,

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
-rm -rf ~/CardBrick/output
-mkdir ~/CardBrick/output
-cp ~/CardBrick/launch.sh ~/CardBrick/output
-cp -R ~/CardBrick/assets ~/CardBrick/output
-docker build --platform linux/arm64 --progress=plain --output ~/CardBrick/output -f ~/CardBrick/toolchain/Dockerfile.simplified .
-#rsync -rtDvz ~/CardBrick/output/* root@10.0.0.210:/mnt/SDCARD/Tools/tg5040/CardBrick.pak
-rsync -rtDvz ~/CardBrick/output/* root@10.0.0.27:/mnt/mmc/Roms/PORTS/CardBrick
-scp ~/CardBrick/cardbrick.sh root@10.0.0.27:/mnt/mmc/Roms/PORTS/cardbrick.sh
+cross build --release --target aarch64-unknown-linux-gnu
+
+# rsync -rtDvz ~/CardBrick/output/* root@10.0.0.27:/mnt/mmc/Roms/PORTS/CardBrick
+
+rsync -avz ~/CardBrick/assets/icon-large.png root@10.0.0.159:/storage/applications/CardBrick
+rsync -avz ~/CardBrick/assets/gameinfo.xml root@10.0.0.159:/storage/applications/
+rsync -avz ~/CardBrick/assets/cardbrick.png root@10.0.0.159:/storage/applications/CardBrick
+rsync -avz ~/CardBrick/assets/decks root@10.0.0.159:/storage/applications/CardBrick/decks
+scp ~/CardBrick/target/aarch64-unknown-linux-gnu/release/cardbrick root@10.0.0.159:/storage/applications/CardBrick/
+scp ~/CardBrick/CardBrick.sh root@10.0.0.159:/storage/applications
 
