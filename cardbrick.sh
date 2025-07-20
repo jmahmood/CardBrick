@@ -1,4 +1,3 @@
 #!/bin/sh
-cd "/mnt/mmc/Roms/PORTS/cardbrick"
-export LD_LIBRARY_PATH="./lib:$LD_LIBRARY_PATH"
-./cardbrick
+RUST_LOGS=debug RUST_BACKTRACE=1 /storage/cardbrick
+
