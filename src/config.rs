@@ -21,6 +21,8 @@ pub struct Config {
 impl Config {
     pub fn new() -> Self {
         let is_trimui = Path::new("/mnt/SDCARD").exists(); // basic device check
+        let is_rg35xx = Path::new("/storage/.config/").exists();
+
         let exe_path = env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
         let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
 
@@ -35,7 +37,11 @@ impl Config {
                 Path::new(&base_decks_dir),
                 Path::new(&sfx_dir),
             )
-        } else {
+        } else if is_rg35xx {
+                (Path::new(&base_assets_dir),
+                                Path::new(&base_decks_dir),
+                                Path::new(&sfx_dir),)
+        }else {
             (
                 Path::new("/home/jawaad/CardBrick/assets"),
                 Path::new("/home/jawaad/CardBrick/assets/decks"),

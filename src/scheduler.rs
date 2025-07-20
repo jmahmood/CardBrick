@@ -4,7 +4,6 @@
 use crate::deck::{Card, Deck, Note};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::HashMap;
 
 
 /// Represents the user's rating for a card.
@@ -21,7 +20,7 @@ pub trait Scheduler {
     fn new(deck: Deck) -> Self where Self: Sized;
     fn next_card(&mut self) -> Option<Card>;
     fn answer_card(&mut self, card_id: i64, rating: Rating) -> Option<Card>; // Changed return type
-    fn get_note(&self, note_id: i64) -> Option<&Note>;
+    fn get_note(&mut self, note_id: i64) -> Option<Note>; // Changed to owned Note to work with lazy loading
     fn reviews_complete(&self) -> usize;
     fn total_session_cards(&self) -> usize;
     fn hard_cards(&self) -> &[i64];
@@ -32,8 +31,7 @@ pub trait Scheduler {
 
 /// Implementation of the SM-2 algorithm.
 pub struct Sm2Scheduler {
-    cards: HashMap<i64, Card>,
-    notes: HashMap<i64, Note>,
+    deck: Deck, // Store the entire deck for lazy loading
     review_queue: Vec<i64>,
     session_total: usize,
     session_reviews_complete: usize,
@@ -43,8 +41,8 @@ pub struct Sm2Scheduler {
 
 impl Scheduler for Sm2Scheduler {
     fn new(deck: Deck) -> Self {
-        let cards_map: HashMap<i64, Card> = deck.cards.into_iter().map(|c| (c.id, c)).collect();
-        let mut review_queue: Vec<i64> = cards_map.keys().cloned().collect();
+        // Start with initial cards, but can load more as needed
+        let mut review_queue: Vec<i64> = deck.cards.iter().map(|c| c.id).collect();
         
         if cfg!(test) {
             // Sort ascending for predictable test order. .pop() will take from the end.
@@ -53,11 +51,15 @@ impl Scheduler for Sm2Scheduler {
             review_queue.shuffle(&mut thread_rng());
         }
         
-        let session_total = review_queue.len();
+        // Get total cards from deck connection if available, otherwise use current cards
+        let session_total = if let Some(ref db_conn) = deck.db_connection {
+            db_conn.total_card_count as usize
+        } else {
+            deck.cards.len()
+        };
 
         Sm2Scheduler {
-            cards: cards_map,
-            notes: deck.notes,
+            deck,
             review_queue,
             session_total,
             session_reviews_complete: 0,
@@ -67,7 +69,26 @@ impl Scheduler for Sm2Scheduler {
     }
 
     fn next_card(&mut self) -> Option<Card> {
-        self.review_queue.pop().and_then(|id| self.cards.get(&id).cloned())
+        // If we're running low on cards and have more available in DB, load them
+        if self.review_queue.len() < 10 && self.deck.db_connection.is_some() {
+            if let Ok(new_cards) = self.deck.load_more_cards(50) {
+                // Add new card IDs to review queue
+                let mut new_ids: Vec<i64> = new_cards.iter().map(|c| c.id).collect();
+                if !cfg!(test) {
+                    new_ids.shuffle(&mut thread_rng());
+                }
+                self.review_queue.extend(new_ids);
+                println!("Loaded {} more cards, queue now has {} cards", new_cards.len(), self.review_queue.len());
+            }
+        }
+        
+        // Get next card from queue
+        if let Some(card_id) = self.review_queue.pop() {
+            // Find card in our deck
+            self.deck.cards.iter().find(|c| c.id == card_id).cloned()
+        } else {
+            None
+        }
     }
     
     fn add_card_to_front(&mut self, card_id: i64) {
@@ -76,7 +97,8 @@ impl Scheduler for Sm2Scheduler {
     }
 
     fn answer_card(&mut self, card_id: i64, rating: Rating) -> Option<Card> {
-        let card = self.cards.get_mut(&card_id).unwrap();
+        // Find the card in our deck
+        let card = self.deck.cards.iter_mut().find(|c| c.id == card_id)?;
         
         self.last_answer = Some((card_id, rating, card.clone()));
 
@@ -149,14 +171,18 @@ impl Scheduler for Sm2Scheduler {
             }
             
             // Restore the card to its original state.
-            self.cards.insert(card_id, original_card_state);
+            if let Some(card) = self.deck.cards.iter_mut().find(|c| c.id == card_id) {
+                *card = original_card_state.clone();
+            }
             
-            return self.cards.get(&card_id).cloned();
+            return Some(original_card_state);
         }
         None
     }
 
-    fn get_note(&self, note_id: i64) -> Option<&Note> { self.notes.get(&note_id) }
+    fn get_note(&mut self, note_id: i64) -> Option<Note> { 
+        self.deck.get_note(note_id).ok().flatten()
+    }
     fn reviews_complete(&self) -> usize { self.session_reviews_complete }
     fn total_session_cards(&self) -> usize { self.session_total }
     fn hard_cards(&self) -> &[i64] { &self.hard_cards_this_session }

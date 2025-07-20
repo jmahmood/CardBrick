@@ -1,10 +1,8 @@
 // src/ui/sprite.rs
 // Manages the animated "mother" sprite.
 
-use sdl2::pixels::Color;
-use sdl2::rect::Rect;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
+use macroquad::prelude::*;
+use crate::ui::CanvasManager;
 use std::time::Instant;
 
 // Represents the different emotional states of the sprite.
@@ -38,21 +36,23 @@ impl Sprite {
     }
 
     /// Draws the sprite to the canvas.
-    pub fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
+    pub fn draw(&self, canvas_manager: &CanvasManager) -> Result<(), String> {
         // Placeholder sprite drawing logic.
         // **FIXED**: Positioned the sprite in the bottom right corner, aligned with the control hints.
-        let base_rect = Rect::new(470, 330, 32, 32);
+        let (sprite_x, sprite_y) = canvas_manager.logical_to_screen(470.0, 330.0);
+        let sprite_size = 32.0 * canvas_manager.get_scale_factor();
         
         // Draw body
-        canvas.set_draw_color(Color::RGB(200, 200, 255));
-        canvas.fill_rect(base_rect)?;
+        draw_rectangle(sprite_x, sprite_y, sprite_size, sprite_size, Color::from_rgba(200, 200, 255, 255));
 
         // Draw eyes
-        canvas.set_draw_color(Color::RGB(0, 0, 0));
         if !self.is_blinking {
-            let eye1 = Rect::new(476, 340, 5, 5); // Adjusted y-coordinate
-            let eye2 = Rect::new(488, 340, 5, 5); // Adjusted y-coordinate
-            canvas.fill_rects(&[eye1, eye2])?;
+            let (eye1_x, eye1_y) = canvas_manager.logical_to_screen(476.0, 340.0);
+            let (eye2_x, eye2_y) = canvas_manager.logical_to_screen(488.0, 340.0);
+            let eye_size = 5.0 * canvas_manager.get_scale_factor();
+            
+            draw_rectangle(eye1_x, eye1_y, eye_size, eye_size, BLACK);
+            draw_rectangle(eye2_x, eye2_y, eye_size, eye_size, BLACK);
         }
 
         Ok(())

@@ -1,0 +1,13 @@
+<gameList>
+  <game>
+    <path>./CardBrick.sh</path>
+    <name>CardBrick</name>
+    <desc>CardBrick is a flash card application. It is intended to be minimalist, performant, and Anki-compatible flashcard application specifically designed for the TrimUI Brick handheld device running MinUI. The primary goal is to provide a "snappy" and distraction-free environment for language learning, with an initial focus on Japanese (JLPT N3-N1).</desc>
+    <image>./CardBrick/icon-large.png</image>
+    <releasedate>20250720T000000</releasedate>
+    <developer>Jawaad Mahmood</developer>
+    <publisher>Open Source</publisher>
+    <genre>Educational</genre>
+    <players>1</players>
+  </game>
+</gameList>

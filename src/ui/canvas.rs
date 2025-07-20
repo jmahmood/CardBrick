@@ -1,96 +1,85 @@
 // src/ui/canvas.rs
-// Manages the main rendering canvas and the logical, scalable texture.
+// Manages the main rendering canvas and logical scaling for macroquad.
 
-use sdl2::render::{Canvas, Texture, TextureCreator};
-use sdl2::video::{Window, WindowContext};
-use sdl2::pixels::Color;
-use sdl2::rect::Rect; // Removed unused `Point`
+use macroquad::prelude::*;
 
 const LOGICAL_WIDTH: u32 = 512;
-const LOGICAL_HEIGHT: u32 = 364;
+const LOGICAL_HEIGHT: u32 = 384;
 
-pub struct CanvasManager<'a> {
-    // The main SDL canvas that draws to the window.
-    sdl_canvas: Canvas<Window>,
-    // The texture creator, needed to create new textures.
-    texture_creator: &'a TextureCreator<WindowContext>,
-    // Our logical canvas, a texture we render to instead of the main window.
-    logical_canvas: Texture<'a>,
+pub struct CanvasManager {
+    logical_width: f32,
+    logical_height: f32,
+    scale_factor: f32,
+    offset_x: f32,
+    offset_y: f32,
 }
 
-impl<'a> CanvasManager<'a> {
-    pub fn new(mut sdl_canvas: Canvas<Window>, texture_creator: &'a TextureCreator<WindowContext>) -> Result<Self, String> {
-        // Create the texture that will act as our logical screen.
-        // It's a "target" texture, which means we can draw onto it.
-        let logical_canvas = texture_creator
-            .create_texture_target(None, LOGICAL_WIDTH, LOGICAL_HEIGHT)
-            .map_err(|e| e.to_string())?;
-
-        // Set the blend mode for the main canvas to allow for transparency.
-        sdl_canvas.set_blend_mode(sdl2::render::BlendMode::Blend);
+impl CanvasManager {
+    pub fn new() -> Result<Self, String> {
+        let logical_width = LOGICAL_WIDTH as f32;
+        let logical_height = LOGICAL_HEIGHT as f32;
+        
+        // Calculate scaling and centering
+        let screen_w = screen_width();
+        let screen_h = screen_height();
+        
+        let scale_x = screen_w / logical_width;
+        let scale_y = screen_h / logical_height;
+        let scale_factor = scale_x.min(scale_y);
+        
+        let offset_x = (screen_w - logical_width * scale_factor) / 2.0;
+        let offset_y = (screen_h - logical_height * scale_factor) / 2.0;
 
         Ok(CanvasManager {
-            sdl_canvas,
-            texture_creator,
-            logical_canvas,
+            logical_width,
+            logical_height,
+            scale_factor,
+            offset_x,
+            offset_y,
         })
     }
 
-    /// Prepares for a new frame by setting the render target to our logical canvas
-    /// and clearing it with a background color.
+    /// Prepares for a new frame by clearing the background.
     pub fn start_frame(&mut self) -> Result<(), String> {
-        self.sdl_canvas.with_texture_canvas(&mut self.logical_canvas, |texture_canvas| {
-            texture_canvas.set_draw_color(Color::RGB(40, 40, 45));
-            texture_canvas.clear();
-        }).map_err(|e| e.to_string()) // Map the SDL error to a String error
+        // Clear the entire screen with black for letterboxing
+        clear_background(Color::from_rgba(0, 0, 0, 255));
+        Ok(())
     }
 
-    /// This is where the magic happens. We take what was drawn on the logical canvas
-    /// and render it, scaled up, to the main window.
+    /// Ends the frame (no-op for macroquad as presentation is handled automatically).
     pub fn end_frame(&mut self) {
-        // Clear the main window (this will create the letterbox effect).
-        self.sdl_canvas.set_draw_color(Color::RGB(0, 0, 0));
-        self.sdl_canvas.clear();
-
-        // Calculate the destination rectangle for our scaled-up canvas.
-        // This will be 1024x728, centered in the window.
-        let (window_w, window_h) = self.sdl_canvas.window().size();
-        let scale_factor = 2.0;
-        let dest_w = (LOGICAL_WIDTH as f32 * scale_factor) as u32;
-        let dest_h = (LOGICAL_HEIGHT as f32 * scale_factor) as u32;
-        let dest_rect = Rect::new(
-            ((window_w - dest_w) / 2) as i32,
-            ((window_h - dest_h) / 2) as i32,
-            dest_w,
-            dest_h
-        );
-
-        // Copy the logical canvas texture to the main canvas.
-        self.sdl_canvas.copy(&self.logical_canvas, None, Some(dest_rect)).unwrap();
-        
-        // Present the final rendered image to the screen.
-        self.sdl_canvas.present();
+        // In macroquad, frame presentation is handled automatically
     }
     
-    // A helper to allow other modules to draw on our logical canvas.
-    // This now correctly handles closures that can return their own errors.
-    pub fn with_canvas<F>(&mut self, f: F) -> Result<(), String>
-    where
-        F: FnOnce(&mut Canvas<Window>) -> Result<(), String>,
-    {
-        // This is a bit complex, but it allows the calling code (in main.rs) to use the `?` operator
-        // inside the closure, which is much cleaner.
-        let mut closure_result: Result<(), String> = Ok(());
-
-        let render_result = self.sdl_canvas.with_texture_canvas(&mut self.logical_canvas, |texture_canvas| {
-            closure_result = f(texture_canvas);
-        });
-
-        // First, check for errors from the closure itself.
-        closure_result?;
-        // Then, check for errors from the SDL rendering process.
-        render_result.map_err(|e| e.to_string())?;
-
-        Ok(())
+    /// Transform logical coordinates to screen coordinates.
+    pub fn logical_to_screen(&self, x: f32, y: f32) -> (f32, f32) {
+        (
+            self.offset_x + x * self.scale_factor,
+            self.offset_y + y * self.scale_factor
+        )
+    }
+    
+    /// Get the scale factor for drawing operations.
+    pub fn get_scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+    
+    /// Get logical dimensions.
+    pub fn logical_size(&self) -> (f32, f32) {
+        (self.logical_width, self.logical_height)
+    }
+    
+    /// Set a clipping rectangle in logical coordinates.
+    pub fn set_clip_rect(&self, x: i32, y: i32, w: u32, h: u32) {
+        let (screen_x, screen_y) = self.logical_to_screen(x as f32, y as f32);
+        let screen_w = w as f32 * self.scale_factor;
+        let screen_h = h as f32 * self.scale_factor;
+        
+        // Note: macroquad doesn't have built-in clipping, we'll need to handle this in drawing calls
+    }
+    
+    /// Clear the clipping rectangle.
+    pub fn clear_clip_rect(&self) {
+        // Note: macroquad doesn't have built-in clipping
     }
 }
