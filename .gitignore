@@ -3,3 +3,6 @@
 *.corrupt
 /anki
 /assets/font
+/internal-docs-and-musings
+callgrind.out
+/assets/decks/
