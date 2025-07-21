@@ -113,7 +113,7 @@ pub enum BrickAxis {
 }
 
 /// A unified, high‑level event that your app actually handles.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BrickInput {
     ButtonDown(BrickButton),
     ButtonUp(BrickButton),
@@ -172,6 +172,136 @@ pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput>
         Some(BrickInput::ButtonUp(button))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use evdev::{InputEvent, EventType};
+
+    #[test]
+    fn test_button_down_mapping() {
+        // Test A button (code 305)
+        let event = InputEvent::new(EventType::KEY, 305, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::A)));
+
+        // Test B button (code 304)
+        let event = InputEvent::new(EventType::KEY, 304, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::B)));
+
+        // Test Y button (code 308)
+        let event = InputEvent::new(EventType::KEY, 308, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::Y)));
+
+        // Test X button (code 307)
+        let event = InputEvent::new(EventType::KEY, 307, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::X)));
+    }
+
+    #[test]
+    fn test_dpad_mapping() {
+        // Test D-pad Up (code 544)
+        let event = InputEvent::new(EventType::KEY, 544, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::DPadUp)));
+
+        // Test D-pad Down (code 545)
+        let event = InputEvent::new(EventType::KEY, 545, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::DPadDown)));
+
+        // Test D-pad Left (code 546)
+        let event = InputEvent::new(EventType::KEY, 546, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::DPadLeft)));
+
+        // Test D-pad Right (code 547)
+        let event = InputEvent::new(EventType::KEY, 547, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::DPadRight)));
+    }
+
+    #[test]
+    fn test_shoulder_buttons_mapping() {
+        // Test Left Shoulder (code 310)
+        let event = InputEvent::new(EventType::KEY, 310, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::LeftShoulder)));
+
+        // Test Right Shoulder (code 311)
+        let event = InputEvent::new(EventType::KEY, 311, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::RightShoulder)));
+
+        // Test Left Stick mapped from L2 (code 312)
+        let event = InputEvent::new(EventType::KEY, 312, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::LeftStick)));
+
+        // Test Right Stick mapped from R2 (code 313)
+        let event = InputEvent::new(EventType::KEY, 313, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::RightStick)));
+    }
+
+    #[test]
+    fn test_control_buttons_mapping() {
+        // Test Back button (Select, code 314)
+        let event = InputEvent::new(EventType::KEY, 314, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::Back)));
+
+        // Test Start button (code 315)
+        let event = InputEvent::new(EventType::KEY, 315, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::Start)));
+
+        // Test Guide button (Menu, code 316)
+        let event = InputEvent::new(EventType::KEY, 316, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::Guide)));
+    }
+
+    #[test]
+    fn test_button_up_mapping() {
+        // Test A button release (code 305, value 0)
+        let event = InputEvent::new(EventType::KEY, 305, 0);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonUp(BrickButton::A)));
+
+        // Test B button release (code 304, value 0)
+        let event = InputEvent::new(EventType::KEY, 304, 0);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, Some(BrickInput::ButtonUp(BrickButton::B)));
+    }
+
+    #[test]
+    fn test_unknown_key_code() {
+        // Test unknown key code (999)
+        let event = InputEvent::new(EventType::KEY, 999, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_non_key_event() {
+        // Test non-KEY event type (should return None)
+        let event = InputEvent::new(EventType::RELATIVE, 305, 1);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_key_repeat_value() {
+        // Test key repeat value (value 2) - should return None
+        let event = InputEvent::new(EventType::KEY, 305, 2);
+        let result = map_evdev_to_brick_input(&event);
+        assert_eq!(result, None);
     }
 }
 
