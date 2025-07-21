@@ -28,21 +28,71 @@ impl DatabaseManager {
     /// Creates the necessary tables if they don't already exist.
     fn init_schema(&self) -> Result<()> {
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS card_state (
-                id              INTEGER PRIMARY KEY,
-                due             INTEGER NOT NULL,
-                interval        INTEGER NOT NULL,
-                ease_factor     INTEGER NOT NULL,
-                lapses          INTEGER NOT NULL
+            "CREATE TABLE IF NOT EXISTS cards (
+                id INTEGER PRIMARY KEY,
+                front TEXT NOT NULL,
+                back TEXT NOT NULL,
+                media_id INTEGER,
+                similarity_hash TEXT
             )",
             [],
         )?;
+
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS srs_log (
+                card_id INTEGER PRIMARY KEY,
+                next_due_ts INTEGER,
+                interval INTEGER,
+                ease REAL,
+                lapses INTEGER,
+                reps INTEGER
+            )",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS bandit_state (
+                param_id TEXT,
+                arm_value INTEGER,
+                alpha INTEGER,
+                beta INTEGER,
+                PRIMARY KEY (param_id, arm_value)
+            )",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS daily_log (
+                date TEXT PRIMARY KEY,
+                pack_sz INTEGER,
+                rev_coef REAL,
+                fail_k INTEGER,
+                cards_studied INTEGER,
+                points INTEGER,
+                reward_scaled REAL,
+                reward_bin INTEGER
+            )",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )",
+            [],
+        )?;
+
+        // Set database version
+        self.conn.execute("PRAGMA user_version = 1", [])?;
+
         Ok(())
     }
 
     /// Updates the state of a single card in the database.
     /// Uses `INSERT OR REPLACE` to handle both new and existing cards.
     pub fn update_card_state(&self, card: &Card) -> Result<()> {
+        // Update legacy card_state table for compatibility
         self.conn.execute(
             "INSERT OR REPLACE INTO card_state (id, due, interval, ease_factor, lapses)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -54,6 +104,46 @@ impl DatabaseManager {
                 card.lapses,
             ),
         )?;
+        
+        // Also update the new srs_log table for Core Learning Loop
+        self.conn.execute(
+            "INSERT OR REPLACE INTO srs_log (card_id, next_due_ts, interval, ease, lapses, reps)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (
+                card.id,
+                card.due as i64,
+                card.interval as i64,
+                card.ease_factor as f64 / 1000.0, // Convert to decimal
+                card.lapses as i64,
+                1i64, // For now, increment reps
+            ),
+        )?;
+        
         Ok(())
+    }
+    
+    /// Load existing card state from database
+    pub fn load_card_state(&self, card_id: i64) -> Result<Option<Card>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, due, interval, ease_factor, lapses 
+             FROM card_state WHERE id = ?1"
+        )?;
+        
+        let card_iter = stmt.query_map([card_id], |row| {
+            Ok(Card {
+                id: row.get(0)?,
+                note_id: 0, // Will be set by caller
+                due: row.get(1)?,
+                interval: row.get(2)?,
+                ease_factor: row.get(3)?,
+                lapses: row.get(4)?,
+            })
+        })?;
+        
+        for card in card_iter {
+            return Ok(Some(card?));
+        }
+        
+        Ok(None)
     }
 }

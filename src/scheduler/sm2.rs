@@ -2,9 +2,11 @@
 // Contains the logic for the spaced repetition system.
 
 use crate::deck::{Card, Deck, Note};
+use crate::scheduler::queue;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
+use chrono::Utc;
 
 
 /// Represents the user's rating for a card.
@@ -25,9 +27,11 @@ pub trait Scheduler {
     fn reviews_complete(&self) -> usize;
     fn total_session_cards(&self) -> usize;
     fn hard_cards(&self) -> &[i64];
+    fn failed_cards_today(&self) -> &[i64];
     fn rewind_last_answer(&mut self) -> Option<Card>;
     fn add_card_to_front(&mut self, card_id: i64);
     fn introduce_new_cards(&mut self, count: usize) -> usize;
+    fn load_more_cards(&mut self, count: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>>;
 }
 
 /// Implementation of the SM-2 algorithm.
@@ -37,29 +41,53 @@ pub struct Sm2Scheduler {
     session_total: usize,
     session_reviews_complete: usize,
     hard_cards_this_session: Vec<i64>,
+    failed_cards_today: Vec<i64>, // Track cards answered "Again" today
     last_answer: Option<(i64, Rating, Card)>, // Store a clone of the card state before modification
+    today_completed_cards: Vec<i64>, // Track cards completed today
+    deck_id: String, // Store deck ID for queue operations
 }
 
 impl Scheduler for Sm2Scheduler {
     fn new(deck: Deck) -> Self {
-        // Start with initial cards, but can load more as needed
-        let mut review_queue: Vec<i64> = deck.cards.iter().map(|c| c.id).collect();
+        // Use daily queue system for Core Learning Loop
+        let today = Utc::now().date_naive();
+        
+        // Create a queue using actual deck card IDs, filtering out already completed cards
+        let mut review_queue = if let Ok(()) = queue::ensure_today_with_deck(today, &deck) {
+            let remaining_cards = queue::get_remaining_cards_for_deck(today, &deck);
+            println!("📅 Loaded deck-specific daily queue with {} remaining cards for {}", remaining_cards.len(), today);
+            
+            // In test mode, if no remaining cards from queue system, use all deck cards for predictable behavior
+            if cfg!(test) && remaining_cards.is_empty() {
+                println!("🧪 Test mode: Using all deck cards since queue returned empty");
+                deck.cards.iter().map(|c| c.id).collect()
+            } else {
+                remaining_cards
+            }
+        } else {
+            // Fallback to limited subset using actual deck card IDs
+            println!("⚠️ Queue system failed, using fallback limited deck");
+            let mut limited_cards: Vec<i64> = deck.cards.iter()
+                .take(queue::PACK_SIZE_DEFAULT) // Limit to default pack size
+                .map(|c| c.id)
+                .collect();
+            
+            if !cfg!(test) {
+                limited_cards.shuffle(&mut thread_rng());
+            }
+            limited_cards
+        };
         
         if cfg!(test) {
             // Sort ascending for predictable test order. .pop() will take from the end.
             review_queue.sort_unstable(); 
-        } else {
+        } else if review_queue.len() > 1 {
             review_queue.shuffle(&mut thread_rng());
         }
         
-        // Get total cards from deck connection if available, otherwise use current cards
-        let session_total = if let Some(ref db_conn) = deck.db_connection {
-            db_conn.total_card_count as usize
-        } else if let Some(ref cached_db_conn) = deck.cached_db_connection {
-            cached_db_conn.total_card_count as usize
-        } else {
-            deck.cards.len()
-        };
+        let session_total = review_queue.len();
+        let deck_id = queue::get_deck_id(&deck);
+        println!("🎯 Session will have {} total cards for deck {}", session_total, deck_id);
 
         Sm2Scheduler {
             deck,
@@ -67,28 +95,34 @@ impl Scheduler for Sm2Scheduler {
             session_total,
             session_reviews_complete: 0,
             hard_cards_this_session: Vec::new(),
+            failed_cards_today: Vec::new(),
             last_answer: None,
+            today_completed_cards: Vec::new(),
+            deck_id,
         }
     }
 
     fn next_card(&mut self) -> Option<Card> {
-        // If we're running low on cards and have more available in DB, load them
-        if self.review_queue.len() < 10 && (self.deck.db_connection.is_some() || self.deck.cached_db_connection.is_some()) {
-            if let Ok(new_cards) = self.deck.load_more_cards(50) {
-                // Add new card IDs to review queue
-                let mut new_ids: Vec<i64> = new_cards.iter().map(|c| c.id).collect();
-                if !cfg!(test) {
-                    new_ids.shuffle(&mut thread_rng());
-                }
-                self.review_queue.extend(new_ids);
-                println!("Loaded {} more cards, queue now has {} cards", new_cards.len(), self.review_queue.len());
-            }
-        }
-        
+        // For Core Learning Loop: stick to the daily queue, no additional loading
         // Get next card from queue
         if let Some(card_id) = self.review_queue.pop() {
-            // Find card in our deck
-            self.deck.cards.iter().find(|c| c.id == card_id).cloned()
+            // Find card in our deck, load more if needed
+            if let Some(card) = self.deck.cards.iter().find(|c| c.id == card_id).cloned() {
+                return Some(card);
+            }
+            
+            // If card not in memory, try to load more from DB
+            if self.deck.db_connection.is_some() || self.deck.cached_db_connection.is_some() {
+                if let Ok(new_cards) = self.deck.load_more_cards(50, &[], &[]) {
+                    // Try to find the card in the newly loaded batch
+                    if let Some(card) = new_cards.iter().find(|c| c.id == card_id).cloned() {
+                        return Some(card);
+                    }
+                }
+            }
+            
+            // Card not found, skip and try next
+            self.next_card()
         } else {
             None
         }
@@ -111,12 +145,29 @@ impl Scheduler for Sm2Scheduler {
                 card.ease_factor = (card.ease_factor as i32 - 200).max(1300) as u32;
                 card.interval = 0;
                 
+                // Track this card as failed today
+                if !self.failed_cards_today.contains(&card_id) {
+                    self.failed_cards_today.push(card_id);
+                }
+                
                 let cooldown_distance = 5_u32.saturating_sub(card.lapses).max(2) as usize;
                 let insertion_point = self.review_queue.len().saturating_sub(cooldown_distance);
                 self.review_queue.insert(insertion_point, card.id);
             }
             _ => { // Hard, Good, or Easy
                 self.session_reviews_complete += 1;
+                
+                // Track this card as completed today and mark in deck-specific queue
+                if !self.today_completed_cards.contains(&card_id) {
+                    self.today_completed_cards.push(card_id);
+                    
+                    // Mark card as completed in persistent deck-specific queue
+                    let today = Utc::now().date_naive();
+                    if let Err(e) = queue::mark_card_completed_for_deck_id(today, card_id, &self.deck_id) {
+                        eprintln!("Warning: Failed to mark card {} as completed in deck {}: {}", card_id, self.deck_id, e);
+                    }
+                }
+                
                let ease_factor_multiplier = card.ease_factor as f32 / 1000.0;
 
                 match rating {
@@ -190,6 +241,8 @@ impl Scheduler for Sm2Scheduler {
     fn total_session_cards(&self) -> usize { self.session_total }
     fn hard_cards(&self) -> &[i64] { &self.hard_cards_this_session }
     
+    fn failed_cards_today(&self) -> &[i64] { &self.failed_cards_today }
+    
     fn introduce_new_cards(&mut self, count: usize) -> usize {
         // In this scheduler, all cards are in the review queue from the beginning.
         // "Introducing new cards" means bringing cards from the back of the line
@@ -215,6 +268,22 @@ impl Scheduler for Sm2Scheduler {
         self.review_queue.shuffle(&mut thread_rng());
         
         num_to_move
+    }
+
+    fn load_more_cards(&mut self, count: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>> {
+        // Load more cards from the deck, passing today's failed and hard cards for prioritization
+        let new_cards = self.deck.load_more_cards(count, &self.failed_cards_today, &self.hard_cards_this_session)?;
+        
+        // Add the new card IDs to the review queue
+        for card in &new_cards {
+            self.review_queue.push(card.id);
+        }
+        
+        // Update session total
+        self.session_total += new_cards.len();
+        
+        
+        Ok(new_cards)
     }
 
 }

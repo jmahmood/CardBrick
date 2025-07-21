@@ -3,16 +3,28 @@
 use crate::deck::{html_parser, Card};
 use crate::debug::Tracer;
 use crate::ui::FontManager;
+use crate::scheduler::queue;
 use super::StudyingState;
+use chrono::{Utc, TimeZone};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 
 /// Loads the next card from the scheduler into the state.
+/// Now integrates with the daily queue system from Core Learning Loop.
 pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_font: &mut FontManager) {
+    // For Sprint 0: Try to ensure today's queue exists first
+    let today = Utc::now().date_naive();
+    if let Err(e) = queue::ensure_today(today) {
+        eprintln!("Warning: Failed to ensure today's queue: {}", e);
+    }
+    
     state.current_card = state.scheduler.next_card();
     if let Some(card) = state.current_card.clone() {
         load_card_layouts(state, &card, font, small_font);
     } else {
+        // Daily queue is complete - offer to continue with more cards
         state.is_done = true;
-        let done_spans = html_parser::parse_html_to_spans("Deck Complete!");
+        let done_spans = html_parser::parse_html_to_spans("Daily goal complete! 🎯\nA: Continue studying  B: Return to menu");
         state.done_layout = font.layout_text_binary(&done_spans, 400_u32, false).ok();
     }
 }
@@ -36,5 +48,31 @@ pub fn load_card_layouts(state: &mut StudyingState, card: &Card, font: &mut Font
         state.front_layout_ruby = font.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, true).ok();
         state.small_front_layout_ruby = small_font.layout_text_binary(&html_parser::parse_html_to_spans(front_html), content_width, true).ok();
         state.back_layout_ruby = font.layout_text_binary(&html_parser::parse_html_to_spans(back_html), content_width, true).ok();
+    }
+}
+
+/// Load more cards for continued studying beyond the daily goal
+pub fn continue_studying(state: &mut StudyingState, font: &mut FontManager, small_font: &mut FontManager) {
+    // First try to load more cards from the deck
+    if let Ok(new_cards) = state.scheduler.load_more_cards(12) {
+        if new_cards.len() > 0 {
+            // Reset the done state and load next card
+            state.is_done = false;
+            load_next_card(state, font, small_font);
+            return;
+        }
+    }
+    
+    // If no new cards available, try to reorder existing cards
+    let additional_count = state.scheduler.introduce_new_cards(12);
+    
+    if additional_count > 0 {
+        // Reset the done state and load next card
+        state.is_done = false;
+        load_next_card(state, font, small_font);
+    } else {
+        // No more cards available
+        let done_spans = html_parser::parse_html_to_spans("No more cards available in this deck! 🎯\nB: Return to menu");
+        state.done_layout = font.layout_text_binary(&done_spans, 400_u32, false).ok();
     }
 }

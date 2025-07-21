@@ -1,13 +1,9 @@
 // CardBrick - Macroquad Version with Device Compatibility
 use crate::scenes::deck_selection::draw_deck_selection_scene;
-use std::time::Duration;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::io::Write;
 
 use macroquad::prelude::*;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Source};
-use std::io::Cursor;
 use log::{info, warn, error, debug};
 use evdev::Device as EvdevDevice;
 use std::os::fd::AsRawFd;
@@ -22,7 +18,7 @@ mod scenes;
 mod state;
 
 use config::Config;
-use deck::{loader, scanner};
+use deck::scanner;
 use scheduler::{Scheduler, Sm2Scheduler};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
@@ -763,6 +759,26 @@ impl CardBrickApp {
         // Handle keyboard input (for testing)
         if is_key_pressed(KeyCode::Escape) {
             return Err("User quit".into());
+        }
+
+        if is_key_pressed(KeyCode::A) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::A))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::B) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::B))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::X) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::X))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::Y) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::Y))?;
+            input_handled = true;
         }
 
         if is_key_pressed(KeyCode::Space) {

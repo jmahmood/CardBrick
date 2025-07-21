@@ -1,6 +1,9 @@
 use std::env;
-use std::path::PathBuf;
-use crate::Path;
+use std::path::{Path, PathBuf};
+
+// Constants for Core Learning Loop
+pub const BACKLOG_CAP: usize = 200;
+pub const PACK_SIZE_DEFAULT: usize = 12;
 
 pub struct Config {
     pub window_title: &'static str,

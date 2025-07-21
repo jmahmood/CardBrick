@@ -6,7 +6,7 @@ pub mod loader;
 pub mod html_parser;
 pub mod scanner;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Represents a single Anki card.
 /// We use `#[derive(Debug)]` to allow for easy printing to the console, which is great for debugging.
@@ -144,7 +144,8 @@ impl Deck {
     }
     
     /// Load more cards from the database (for extending the session)
-    pub fn load_more_cards(&mut self, limit: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>> {
+    /// Uses intelligent random selection: prioritizes uncovered cards and cards the user found difficult TODAY
+    pub fn load_more_cards(&mut self, limit: usize, failed_today: &[i64], hard_today: &[i64]) -> Result<Vec<Card>, Box<dyn std::error::Error>> {
         // Load from database if we have a connection (legacy or cached)
         let db_path: &std::path::Path = if let Some(ref db_conn) = self.db_connection {
             db_conn.db_path.as_ref()
@@ -155,24 +156,142 @@ impl Deck {
         };
         
         let conn = rusqlite::Connection::open(db_path)?;
-        let offset = self.cards.len();
-        let mut stmt = conn.prepare("SELECT id, nid, due, ivl, factor, lapses FROM cards LIMIT ? OFFSET ?")?;
-        
-        let cards_iter = stmt.query_map([limit as i64, offset as i64], |row| {
-            Ok(Card {
-                id: row.get(0)?, note_id: row.get(1)?,
-                due: row.get(2)?, interval: row.get(3)?,
-                ease_factor: row.get(4)?, lapses: row.get(5)?,
-            })
-        })?;
-
         let mut new_cards = Vec::new();
-        for card_result in cards_iter {
-            new_cards.push(card_result?);
+        
+        // Get IDs of cards we already have loaded to avoid duplicates
+        let existing_ids: HashSet<i64> = self.cards.iter().map(|c| c.id).collect();
+        
+        let existing_ids_str = if existing_ids.is_empty() {
+            "(-1)".to_string() // Placeholder that won't match any real IDs
+        } else {
+            format!("({})", existing_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(","))
+        };
+        
+        // Strategy 1: Prioritize cards the user found difficult TODAY (failed or hard) (25% of requested cards max)
+        if new_cards.len() < limit && (!failed_today.is_empty() || !hard_today.is_empty()) {
+            let difficult_cards_needed = (limit - new_cards.len()).min(limit / 4); // Up to 25% from today's difficult cards
+            
+            // Combine failed and hard cards, with preference for failed cards
+            let mut difficult_card_ids = failed_today.to_vec();
+            difficult_card_ids.extend_from_slice(hard_today);
+            
+            // Remove duplicates while preserving order (failed cards first)
+            difficult_card_ids.sort();
+            difficult_card_ids.dedup();
+            
+            let difficult_ids_str = if difficult_card_ids.is_empty() {
+                "(-1)".to_string() // Placeholder that won't match any real IDs
+            } else {
+                format!("({})", difficult_card_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(","))
+            };
+            
+            let query = format!(
+                "SELECT id, nid, due, ivl, factor, lapses 
+                 FROM cards 
+                 WHERE id NOT IN {} AND id IN {}
+                 ORDER BY RANDOM() 
+                 LIMIT ?", 
+                existing_ids_str, difficult_ids_str
+            );
+            
+            let mut stmt = conn.prepare(&query)?;
+            let cards_iter = stmt.query_map([difficult_cards_needed as i64], |row| {
+                Ok(Card {
+                    id: row.get(0)?, note_id: row.get(1)?,
+                    due: row.get(2)?, interval: row.get(3)?,
+                    ease_factor: row.get(4)?, lapses: row.get(5)?,
+                })
+            })?;
+
+            for card_result in cards_iter {
+                let card = card_result?;
+                new_cards.push(card);
+            }
+            
+        }
+        
+        // Strategy 2: Fill remaining with random uncovered cards (haven't been studied yet)
+        if new_cards.len() < limit {
+            let uncovered_needed = limit - new_cards.len();
+            let new_card_ids: HashSet<i64> = new_cards.iter().map(|c| c.id).collect();
+            let mut all_existing_ids = existing_ids.clone();
+            all_existing_ids.extend(new_card_ids);
+            
+            let all_ids_str = if all_existing_ids.is_empty() {
+                "(-1)".to_string()
+            } else {
+                format!("({})", all_existing_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(","))
+            };
+            
+            let query = format!(
+                "SELECT c.id, c.nid, c.due, c.ivl, c.factor, c.lapses 
+                 FROM cards c 
+                 LEFT JOIN revlog r ON c.id = r.cid 
+                 WHERE c.id NOT IN {} AND r.cid IS NULL 
+                 ORDER BY RANDOM() 
+                 LIMIT ?", 
+                all_ids_str
+            );
+            
+            let mut stmt = conn.prepare(&query)?;
+            let cards_iter = stmt.query_map([uncovered_needed as i64], |row| {
+                Ok(Card {
+                    id: row.get(0)?, note_id: row.get(1)?,
+                    due: row.get(2)?, interval: row.get(3)?,
+                    ease_factor: row.get(4)?, lapses: row.get(5)?,
+                })
+            })?;
+
+            let initial_count = new_cards.len();
+            for card_result in cards_iter {
+                let card = card_result?;
+                new_cards.push(card);
+            }
+            
+        }
+        
+        // Strategy 3: If still need more cards, get random cards from anywhere in the database
+        if new_cards.len() < limit {
+            let random_needed = limit - new_cards.len();
+            let new_card_ids: HashSet<i64> = new_cards.iter().map(|c| c.id).collect();
+            let mut all_existing_ids = existing_ids.clone();
+            all_existing_ids.extend(new_card_ids);
+            
+            let all_ids_str = if all_existing_ids.is_empty() {
+                "(-1)".to_string()
+            } else {
+                format!("({})", all_existing_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(","))
+            };
+            
+            let query = format!(
+                "SELECT id, nid, due, ivl, factor, lapses 
+                 FROM cards 
+                 WHERE id NOT IN {} 
+                 ORDER BY RANDOM() 
+                 LIMIT ?", 
+                all_ids_str
+            );
+            
+            let mut stmt = conn.prepare(&query)?;
+            let cards_iter = stmt.query_map([random_needed as i64], |row| {
+                Ok(Card {
+                    id: row.get(0)?, note_id: row.get(1)?,
+                    due: row.get(2)?, interval: row.get(3)?,
+                    ease_factor: row.get(4)?, lapses: row.get(5)?,
+                })
+            })?;
+
+            let initial_count = new_cards.len();
+            for card_result in cards_iter {
+                let card = card_result?;
+                new_cards.push(card);
+            }
+            
         }
         
         // Add to our existing cards
         self.cards.extend(new_cards.clone());
+        
         Ok(new_cards)
     }
 }
@@ -309,7 +428,7 @@ mod tests {
         };
         
         // Should return empty Vec when no database connection
-        let result = deck.load_more_cards(10).unwrap();
+        let result = deck.load_more_cards(10, &[], &[]).unwrap();
         assert!(result.is_empty());
     }
 

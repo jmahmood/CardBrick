@@ -3,7 +3,7 @@
 use crate::state::{BrickInput, BrickButton, AppState, GameState};
 use crate::deck::html_parser;
 use crate::scheduler::Rating;
-use super::logic::{load_card_layouts, load_next_card};
+use super::logic::{load_card_layouts, load_next_card, continue_studying};
 use super::StudyingState;
 
 /// Handles input events for the studying scene - ported from SDL2 to pure evdev
@@ -38,16 +38,22 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                 }
             },
             
-            // A Button: Rate card as "Good"
+            // A Button: Rate card as "Good" or Continue studying if done
             BrickInput::ButtonDown(BrickButton::A) => {
-                if studying_state.is_answer_revealed {
+                if studying_state.is_done {
+                    // User wants to continue studying beyond daily goal
+                    continue_studying(studying_state, &mut state.font_manager, &mut state.small_font_manager);
+                } else if studying_state.is_answer_revealed {
                     rate_card_and_continue(studying_state, Rating::Good, &mut state.font_manager, &mut state.small_font_manager)?;
                 }
             },
             
-            // B Button: Rate card as "Again" 
+            // B Button: Rate card as "Again" or Return to menu if done
             BrickInput::ButtonDown(BrickButton::B) => {
-                if studying_state.is_answer_revealed {
+                if studying_state.is_done {
+                    // User wants to return to deck selection
+                    state.game_state = GameState::GoToDeckSelection;
+                } else if studying_state.is_answer_revealed {
                     rate_card_and_continue(studying_state, Rating::Again, &mut state.font_manager, &mut state.small_font_manager)?;
                 }
             },
