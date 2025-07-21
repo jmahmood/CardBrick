@@ -6,3 +6,6 @@
 /internal-docs-and-musings
 callgrind.out
 /assets/decks/
+coverage-report/
+.claude/
+test_cache/
