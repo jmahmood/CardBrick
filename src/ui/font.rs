@@ -302,9 +302,33 @@ impl FontManager {
         self.draw_text_span_segment(text, x, y, false, false, canvas_manager)?;
         Ok(())
     }
+
+    /// Draw text with top-left corner positioning instead of baseline positioning
+    pub fn draw_line_top_left(&self, text: &str, x: i32, top_y: i32, canvas_manager: &crate::ui::CanvasManager) -> Result<(), String> {
+        let (ascent, _, _) = self.metrics();
+        let baseline_y = top_y + ascent as i32;
+        self.draw_text_span_segment(text, x, baseline_y, false, false, canvas_manager)?;
+        Ok(())
+    }
     
     pub fn size_of_text(&self, text: &str) -> Result<(u32, u32), String> {
         self.size_of_text_with_style(text, false, false)
+    }
+
+    /// Get font metrics (ascent, descent, line_gap) in logical pixels
+    pub fn metrics(&self) -> (f32, f32, f32) {
+        // For macroquad, we approximate font metrics based on font size
+        // These are reasonable defaults for most fonts
+        let ascent = self.font_size * 0.8;    // ~80% of font size is above baseline
+        let descent = self.font_size * 0.2;   // ~20% of font size is below baseline  
+        let line_gap = self.font_size * 0.1;  // ~10% for line spacing
+        (ascent, descent, line_gap)
+    }
+
+    /// Get total line height (ascent + descent + line_gap)
+    pub fn line_height(&self) -> f32 {
+        let (ascent, descent, line_gap) = self.metrics();
+        ascent + descent + line_gap
     }
 
     fn find_fitting_size(

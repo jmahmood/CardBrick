@@ -4,6 +4,7 @@
 use crate::deck::{Card, Deck, Note};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::collections::HashMap;
 
 
 /// Represents the user's rating for a card.
@@ -231,7 +232,12 @@ mod tests {
             cards.push(Card { id: card_id, note_id, due: 0, interval: 0, ease_factor: 2500, lapses: 0 });
             notes.insert(note_id, Note { id: note_id, fields: vec![format!("Front {}", i), format!("Back {}", i)] });
         }
-        Deck { cards, notes }
+        Deck { 
+            cards, 
+            notes,
+            db_connection: None,
+            cached_db_connection: None,
+        }
     }
 
     #[test]

@@ -63,18 +63,23 @@ pub fn draw_studying_scene(
     sprite: &mut Sprite,
     canvas_manager: &CanvasManager,
 ) -> Result<(), String> {
+    // Layout constants
+    const BAR_HEIGHT: f32 = 25.0;
+    const BAR_PADDING: f32 = 4.0;
+    const CONTENT_TOP: f32 = BAR_HEIGHT + 15.0;
+    
     let margin: u32 = 30;
     let total = studying_state.scheduler.total_session_cards();
+    let (_, logical_height) = canvas_manager.logical_size();
     
     // Draw progress bar
     if total > 0 {
         let completed = studying_state.scheduler.reviews_complete();
-        let bar_height = 25.0;
         
         // Draw progress bar background
         let (bg_x, bg_y) = canvas_manager.logical_to_screen(0.0, 0.0);
         let bg_w = 512.0 * canvas_manager.get_scale_factor();
-        let bg_h = bar_height * canvas_manager.get_scale_factor();
+        let bg_h = BAR_HEIGHT * canvas_manager.get_scale_factor();
         draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(60, 60, 60, 255));
         
         // Draw progress bar foreground with color gradient
@@ -85,19 +90,25 @@ pub fn draw_studying_scene(
         let g = (255.0 * progress) as u8;
         draw_rectangle(bg_x, bg_y, fg_w, bg_h, Color::from_rgba(r, g, 80, 255));
         
-        // Draw progress text
+        // Draw progress text with proper top-left positioning
         let progress_text = format!("{}/{}", completed, total);
-        let (text_w, text_h) = hint_font_manager.size_of_text(&progress_text)?;
-        let text_x = (512 as i32 - text_w as i32 - 10).max(0);
-        let text_y = (bar_height as i32 - text_h as i32) / 2;
-        hint_font_manager.draw_single_line(&progress_text, text_x, text_y, canvas_manager)?;
+        let (tw, th) = hint_font_manager.size_of_text(&progress_text)?;
+        
+        // Centre the bounding box in the bar
+        let text_x = 512.0 - tw as f32 - 10.0;
+        let text_y = (BAR_HEIGHT - th as f32) / 2.0;
+        hint_font_manager.draw_line_top_left(&progress_text, text_x as i32, text_y as i32, canvas_manager)?;
     }
     
     // Draw animated sprite
     sprite.draw(canvas_manager)?;
     
-    // Set clipping rectangle for scrollable content area
-    canvas_manager.set_clip_rect(0, 25, 512, 305);
+    // Set clipping rectangle for scrollable content area - start after progress bar
+    canvas_manager.set_clip_rect(0, BAR_HEIGHT as i32, 512, (logical_height - BAR_HEIGHT) as u32);
+    
+    // Calculate content origin with proper ascent handling
+    let font_ascent = font_manager.metrics().0;
+    let small_font_ascent = small_font_manager.metrics().0;
 
     if !studying_state.is_answer_revealed {
         // Question mode: Show large front text only
@@ -108,11 +119,12 @@ pub fn draw_studying_scene(
         };
         
         if let Some(layout) = layout_to_draw {
-            font_manager.draw_layout(layout, margin as i32, 40, studying_state.show_ruby_text, canvas_manager)?;
+            let y_pos = CONTENT_TOP as i32 - studying_state.scroll_offset;
+            font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
         }
     } else {
         // Answer mode: Show small front + full back text with scrolling
-        let mut y_pos = 40 - studying_state.scroll_offset;
+        let mut y_pos = CONTENT_TOP as i32 - studying_state.scroll_offset;
         
         // Draw small front text
         let small_front_layout_to_draw = if studying_state.show_ruby_text { 
@@ -122,7 +134,7 @@ pub fn draw_studying_scene(
         };
         
         if let Some(layout) = small_front_layout_to_draw {
-            small_font_manager.draw_layout(layout, margin as i32, y_pos, studying_state.show_ruby_text, canvas_manager)?;
+            small_font_manager.draw_layout(layout, margin as i32, y_pos + small_font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
             y_pos += layout.total_height + 20;
         }
         
@@ -134,14 +146,16 @@ pub fn draw_studying_scene(
         };
         
         if let Some(layout) = back_layout_to_draw {
-            font_manager.draw_layout(layout, margin as i32, y_pos, studying_state.show_ruby_text, canvas_manager)?;
+            font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
         }
     }
 
-    // Draw "Deck Complete!" message if done
+    // Draw "Deck Complete!" message if done - positioned relative to content area
     if studying_state.is_done {
         if let Some(layout) = &studying_state.done_layout {
-            font_manager.draw_layout(layout, 150, 150, studying_state.show_ruby_text, canvas_manager)?;
+            let available_height = logical_height - CONTENT_TOP;
+            let complete_y = CONTENT_TOP + (available_height - layout.total_height as f32) / 2.0;
+            font_manager.draw_layout(layout, 150, complete_y as i32 + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
         }
     }
     
@@ -149,7 +163,9 @@ pub fn draw_studying_scene(
     canvas_manager.clear_clip_rect();
     if studying_state.is_answer_revealed {
         if let Some(hint_layout) = &studying_state.hint_layout {
-            hint_font_manager.draw_layout(hint_layout, margin as i32, 335, studying_state.show_ruby_text, canvas_manager)?;
+            let hint_ascent = hint_font_manager.metrics().0;
+            let hint_y = logical_height - hint_layout.total_height as f32 - 10.0; // 10px from bottom
+            hint_font_manager.draw_layout(hint_layout, margin as i32, hint_y as i32 + hint_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
         }
     }
     

@@ -59,21 +59,38 @@ pub fn draw_deck_selection_scene(
     canvas_manager: &CanvasManager,
     state: &DeckSelectionState,
 ) -> Result<(), String> {
-    // Draw static text instructions
-    font_manager.draw_single_line("Select a Deck", 20, 20, canvas_manager)?;
-    small_font_manager.draw_single_line("Press Backspace to return to Main Menu", 20, 70, canvas_manager)?;
+    // Use font-derived layout constants
+    const MARGIN_TOP: f32 = 10.0;
+    const TEXT_X: f32 = 20.0;
+    const PADDING: f32 = 2.0;
+
+    let (screen_width, screen_height) = canvas_manager.logical_size();
+    let title_line_height = font_manager.line_height();
+    let item_line_height = small_font_manager.line_height();
+    let list_spacing = 8.0;
+    
+    // Calculate layout positions using font metrics
+    let title_top = MARGIN_TOP;
+    let instruction_top = title_top + title_line_height + 8.0;
+    let list_top = instruction_top + item_line_height + 20.0;
+    let item_step = item_line_height + list_spacing;
+
+    // Draw static text instructions using top-left positioning
+    font_manager.draw_line_top_left("Select a Deck", TEXT_X as i32, title_top as i32, canvas_manager)?;
+    small_font_manager.draw_line_top_left("Press Backspace to return to Main Menu", TEXT_X as i32, instruction_top as i32, canvas_manager)?;
 
     // Handle case where no decks are found
     if state.decks.is_empty() {
-        small_font_manager.draw_single_line("No cached decks found.", 20, 150, canvas_manager)?;
-        small_font_manager.draw_single_line("Run precache_decks.py to cache .apkg files.", 20, 180, canvas_manager)?;
+        let no_decks_top = list_top;
+        let instructions_top = no_decks_top + item_line_height + 8.0;
+        small_font_manager.draw_line_top_left("No cached decks found.", TEXT_X as i32, no_decks_top as i32, canvas_manager)?;
+        small_font_manager.draw_line_top_left("Run precache_decks.py to cache .apkg files.", TEXT_X as i32, instructions_top as i32, canvas_manager)?;
         return Ok(());
     }
 
-    let list_top = 150;
-    let mut y_pos = list_top;
-    let item_height = 40; // Use a fixed height for uniform list items
-    let visible_items = 4; // Max number of items to show at once
+    // Calculate how many items can fit on screen
+    let available_height = screen_height - list_top;
+    let visible_items = (available_height / item_step).floor() as usize;
 
     for row in 0..visible_items {
         let idx = state.first_visible + row;
@@ -83,32 +100,33 @@ pub fn draw_deck_selection_scene(
 
         let deck = &state.decks[idx];
         let display_title = deck.name.replace('_', " ");
+        let item_top = list_top + (row as f32 * item_step);
 
-        // Draw highlight rectangle for the selected item
+        // Draw highlight rectangle for the selected item (in logical space)
         if idx == state.selected_index {
             let (text_w, text_h) = small_font_manager.size_of_text(&display_title)?;
             
-            // Note: The x-coordinate for the highlight is hardcoded to match the text's logical x-position.
-            let (highlight_x, highlight_y) = canvas_manager.logical_to_screen(18.0, y_pos as f32);
-            let highlight_w = (text_w as f32 + 4.0) * canvas_manager.get_scale_factor();
-            // Center the highlight vertically around the text baseline
-            let highlight_h = (text_h as f32 + 4.0) * canvas_manager.get_scale_factor();
-            let highlight_y_centered = highlight_y - highlight_h / 2.0 - (text_h as f32 / 4.0);
+            // Compute rectangle in logical space
+            let rect_x = TEXT_X - PADDING;
+            let rect_y = item_top;
+            let rect_w = text_w as f32 + PADDING * 2.0;
+            let rect_h = text_h as f32 + PADDING * 2.0;
+
+            // Convert to screen space once
+            let (screen_x, screen_y) = canvas_manager.logical_to_screen(rect_x, rect_y);
+            let scale = canvas_manager.get_scale_factor();
             
             draw_rectangle(
-                highlight_x,
-                highlight_y_centered,
-                highlight_w,
-                highlight_h,
+                screen_x,
+                screen_y,
+                rect_w * scale,
+                rect_h * scale,
                 Color::from_rgba(80, 80, 80, 255),
             );
         }
 
-        // Draw the deck name
-        // We ignore the result since an error would have been caught by the highlight logic above.
-        let _ = small_font_manager.draw_single_line(&display_title, 20, y_pos, canvas_manager);
-
-        y_pos += item_height;
+        // Draw the deck name using top-left positioning
+        small_font_manager.draw_line_top_left(&display_title, TEXT_X as i32, item_top as i32, canvas_manager)?;
     }
 
     Ok(())
