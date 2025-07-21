@@ -22,6 +22,7 @@ mod scenes;
 mod state;
 
 use config::Config;
+use deck::{loader, scanner};
 use scheduler::{Scheduler, Sm2Scheduler};
 use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
@@ -153,13 +154,12 @@ impl CardBrickApp {
             Some(menu_font.clone()), None, config.font_size_small.try_into().unwrap()
         );
 
-        // Step 4: Load available decks
+        // Step 4: Load available decks from cache
         Self::show_loading_step(loading_canvas, loading_steps, 4).await;
-        let available_decks = load_decks_from_directory(Path::new(&config.decks_directory))?;
+        let available_decks = scanner::load_cached_decks()?;
         if available_decks.is_empty() {
             return Err(format!(
-                "No .apkg decks found in the '{}' directory.",
-                config.decks_directory.display()
+                "No cached decks found. Run precache_decks.py to cache .apkg files."
             ));
         }
 
@@ -823,11 +823,24 @@ impl CardBrickApp {
                 if let Ok(msg) = rx.try_recv() {
                     match msg {
                         LoaderMessage::Complete(Ok(deck)) => {
+                            let start_time = std::time::Instant::now();
+                            println!("🎯 Starting post-load initialization...");
+                            
                             let scheduler = Box::new(Sm2Scheduler::new(deck));
+                            println!("🎯 [{}ms] Scheduler created", start_time.elapsed().as_millis());
+                            
                             let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            println!("🎯 [{}ms] DatabaseManager created", start_time.elapsed().as_millis());
+                            
                             let replay_logger = ReplayLogger::new(&deck_id_to_load).map_err(|e| e.to_string())?;
+                            println!("🎯 [{}ms] ReplayLogger created", start_time.elapsed().as_millis());
+                            
                             let mut studying_state = scenes::studying::StudyingState::new(scheduler, db_manager, replay_logger);
+                            println!("🎯 [{}ms] StudyingState created", start_time.elapsed().as_millis());
+                            
                             scenes::studying::logic::load_next_card(&mut studying_state, &mut self.app_state.font_manager, &mut self.app_state.small_font_manager);
+                            println!("🎯 [{}ms] TOTAL POST-LOAD TIME - Study mode ready", start_time.elapsed().as_millis());
+                            
                             GameState::Studying(studying_state)
                         }
                         LoaderMessage::Complete(Err(e)) => GameState::Error(e),
@@ -921,35 +934,6 @@ fn find_gamepad() -> Option<EvdevDevice> {
     None
 }
 
-fn load_decks_from_directory(dir_path: &Path) -> Result<Vec<DeckMetadata>, String> {
-    let mut decks = Vec::new();
-    let entries = fs::read_dir(dir_path)
-        .map_err(|e| format!("Failed to read directory '{}': {}", dir_path.display(), e))?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
-        let path = entry.path();
-
-        if path.is_file() {
-            if let Some(extension) = path.extension() {
-                if extension == "apkg" {
-                    let deck_id = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown_deck")
-                        .to_string();
-                    let deck_name = deck_id.clone();
-                    decks.push(DeckMetadata {
-                        id: deck_id,
-                        name: deck_name,
-                        path: path.clone(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(decks)
-}
 
 fn draw_loading_scene(font_manager: &FontManager, canvas_manager: &CanvasManager, layout: &ui::font::TextLayout, progress: f32) -> Result<(), String> {
     font_manager.draw_layout(layout, 150, 150, false, canvas_manager)?;

@@ -4,6 +4,7 @@
 // Make the loader module public so other parts of our application can use it.
 pub mod loader;
 pub mod html_parser;
+pub mod scanner;
 
 use std::collections::HashMap;
 
@@ -34,8 +35,10 @@ pub struct Deck {
     pub cards: Vec<Card>,
     // We use a HashMap to quickly look up a note by its ID.
     pub notes: HashMap<i64, Note>,
-    // Optional database connection for lazy loading
+    // Optional database connection for lazy loading (legacy)
     pub db_connection: Option<LazyDeckConnection>,
+    // Optional cached database connection for lazy loading
+    pub cached_db_connection: Option<CachedDeckConnection>,
 }
 
 /// Database connection info for lazy loading cards and notes
@@ -45,9 +48,23 @@ pub struct LazyDeckConnection {
     pub total_card_count: i64,
 }
 
-/// Temporary structure for lazy deck loading
+/// Cached deck connection info for lazy loading cards and notes
+#[derive(Debug)]
+pub struct CachedDeckConnection {
+    pub db_path: std::path::PathBuf,
+    pub total_card_count: i64,
+}
+
+/// Temporary structure for lazy deck loading (legacy)
 pub struct LazyDeck {
     pub db_path: tempfile::TempPath,
+    pub initial_cards: Vec<Card>,
+    pub total_card_count: i64,
+}
+
+/// Structure for cached deck loading
+pub struct CachedDeck {
+    pub db_path: std::path::PathBuf,
     pub initial_cards: Vec<Card>,
     pub total_card_count: i64,
 }
@@ -61,6 +78,21 @@ impl LazyDeck {
                 db_path: self.db_path,
                 total_card_count: self.total_card_count,
             }),
+            cached_db_connection: None,
+        })
+    }
+}
+
+impl CachedDeck {
+    pub fn into_deck(self) -> Result<Deck, Box<dyn std::error::Error>> {
+        Ok(Deck {
+            cards: self.initial_cards,
+            notes: HashMap::new(), // Will be loaded on demand
+            db_connection: None,
+            cached_db_connection: Some(CachedDeckConnection {
+                db_path: self.db_path,
+                total_card_count: self.total_card_count,
+            }),
         })
     }
 }
@@ -68,59 +100,79 @@ impl LazyDeck {
 impl Deck {
     /// Get a note by ID, loading from database if not already cached
     pub fn get_note(&mut self, note_id: i64) -> Result<Option<Note>, Box<dyn std::error::Error>> {
+        let start_time = std::time::Instant::now();
+        
         // Check if note is already cached
         if let Some(note) = self.notes.get(&note_id) {
+            println!("⏱️  Note {} retrieved from cache in {}ms", note_id, start_time.elapsed().as_millis());
             return Ok(Some(note.clone()));
         }
         
-        // Load from database if we have a connection
-        if let Some(ref db_conn) = self.db_connection {
-            let conn = rusqlite::Connection::open(&db_conn.db_path)?;
-            let mut stmt = conn.prepare("SELECT id, flds FROM notes WHERE id = ?")?;
-            
-            match stmt.query_row([note_id], |row| {
-                let id: i64 = row.get(0)?;
-                let fields_str: String = row.get(1)?;
-                let fields: Vec<String> = fields_str.split('\x1f').map(String::from).collect();
-                Ok(Note { id, fields })
-            }) {
-                Ok(note_row) => {
-                    // Cache the note for future use
-                    self.notes.insert(note_id, note_row.clone());
-                    Ok(Some(note_row))
-                },
-                Err(_) => Ok(None), // Note not found
-            }
+        // Load from database if we have a connection (legacy or cached)
+        let db_path: &std::path::Path = if let Some(ref db_conn) = self.db_connection {
+            db_conn.db_path.as_ref()
+        } else if let Some(ref cached_db_conn) = self.cached_db_connection {
+            cached_db_conn.db_path.as_ref()
         } else {
-            Ok(None)
+            return Ok(None);
+        };
+        
+        println!("⏱️  Opening DB connection for note {} at {}ms", note_id, start_time.elapsed().as_millis());
+        let conn = rusqlite::Connection::open(db_path)?;
+        println!("⏱️  DB opened for note {} at {}ms", note_id, start_time.elapsed().as_millis());
+        
+        let mut stmt = conn.prepare("SELECT id, flds FROM notes WHERE id = ?")?;
+        println!("⏱️  Statement prepared for note {} at {}ms", note_id, start_time.elapsed().as_millis());
+        
+        match stmt.query_row([note_id], |row| {
+            let id: i64 = row.get(0)?;
+            let fields_str: String = row.get(1)?;
+            let fields: Vec<String> = fields_str.split('\x1f').map(String::from).collect();
+            Ok(Note { id, fields })
+        }) {
+            Ok(note_row) => {
+                println!("⏱️  Note {} loaded from DB in {}ms", note_id, start_time.elapsed().as_millis());
+                // Cache the note for future use
+                self.notes.insert(note_id, note_row.clone());
+                Ok(Some(note_row))
+            },
+            Err(_) => {
+                println!("⏱️  Note {} not found after {}ms", note_id, start_time.elapsed().as_millis());
+                Ok(None) // Note not found
+            }
         }
     }
     
     /// Load more cards from the database (for extending the session)
     pub fn load_more_cards(&mut self, limit: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>> {
-        if let Some(ref db_conn) = self.db_connection {
-            let conn = rusqlite::Connection::open(&db_conn.db_path)?;
-            let offset = self.cards.len();
-            let mut stmt = conn.prepare("SELECT id, nid, due, ivl, factor, lapses FROM cards LIMIT ? OFFSET ?")?;
-            
-            let cards_iter = stmt.query_map([limit as i64, offset as i64], |row| {
-                Ok(Card {
-                    id: row.get(0)?, note_id: row.get(1)?,
-                    due: row.get(2)?, interval: row.get(3)?,
-                    ease_factor: row.get(4)?, lapses: row.get(5)?,
-                })
-            })?;
+        // Load from database if we have a connection (legacy or cached)
+        let db_path: &std::path::Path = if let Some(ref db_conn) = self.db_connection {
+            db_conn.db_path.as_ref()
+        } else if let Some(ref cached_db_conn) = self.cached_db_connection {
+            cached_db_conn.db_path.as_ref()
+        } else {
+            return Ok(Vec::new());
+        };
+        
+        let conn = rusqlite::Connection::open(db_path)?;
+        let offset = self.cards.len();
+        let mut stmt = conn.prepare("SELECT id, nid, due, ivl, factor, lapses FROM cards LIMIT ? OFFSET ?")?;
+        
+        let cards_iter = stmt.query_map([limit as i64, offset as i64], |row| {
+            Ok(Card {
+                id: row.get(0)?, note_id: row.get(1)?,
+                due: row.get(2)?, interval: row.get(3)?,
+                ease_factor: row.get(4)?, lapses: row.get(5)?,
+            })
+        })?;
 
-            let mut new_cards = Vec::new();
-            for card_result in cards_iter {
-                new_cards.push(card_result?);
-            }
-            
-            // Add to our existing cards
-            self.cards.extend(new_cards.clone());
-            return Ok(new_cards);
+        let mut new_cards = Vec::new();
+        for card_result in cards_iter {
+            new_cards.push(card_result?);
         }
         
-        Ok(Vec::new())
+        // Add to our existing cards
+        self.cards.extend(new_cards.clone());
+        Ok(new_cards)
     }
 }

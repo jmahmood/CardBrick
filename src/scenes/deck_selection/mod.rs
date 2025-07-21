@@ -65,8 +65,8 @@ pub fn draw_deck_selection_scene(
 
     // Handle case where no decks are found
     if state.decks.is_empty() {
-        small_font_manager.draw_single_line("No decks found.", 20, 150, canvas_manager)?;
-        small_font_manager.draw_single_line("Please add .apkg files to the 'decks' directory.", 20, 180, canvas_manager)?;
+        small_font_manager.draw_single_line("No cached decks found.", 20, 150, canvas_manager)?;
+        small_font_manager.draw_single_line("Run precache_decks.py to cache .apkg files.", 20, 180, canvas_manager)?;
         return Ok(());
     }
 

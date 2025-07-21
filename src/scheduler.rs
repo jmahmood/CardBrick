@@ -54,6 +54,8 @@ impl Scheduler for Sm2Scheduler {
         // Get total cards from deck connection if available, otherwise use current cards
         let session_total = if let Some(ref db_conn) = deck.db_connection {
             db_conn.total_card_count as usize
+        } else if let Some(ref cached_db_conn) = deck.cached_db_connection {
+            cached_db_conn.total_card_count as usize
         } else {
             deck.cards.len()
         };
@@ -70,7 +72,7 @@ impl Scheduler for Sm2Scheduler {
 
     fn next_card(&mut self) -> Option<Card> {
         // If we're running low on cards and have more available in DB, load them
-        if self.review_queue.len() < 10 && self.deck.db_connection.is_some() {
+        if self.review_queue.len() < 10 && (self.deck.db_connection.is_some() || self.deck.cached_db_connection.is_some()) {
             if let Ok(new_cards) = self.deck.load_more_cards(50) {
                 // Add new card IDs to review queue
                 let mut new_ids: Vec<i64> = new_cards.iter().map(|c| c.id).collect();
