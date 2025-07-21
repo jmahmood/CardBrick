@@ -10,11 +10,9 @@ use crate::scenes::main_menu::MainMenuState;
 use crate::scenes::studying::StudyingState;
 use crate::ui::font::TextLayout;
 use crate::ui::{CanvasManager, FontManager, sprite::Sprite};
-use sdl2::controller::{GameController};
-use sdl2::controller::Button as CtrlBtn;
-use sdl2::keyboard::Keycode;
-use sdl2::event::Event;
-use sdl2::mixer::{self, Chunk};
+use rodio::{OutputStream, OutputStreamHandle, Decoder, Source};
+use evdev::Device as EvdevDevice;
+use std::io::Cursor;
 
 
 /// Holds metadata about a single deck, used for selection screens.
@@ -32,7 +30,7 @@ pub enum LoaderMessage {
 }
 
 /// Represents the current screen or state of the application.
-pub enum GameState<'a> {
+pub enum GameState {
     MainMenu(MainMenuState),
     GoToDeckSelection,
     DeckSelection(DeckSelectionState),
@@ -42,28 +40,46 @@ pub enum GameState<'a> {
         progress: f32,
         deck_id_to_load: String,
     },
-    Studying(StudyingState<'a>),
+    Studying(StudyingState<'static>),
     Error(String),
 }
 
-pub struct Sfx {
-    pub up_down_sound: Chunk,
-    pub open_sound: Chunk,
-    pub mixer_ctx: mixer::Sdl2MixerContext
+pub struct AudioManager {
+    _stream: OutputStream,
+    stream_handle: OutputStreamHandle,
+}
+
+impl AudioManager {
+    pub fn new() -> Result<Self, String> {
+        let (stream, stream_handle) = OutputStream::try_default()
+            .map_err(|e| format!("Failed to create audio output: {}", e))?;
+        Ok(Self { _stream: stream, stream_handle })
+    }
+
+    pub fn play_sound(&self, sound_data: &'static [u8]) -> Result<(), String> {
+        let cursor = Cursor::new(sound_data);
+        let source = Decoder::new(cursor)
+            .map_err(|e| format!("Failed to decode audio: {}", e))?;
+        self.stream_handle.play_raw(source.convert_samples())
+            .map_err(|e| format!("Failed to play sound: {}", e))?;
+        Ok(())
+    }
 }
 
 /// The top-level state for the entire application.
-pub struct AppState<'a> {
-    pub game_state: GameState<'a>,
+pub struct AppState {
+    pub game_state: GameState,
     pub available_decks: Vec<DeckMetadata>,
-    pub canvas_manager: CanvasManager<'a>,
-    pub font_manager: FontManager<'a, 'a>,
-    pub small_font_manager: FontManager<'a, 'a>,
-    pub hint_font_manager: FontManager<'a, 'a>,
+    pub canvas_manager: CanvasManager,
+    pub font_manager: FontManager,
+    pub small_font_manager: FontManager,
+    pub hint_font_manager: FontManager,
     pub sprite: Sprite,
     pub config: Config,
-    pub controllers: Vec<GameController>,
-    pub sfx: Sfx
+    pub gamepad: Option<EvdevDevice>,
+    pub audio: AudioManager,
+    pub background_font_receiver: Option<std::sync::mpsc::Receiver<crate::BackgroundFontMessage>>,
+    pub japanese_font_ready: bool,
 }
 
 /// All the *buttons* as they’re silkscreened (or logically present) on the Brick.
@@ -104,98 +120,58 @@ pub enum BrickInput {
     AxisMotion { axis: BrickAxis, value: f32 },
 }
 
-pub fn map_to_brick_input(ev: &Event) -> Option<BrickInput> {
-    match ev {
-        // 1) Controller D‑pad & face buttons
-        Event::ControllerButtonDown { button, .. } => {
-            let b = match button {
-                CtrlBtn::B        => BrickButton::A,
-                // …but you know it’s really the A button on the Brick.
-                CtrlBtn::A        => BrickButton::B,
-                CtrlBtn::Y        => BrickButton::X,
-                CtrlBtn::X        => BrickButton::Y,
-                CtrlBtn::DPadUp   => BrickButton::DPadUp,
-                CtrlBtn::DPadDown => BrickButton::DPadDown,
-                CtrlBtn::DPadLeft => BrickButton::DPadLeft,
-                CtrlBtn::DPadRight=> BrickButton::DPadRight,
-                CtrlBtn::Start    => BrickButton::Start,
-                CtrlBtn::Back     => BrickButton::Back,
-                CtrlBtn::Guide    => BrickButton::Guide,
-                CtrlBtn::LeftShoulder    => BrickButton::LeftShoulder,
-                CtrlBtn::RightShoulder    => BrickButton::RightShoulder,
-                CtrlBtn::RightStick    => BrickButton::RightStick,
-                CtrlBtn::LeftStick    => BrickButton::LeftStick,
-                _                 => return None,
-            };
-            Some(BrickInput::ButtonDown(b))
-        }
-        Event::ControllerButtonUp { button, .. } => {
-            let b = match button {
-                CtrlBtn::B        => BrickButton::A,
-                // …but you know it’s really the A button on the Brick.
-                CtrlBtn::A        => BrickButton::B,
-                CtrlBtn::Y        => BrickButton::X,
-                CtrlBtn::X        => BrickButton::Y,
-                CtrlBtn::DPadUp   => BrickButton::DPadUp,
-                CtrlBtn::DPadDown => BrickButton::DPadDown,
-                CtrlBtn::DPadLeft => BrickButton::DPadLeft,
-                CtrlBtn::DPadRight=> BrickButton::DPadRight,
-                CtrlBtn::Start    => BrickButton::Start,
-                CtrlBtn::Back     => BrickButton::Back,
-                CtrlBtn::Guide    => BrickButton::Guide,
-                CtrlBtn::LeftShoulder    => BrickButton::LeftShoulder,
-                CtrlBtn::RightShoulder    => BrickButton::RightShoulder,
-                CtrlBtn::RightStick    => BrickButton::RightStick,
-                CtrlBtn::LeftStick    => BrickButton::LeftStick,
-                _                 => return None,
-            };
-            Some(BrickInput::ButtonUp(b))
-        }
-
-        // 2) The Power key comes through as a regular KeyDown/Up
-        Event::KeyDown { keycode: Some(Keycode::Power), .. } => {
-            Some(BrickInput::ButtonDown(BrickButton::Power))
-        }
-        Event::KeyUp   { keycode: Some(Keycode::Power), .. } => {
-            Some(BrickInput::ButtonUp(  BrickButton::Power))
-        }
-
-        // 3) The “volume” buttons arrive as joystick buttons
-        Event::JoyButtonDown { button_idx: 14, .. } => {
-            Some(BrickInput::ButtonDown(BrickButton::VolumeUp))
-        }
-        Event::JoyButtonUp   { button_idx: 14, .. } => {
-            Some(BrickInput::ButtonUp(  BrickButton::VolumeUp))
-        }
-        Event::JoyButtonDown { button_idx: 13, .. } => {
-            Some(BrickInput::ButtonDown(BrickButton::VolumeDown))
-        }
-        Event::JoyButtonUp   { button_idx: 13, .. } => {
-            Some(BrickInput::ButtonUp(  BrickButton::VolumeDown))
-        }
-
-        // 4) Triggers as analog axes (SDL reports both ControllerAxisMotion and JoyAxisMotion)
-        Event::ControllerAxisMotion { axis, value, .. } => {
-            let axis = match axis {
-                sdl2::controller::Axis::TriggerLeft  => BrickAxis::TriggerLeft,
-                sdl2::controller::Axis::TriggerRight => BrickAxis::TriggerRight,
-                _                                    => return None,
-            };
-            // Normalize [-32768..32767] → [-1.0..1.0]
-            let v = *value as f32 / 32767.0;
-            Some(BrickInput::AxisMotion { axis, value: v })
-        }
-        Event::JoyAxisMotion { axis_idx: 2, value, .. } => {
-            let v = *value as f32 / 32767.0;
-            Some(BrickInput::AxisMotion { axis: BrickAxis::TriggerLeft,  value: v })
-        }
-        Event::JoyAxisMotion { axis_idx: 5, value, .. } => {
-            let v = *value as f32 / 32767.0;
-            Some(BrickInput::AxisMotion { axis: BrickAxis::TriggerRight, value: v })
-        }
-
-        _ => None,
+pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput> {
+    use evdev::{EventType, Key};
+    
+    if event.event_type() == EventType::KEY && event.value() == 1 {
+        let button = match event.code() {
+            // A button (BTN_EAST in evdev) 
+            305 => BrickButton::A,
+            // B button (BTN_SOUTH)
+            304 => BrickButton::B,
+            // Y button (BTN_WEST)
+            308 => BrickButton::Y,
+            // X button (BTN_NORTH)
+            307 => BrickButton::X,
+            // D-pad
+            544 => BrickButton::DPadUp,
+            545 => BrickButton::DPadDown,
+            546 => BrickButton::DPadLeft,
+            547 => BrickButton::DPadRight,
+            // Shoulder buttons
+            310 => BrickButton::LeftShoulder,
+            311 => BrickButton::RightShoulder,
+            312 => BrickButton::LeftStick,  // L2 mapped to LeftStick
+            313 => BrickButton::RightStick, // R2 mapped to RightStick
+            // Control buttons
+            314 => BrickButton::Back,   // Select
+            315 => BrickButton::Start,  // Start
+            316 => BrickButton::Guide,  // Menu
+            _ => return None,
+        };
+        Some(BrickInput::ButtonDown(button))
+    } else if event.event_type() == EventType::KEY && event.value() == 0 {
+        let button = match event.code() {
+            305 => BrickButton::A,
+            304 => BrickButton::B,
+            308 => BrickButton::Y,
+            307 => BrickButton::X,
+            544 => BrickButton::DPadUp,
+            545 => BrickButton::DPadDown,
+            546 => BrickButton::DPadLeft,
+            547 => BrickButton::DPadRight,
+            310 => BrickButton::LeftShoulder,
+            311 => BrickButton::RightShoulder,
+            312 => BrickButton::LeftStick,
+            313 => BrickButton::RightStick,
+            314 => BrickButton::Back,
+            315 => BrickButton::Start,
+            316 => BrickButton::Guide,
+            _ => return None,
+        };
+        Some(BrickInput::ButtonUp(button))
+    } else {
+        None
     }
-
 }
 

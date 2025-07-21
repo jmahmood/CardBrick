@@ -1,17 +1,11 @@
 // src/ui/font.rs
 
-// Manages loading fonts, calculating text layouts, and rendering text.
+// Manages loading fonts, calculating text layouts, and rendering text with macroquad.
 
 use std::path::PathBuf;
-use sdl2::surface::Surface;
-
+use macroquad::prelude::*;
 use crate::Config;
-use sdl2::pixels::Color;
 use std::collections::VecDeque;
-use sdl2::rect::Rect;
-use sdl2::render::Canvas;
-use sdl2::ttf::{Font, Sdl2TtfContext, FontStyle};
-use sdl2::video::Window;
 use crate::debug::Tracer;
 use crate::deck::html_parser::TextSpan;
 
@@ -23,11 +17,10 @@ pub struct TextLayout {
     pub scroll_offset: i32,
 }
 
-pub struct FontManager<'a, 'b> {
-    #[allow(dead_code)] // ttf_context must be kept alive, but is not read directly.
-    ttf_context: &'a Sdl2TtfContext,
-    font: Font<'a, 'b>,
-    fallback_font: Option<Font<'a, 'b>>,  // e.g., for emoji
+pub struct FontManager {
+    font: Option<Font>,
+    fallback_font: Option<Font>,
+    font_size: f32,
 }
 
 impl TextSpan {
@@ -41,47 +34,77 @@ impl TextSpan {
     }
 }
 
-impl<'a, 'b> FontManager<'a, 'b> {
+impl FontManager {
     pub fn new_with_fallback(
-        ttf_context: &'a Sdl2TtfContext,
         primary_path: &PathBuf,
         fallback_path: Option<&PathBuf>,
         font_size: u16
     ) -> Result<Self, String> {
-        let primary_font = ttf_context.load_font(primary_path, font_size)?;
-        let fallback_font = match fallback_path {
-            Some(path) => Some(ttf_context.load_font(path, font_size)?),
-            None => None,
+        let primary_font = if primary_path.exists() {
+            Some(load_ttf_font_from_bytes(
+                &std::fs::read(primary_path).map_err(|e| e.to_string())?
+            ).map_err(|e| format!("Failed to load primary font: {:?}", e))?)
+        } else {
+            None
         };
+        
+        let fallback_font = match fallback_path {
+            Some(path) if path.exists() => {
+                Some(load_ttf_font_from_bytes(
+                    &std::fs::read(path).map_err(|e| e.to_string())?
+                ).map_err(|e| format!("Failed to load fallback font: {:?}", e))?)
+            },
+            _ => None,
+        };
+        
         Ok(FontManager {
-            ttf_context,
             font: primary_font,
             fallback_font,
+            font_size: font_size as f32,
         })
     }
-    pub fn new(ttf_context: &'a Sdl2TtfContext, font_path: & PathBuf, font_size: u16) -> Result<Self, String> {
-        let font = ttf_context.load_font(font_path, font_size)?;
-        Ok(FontManager { ttf_context, font, fallback_font: None })
+    
+    pub fn from_loaded_font(font: Option<Font>, fallback_font: Option<Font>, font_size: u16) -> Self {
+        FontManager {
+            font,
+            fallback_font,
+            font_size: font_size as f32,
+        }
+    }
+    
+    pub fn new(font_path: &PathBuf, font_size: u16) -> Result<Self, String> {
+        let font = if font_path.exists() {
+            Some(load_ttf_font_from_bytes(
+                &std::fs::read(font_path).map_err(|e| e.to_string())?
+            ).map_err(|e| format!("Failed to load font: {:?}", e))?)
+        } else {
+            None
+        };
+        
+        Ok(FontManager { 
+            font, 
+            fallback_font: None, 
+            font_size: font_size as f32 
+        })
     }
 
 
     /// Get the pixel dimensions of a string of text.
-    /// This considers the current style the font is set to.
-    pub fn size_of_text_with_style(&mut self, text: &str, is_bold: bool, is_italic: bool) -> Result<(u32, u32), String> {
-        let original_style = self.font.get_style();
-        let mut current_style = original_style;
-        if is_bold { current_style = current_style | FontStyle::BOLD; }
-        if is_italic { current_style = current_style | FontStyle::ITALIC; }
-        self.font.set_style(current_style);
-
-        let result = self.font.size_of(text).map_err(|e| e.to_string());
-        self.font.set_style(original_style); // Reset style
-        result
+    pub fn size_of_text_with_style(&self, text: &str, _is_bold: bool, _is_italic: bool) -> Result<(u32, u32), String> {
+        let text_params = TextParams {
+            font: self.font.as_ref(),
+            font_size: self.font_size as u16,
+            color: WHITE,
+            ..Default::default()
+        };
+        
+        let dimensions = measure_text(text, self.font.as_ref(), self.font_size as u16, 1.0);
+        Ok((dimensions.width as u32, dimensions.height as u32))
     }
 
     /// Finds the character index to split a TextSpan so it fits within the available width.
     /// This is the efficient binary search method.
-    fn find_split_index(&mut self, span: &TextSpan, space_left: u32, use_ruby: bool) -> Result<usize, String> {
+    fn find_split_index(&self, span: &TextSpan, space_left: u32, use_ruby: bool) -> Result<usize, String> {
         let text = span.text_to_use(use_ruby);
         let mut current_width = 0;
         let mut last_valid_split_point = 0;
@@ -106,7 +129,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
     }
 
 
-    pub fn layout_text_binary(&mut self, spans: &[TextSpan], max_width: u32, use_ruby: bool) -> Result<TextLayout, String> {
+    pub fn layout_text_binary(&self, spans: &[TextSpan], max_width: u32, use_ruby: bool) -> Result<TextLayout, String> {
         #[cfg(debug_assertions)]
         let _layout_tracer = Tracer::new("Load Card Layout");
 
@@ -134,7 +157,7 @@ impl<'a, 'b> FontManager<'a, 'b> {
         let mut lines: Vec<Vec<TextSpan>> = Vec::new();
         let mut current_line_spans: Vec<TextSpan> = Vec::new();
         let mut current_line_width = 0;
-        let line_height = self.font.height();
+        let line_height = self.font_size as i32;
 
         while let Some(span) = processed_spans.pop_front() {
             if span.is_newline {
@@ -230,16 +253,17 @@ impl<'a, 'b> FontManager<'a, 'b> {
     }
 
     /// Renders a pre-calculated TextLayout to the screen.
-    pub fn draw_layout(&mut self, canvas: &mut Canvas<Window>, layout: &TextLayout, x: i32, y: i32, show_ruby: bool) -> Result<(), String> {
-        let line_height = self.font.height() as i32;
+    pub fn draw_layout(&self, layout: &TextLayout, x: i32, y: i32, show_ruby: bool, canvas_manager: &crate::ui::CanvasManager) -> Result<(), String> {
+        let line_height = self.font_size as i32;
         let mut current_y = y - layout.scroll_offset;
 
         for line_spans in &layout.lines {
-            if current_y > -line_height && current_y < canvas.viewport().height() as i32 {
+            // Simple clipping check
+            if current_y > -line_height && current_y < canvas_manager.logical_size().1 as i32 {
                 let mut current_x = x;
                 for span in line_spans {
                     let text_to_draw = span.text_to_use(show_ruby);
-                    let (text_w, _) = self.draw_text_span_segment(canvas, text_to_draw, current_x, current_y, span.is_bold, span.is_italic)?;
+                    let (text_w, _) = self.draw_text_span_segment(text_to_draw, current_x, current_y, span.is_bold, span.is_italic, canvas_manager)?;
                     current_x += text_w as i32;
                 }
             }
@@ -248,55 +272,38 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(())
     }
 
-    fn draw_text_span_segment(&mut self, canvas: &mut Canvas<Window>, text: &str, x: i32, y: i32, is_bold: bool, is_italic: bool) -> Result<(u32, u32), String> {
+    fn draw_text_span_segment(&self, text: &str, x: i32, y: i32, _is_bold: bool, _is_italic: bool, canvas_manager: &crate::ui::CanvasManager) -> Result<(u32, u32), String> {
         if text.is_empty() {
             return Ok((0, 0));
         }
 
-        let texture_creator = canvas.texture_creator();
+        let (screen_x, screen_y) = canvas_manager.logical_to_screen(x as f32, y as f32);
+        let scaled_font_size = self.font_size * canvas_manager.get_scale_factor();
         
-        let primary = &mut self.font;
-        let fallback = self.fallback_font.as_mut();
+        // Try primary font first, then fallback
+        let font_to_use = self.font.as_ref().or(self.fallback_font.as_ref());
+        
+        let text_params = TextParams {
+            font: font_to_use,
+            font_size: scaled_font_size as u16,
+            color: WHITE,
+            ..Default::default()
+        };
 
-        let mut try_fonts: Vec<&mut Font<'a, 'b>> = vec![primary];
-        if let Some(fb) = fallback {
-            try_fonts.push(fb);
-        }
-
-
-
-        for font in try_fonts {
-            let original_style = font.get_style();
-            let mut style = original_style;
-            if is_bold { style |= FontStyle::BOLD; }
-            if is_italic { style |= FontStyle::ITALIC; }
-            font.set_style(style);
-
-            match font.render(text).blended(Color::RGBA(255, 255, 255, 255)) {
-                Ok(surface) => {
-                    let texture = texture_creator.create_texture_from_surface(&surface).map_err(|e| e.to_string())?;
-                    let target_rect = Rect::new(x, y, surface.width(), surface.height());
-                    canvas.copy(&texture, None, Some(target_rect))?;
-                    font.set_style(original_style);
-                    return Ok((surface.width(), surface.height()));
-                }
-                Err(_) => {
-                    font.set_style(original_style);
-                    continue; // Try fallback
-                }
-            }
-        }
-
-        Err(format!("Failed to render text: {}", text))
+        draw_text_ex(text, screen_x, screen_y, text_params);
+        
+        // Measure text to return dimensions
+        let dimensions = measure_text(text, font_to_use, self.font_size as u16, 1.0);
+        Ok((dimensions.width as u32, dimensions.height as u32))
     }
 
 
-    pub fn draw_single_line(&mut self, canvas: &mut Canvas<Window>, text: &str, x: i32, y: i32, ) -> Result<(), String> {
-        self.draw_text_span_segment(canvas, text, x, y, false, false)?;
+    pub fn draw_single_line(&self, text: &str, x: i32, y: i32, canvas_manager: &crate::ui::CanvasManager) -> Result<(), String> {
+        self.draw_text_span_segment(text, x, y, false, false, canvas_manager)?;
         Ok(())
     }
     
-    pub fn size_of_text(&mut self, text: &str) -> Result<(u32, u32), String> {
+    pub fn size_of_text(&self, text: &str) -> Result<(u32, u32), String> {
         self.size_of_text_with_style(text, false, false)
     }
 
@@ -314,24 +321,17 @@ impl<'a, 'b> FontManager<'a, 'b> {
         let config = Config::new();
         while low <= high {
             let mid = (low + high) / 2;
-            // load font at trial size
-            let trial = self.ttf_context
-                .load_font(&config.font_path, mid)
-                .map_err(|e| e.to_string())?;
-            // wrap & measure
-            let surf = trial
-                .render(text)
-                .blended_wrapped(Color::RGBA(255,255,255,255), box_width)
-                .map_err(|e| e.to_string())?;
+            // Simulate text wrapping manually for the trial font size
+            let wrapped_height = self.calculate_wrapped_text_height(text, box_width, mid)?;
 
             eprintln!(
               " pt={} → wrapped size: w={} h={}",
               mid,
-              surf.width(),
-              surf.height()
+              box_width,
+              wrapped_height
             );
 
-            let h = surf.height();
+            let h = wrapped_height;
 
             if h <= box_height {
                 best = mid;       // fits, try larger
@@ -345,26 +345,54 @@ impl<'a, 'b> FontManager<'a, 'b> {
         Ok(best)
     }
 
-    pub fn render_text_to_surface(
+    /// Calculate the height that text would take when wrapped to fit within the given width
+    fn calculate_wrapped_text_height(&self, text: &str, box_width: u32, font_size: u16) -> Result<u32, String> {
+        let mut lines = Vec::new();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut current_line = String::new();
+        
+        for word in words {
+            let test_line = if current_line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{} {}", current_line, word)
+            };
+            
+            let dimensions = measure_text(&test_line, self.font.as_ref(), font_size, 1.0);
+            if dimensions.width <= box_width as f32 {
+                current_line = test_line;
+            } else {
+                if !current_line.is_empty() {
+                    lines.push(current_line);
+                    current_line = word.to_string();
+                } else {
+                    // Single word is too long, it becomes its own line
+                    lines.push(word.to_string());
+                }
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+        
+        // Calculate total height with line spacing
+        let line_height = font_size as f32 * 1.2; // Standard line spacing
+        let total_height = lines.len() as f32 * line_height;
+        
+        Ok(total_height as u32)
+    }
+
+    pub fn get_fitting_text_info(
         &self,
         text: &str,
         box_width: u32,
         box_height: u32,
         min_pt: u16,
         max_pt: u16,
-    ) -> Result<(Surface<'static>, u32, u32), String> {
-        let config = Config::new();
+    ) -> Result<(u16, u32, u32), String> {
         let best_pt = self.find_fitting_size(text, box_width, box_height, min_pt, max_pt)?;
-        let font = self
-            .ttf_context
-            .load_font(&config.font_path, best_pt)
-            .map_err(|e| e.to_string())?;
-        let surface = font
-            .render(text)
-            .blended_wrapped(Color::RGBA(255, 255, 255, 255), box_width)
-            .map_err(|e| e.to_string())?;
-        let (width, height) = (surface.width(), surface.height());
-        Ok((surface, width, height))
+        let height = self.calculate_wrapped_text_height(text, box_width, best_pt)?;
+        Ok((best_pt, box_width, height))
     }
 }
 
@@ -373,31 +401,21 @@ impl<'a, 'b> FontManager<'a, 'b> {
 // #################################################################
 #[cfg(test)]
 mod tests {
-    use crate::Path;
-use super::*;
-    use std::sync::OnceLock;
-
-    // FIX: Use a static OnceLock to ensure the TTF context is initialized exactly once for all tests.
-    static TTF_CONTEXT: OnceLock<Sdl2TtfContext> = OnceLock::new();
+    use super::*;
+    use std::path::Path;
 
     // Test helper to create a FontManager.
-    fn setup_font_manager() -> FontManager<'static, 'static> {
-        // This will initialize the context on the first call and simply return
-        // the existing context on all subsequent calls from other tests.
-        let ttf_context = TTF_CONTEXT.get_or_init(|| {
-            sdl2::ttf::init().expect("Failed to initialize SDL2 TTF context for tests")
-        });
-
+    fn setup_font_manager() -> FontManager {
         // NOTE: This test requires a font file at the specified path.
         // A common font like DejaVuSans is used here, which is often found on Linux.
         // For other systems, you may need to change this path or place a font at `tests/font.ttf`.
         let font_path = Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
-        FontManager::new(ttf_context, &font_path.to_path_buf(), 16).expect("Failed to load font for testing")
+        FontManager::new(&font_path.to_path_buf(), 16).expect("Failed to load font for testing")
     }
 
     #[test]
     fn test_simple_ascii_wrapping() {
-        let mut fm = setup_font_manager();
+        let fm = setup_font_manager();
         let spans = vec![TextSpan {
             text: "This is a simple test.".to_string(),
             is_bold: false, is_italic: false, is_newline: false, is_ruby_base: false, ruby_text: None, new_text_block: false,
@@ -411,7 +429,7 @@ use super::*;
 
     #[test]
     fn test_japanese_wrapping_no_panic() {
-        let mut fm = setup_font_manager();
+        let fm = setup_font_manager();
         let spans = vec![TextSpan {
             text: "これは長い日本の文章です。".to_string(),
             is_bold: false, is_italic: false, is_newline: false, is_ruby_base: false, ruby_text: None, new_text_block: false,
@@ -423,7 +441,7 @@ use super::*;
 
     #[test]
     fn test_long_word_does_not_inf_loop() {
-        let mut fm = setup_font_manager();
+        let fm = setup_font_manager();
         let spans = vec![TextSpan {
             text: "Supercalifragilisticexpialidocious".to_string(),
             is_bold: false, is_italic: false, is_newline: false, is_ruby_base: false, ruby_text: None, new_text_block: false,

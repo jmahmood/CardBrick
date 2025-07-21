@@ -1,8 +1,12 @@
 # CardBrick
 
-**CardBrick** is a minimalist, performant, and Anki-compatible flashcard application specifically designed for the TrimUI Brick handheld device running MinUI. The primary goal is to provide a "snappy" and distraction-free environment for language learning, with an initial focus on Japanese (JLPT N3-N1).
+**CardBrick** is a minimalist, performant, and Anki-compatible flashcard application specifically designed for small devices that run the ROCKNIX operating system.
 
-This project is being developed in Rust (2021 Edition) and uses the SDL2 library for native rendering and input handling.
+It is being tested on the TrimUI Brick running MinUI and on the RG35XX Plus / RG35XX SP (Both running Rocknix).  
+
+The primary goal is to provide a "snappy" and distraction-free environment for language learning, with an initial focus on supporting Japanese learning for my children (JLPT N3-N1).
+
+This project is being developed in Rust (2021 Edition).  We use `evdev` for input handling, `macroquad` for the display and `rodio` for sound.
 
 ## Core Features (MVP)
 
@@ -16,9 +20,7 @@ This project is being developed in Rust (2021 Edition) and uses the SDL2 library
 
 ### Prerequisites
 
-* Rust toolchain (`rustup`)
-* SDL2 development libraries (`libsdl2-dev`, `libsdl2-image-dev`, `libsdl2-ttf-dev`)
-* A C/C++ toolchain (`build-essential` or similar)
+* Rust toolchain (`rustup`, `cargo`, `cross`)
 
 ### Building and Running
 
@@ -35,14 +37,17 @@ This project is being developed in Rust (2021 Edition) and uses the SDL2 library
 
 3.  **Run locally:**
     ```bash
-    cargo run -- /path/to/your/deck.apkg
+    cargo run
     ```
 
-4.  **Cross-compile for the TrimUI Brick (ARMv7):**
-    *Ensure you have the ARM cross-compilation toolchain and libraries installed as configured in `.github/workflows/ci.yml`.*
+    You will be expected to have the deck files in the subdirectory underneath the application.
+
+4.  **Cross-compile for the TrimUI Brick / RG35XX Plus (ARM64):**
     ```bash
-    cargo build --release --target=armv7-unknown-linux-gnueabihf
+    cross build --release --target aarch64-unknown-linux-gnu
     ```
+
+    Cross will import all of the annoying dependecies without having to litter your Linux build with a different application.  You will get one binary with everything (other than decks and some metadata) being built into the executable.
 
 ## Project Structure Overview
 
@@ -60,4 +65,10 @@ This project is being developed in Rust (2021 Edition) and uses the SDL2 library
 
 ## Other scripts
 
-- If you need SCP or RSYNC, you can get it from Dockerfile.scp_and_rsync
+- If you need DTC for working your device, you can build it using `toolchain/Dockerfile.dtc`
+- If you need scp / rsync for your device, you can build them using `toolchain/Dockerfile.scp_and_rsync`
+- I have a script that fixes ruby tags so they are properly read by the script I am using.  You can find it under `scripts/ruby_fixer.py`
+
+## License
+
+Licensed under GPL‑3.0 or later. See LICENSE for details.
