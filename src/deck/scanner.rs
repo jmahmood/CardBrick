@@ -73,6 +73,7 @@ pub fn load_cached_decks() -> Result<Vec<DeckMetadata>, String> {
             }
         }
     }
+    decks.sort_by_key(|deck| deck.name.clone());
     
     Ok(decks)
 }
