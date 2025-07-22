@@ -4,8 +4,9 @@ use crate::deck::{html_parser, Card};
 use crate::debug::Tracer;
 use crate::ui::FontManager;
 use crate::scheduler::queue::{self, PACK_SIZE_DEFAULT};
-use super::StudyingState;
+use super::{StudyingState, StudyingScreenMode};
 use chrono::{Utc};
+use macroquad::prelude::*;
 // use rand::seq::SliceRandom; // We moved this logic into the db.
 // use rand::thread_rng;
 
@@ -20,12 +21,31 @@ pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_f
     
     state.current_card = state.scheduler.next_card();
     if let Some(card) = state.current_card.clone() {
+        // Normal path - we have a card to show
+        state.mode = StudyingScreenMode::InProgress;
+        state.is_done = false;
         load_card_layouts(state, &card, font, small_font);
     } else {
-        // Daily queue is complete - offer to continue with more cards
+        // ===== Session finished =====
+        state.mode = StudyingScreenMode::SessionComplete;
         state.is_done = true;
-        let done_spans = html_parser::parse_html_to_spans("Daily goal complete! 🎯\nA: Continue studying  B: Return to menu");
-        state.done_layout = font.layout_text_binary(&done_spans, 400_u32, false).ok();
+
+        // 1. Purge obsolete layouts so nothing else draws
+        state.front_layout_default = None;
+        state.front_layout_ruby = None;
+        state.back_layout_default = None;
+        state.back_layout_ruby = None;
+        state.small_front_layout_default = None;
+        state.small_front_layout_ruby = None;
+        state.hint_layout = None;
+        state.done_layout = None;
+
+        // 2. Build banner layout once
+        let spans = html_parser::parse_html_to_spans("Daily goal complete! 🎯\nA: Continue  B: Menu");
+        state.banner_layout = font.layout_text_binary(&spans, 380, false).ok();
+
+        // 3. Kick off animation timer (seconds since app start)
+        state.banner_started = Some(get_time() as f32);
     }
 }
 
@@ -58,6 +78,7 @@ pub fn continue_studying(state: &mut StudyingState, font: &mut FontManager, smal
         if new_cards.len() > 0 {
             // Reset the done state and load next card
             state.is_done = false;
+            state.mode = StudyingScreenMode::InProgress;
             load_next_card(state, font, small_font);
             return;
         }
@@ -69,10 +90,26 @@ pub fn continue_studying(state: &mut StudyingState, font: &mut FontManager, smal
     if additional_count > 0 {
         // Reset the done state and load next card
         state.is_done = false;
+        state.mode = StudyingScreenMode::InProgress;
         load_next_card(state, font, small_font);
     } else {
-        // No more cards available
-        let done_spans = html_parser::parse_html_to_spans("No more cards available in this deck! 🎯\nB: Return to menu");
-        state.done_layout = font.layout_text_binary(&done_spans, 400_u32, false).ok();
+        // No more cards available - switch to exhausted deck mode
+        state.mode = StudyingScreenMode::ExhaustedDeck;
+        state.is_done = true;
+
+        // Clear existing layouts
+        state.front_layout_default = None;
+        state.front_layout_ruby = None;
+        state.back_layout_default = None;
+        state.back_layout_ruby = None;
+        state.small_front_layout_default = None;
+        state.small_front_layout_ruby = None;
+        state.hint_layout = None;
+        state.done_layout = None;
+
+        // Build exhausted deck banner
+        let spans = html_parser::parse_html_to_spans("No more cards available in this deck! 🎯\nB: Return to menu");
+        state.banner_layout = font.layout_text_binary(&spans, 380, false).ok();
+        state.banner_started = Some(get_time() as f32);
     }
 }
