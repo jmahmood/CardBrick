@@ -84,6 +84,18 @@ impl DatabaseManager {
             [],
         )?;
 
+        // Legacy card_state table for compatibility
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS card_state (
+                id INTEGER PRIMARY KEY,
+                due INTEGER NOT NULL,
+                interval INTEGER NOT NULL,
+                ease_factor INTEGER NOT NULL,
+                lapses INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
         // Table for tracking difficult cards for prioritization
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS difficult_cards (
