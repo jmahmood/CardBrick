@@ -3,6 +3,8 @@ use crate::scenes::deck_selection::draw_deck_selection_scene;
 use std::path::PathBuf;
 use std::io::Write;
 
+use config::assets;
+
 use macroquad::prelude::*;
 use log::{info, warn, error, debug};
 use evdev::Device as EvdevDevice;
@@ -26,15 +28,6 @@ use scenes::main_menu::MainMenuState;
 use scenes::deck_selection::DeckSelectionState;
 use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, AudioManager, map_evdev_to_brick_input};
 use ui::{CanvasManager, FontManager, Sprite};
-
-mod assets {
-    // Small menu font for fast startup
-    pub const MENU_FONT: &[u8] = include_bytes!("../assets/font/PixelMplus10-Regular.ttf");
-    // Large font that supports Japanese characters (loaded in background)
-    pub const JAPANESE_FONT: &[u8] = include_bytes!("../assets/font/PixelMplus10-Regular.ttf");
-    pub const CLICK_SOUND: &[u8] = include_bytes!("../assets/sfx/click.wav");
-    pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/sfx/open.wav");
-}
 
 #[derive(Debug, Clone)]
 enum DeviceType { Desktop, TrimUIBrick, RG35XXPlus }
@@ -139,7 +132,7 @@ impl CardBrickApp {
         let menu_font = load_ttf_font_from_bytes(assets::MENU_FONT)
             .map_err(|e| format!("Failed to load menu font: {:?}", e))?;
             
-        // Create temporary font managers using the small menu font
+        // Create temporary font managers using the small meFnu font
         let font_manager = FontManager::from_loaded_font(
             Some(menu_font.clone()), None, config.font_size_large.try_into().unwrap()
         );
@@ -220,70 +213,7 @@ impl CardBrickApp {
         next_frame().await;
     }
     
-    async fn load_embedded_font_with_progress(
-        loading_canvas: &mut CanvasManager, 
-        loading_steps: &[&str], 
-        step: usize
-    ) -> Result<Font, String> {
-        let total_size = assets::JAPANESE_FONT.len();
-        let size_kb = total_size as f32 / 1024.0;
-        
-        // Show 25% progress increments for reading
-        Self::show_loading_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            "Starting embedded font load",
-            0.0
-        ).await;
-        
-        Self::show_loading_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Reading embedded font ({:.1}KB - 25%)", size_kb * 0.25),
-            0.25
-        ).await;
-        
-        Self::show_loading_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Reading embedded font ({:.1}KB - 50%)", size_kb * 0.50),
-            0.50
-        ).await;
-        
-        Self::show_loading_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Reading embedded font ({:.1}KB - 75%)", size_kb * 0.75),
-            0.75
-        ).await;
-        
-        Self::show_loading_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Read complete ({:.1}KB) - parsing font", size_kb),
-            0.85
-        ).await;
-        
-        // Actually load the font (this is the real work)
-        let font = load_ttf_font_from_bytes(assets::JAPANESE_FONT)
-            .map_err(|e| format!("Failed to load Japanese font: {:?}", e))?;
-        
-        Self::show_loading_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            "Embedded font ready",
-            1.0
-        ).await;
-        
-        Ok(font)
-    }
-    
+
     async fn load_menu_font_with_progress(
         loading_canvas: &mut CanvasManager, 
         loading_steps: &[&str], 
@@ -312,165 +242,6 @@ impl CardBrickApp {
         ).await;
         
         Ok(font)
-    }
-    
-    async fn load_font_manager_with_progress(
-        loading_canvas: &mut CanvasManager,
-        loading_steps: &[&str],
-        step: usize,
-        font_name: &str,
-        font_path: &PathBuf,
-        font_size: u16
-    ) -> Result<FontManager, String> {
-        if !font_path.exists() {
-            Self::show_loading_progress(
-                loading_canvas, 
-                loading_steps, 
-                step, 
-                &format!("Skipping {} (file not found)", font_name),
-                1.0
-            ).await;
-            return Ok(FontManager::from_loaded_font(None, None, font_size));
-        }
-        
-        // Get file size for progress calculation
-        let _file_size = std::fs::metadata(font_path).map_err(|e| e.to_string())?.len() as usize;
-        
-        // Load file with real progress tracking
-        let buffer = Self::load_file_with_progress(
-            loading_canvas,
-            loading_steps,
-            step,
-            font_path,
-            &format!("Loading {} font", font_name),
-            0.0,
-            0.8  // File loading takes 80% of the step
-        ).await?;
-        
-        // Animate to parsing phase
-        Self::animate_progress_smooth(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Parsing {} font...", font_name),
-            0.8,
-            0.95,
-            300  // 300ms animation
-        ).await;
-        
-        // Parse font
-        let font = load_ttf_font_from_bytes(&buffer)
-            .map_err(|e| format!("Failed to load {}: {:?}", font_name, e))?;
-        
-        // Animate to completion
-        Self::animate_progress_smooth(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Completed {} font", font_name),
-            0.95,
-            1.0,
-            100  // 100ms to completion
-        ).await;
-        
-        Ok(FontManager::from_loaded_font(Some(font), None, font_size))
-    }
-    
-    async fn load_font_manager_with_fallback_progress(
-        loading_canvas: &mut CanvasManager,
-        loading_steps: &[&str],
-        step: usize,
-        font_name: &str,
-        primary_path: &PathBuf,
-        fallback_path: Option<&PathBuf>,
-        font_size: u16
-    ) -> Result<FontManager, String> {
-        // Load primary font (50% of total step)
-        let primary_font = if primary_path.exists() {
-            let buffer = Self::load_file_with_progress(
-                loading_canvas,
-                loading_steps,
-                step,
-                primary_path,
-                &format!("Loading primary {}", font_name),
-                0.0,
-                0.4
-            ).await?;
-            
-            Self::animate_progress_smooth(
-                loading_canvas,
-                loading_steps,
-                step,
-                &format!("Parsing primary {}", font_name),
-                0.4,
-                0.5,
-                200
-            ).await;
-            
-            Some(load_ttf_font_from_bytes(&buffer).map_err(|e| format!("Failed to load primary font: {:?}", e))?)
-        } else {
-            Self::animate_progress_smooth(
-                loading_canvas,
-                loading_steps,
-                step,
-                &format!("Primary {} not found", font_name),
-                0.0,
-                0.5,
-                100
-            ).await;
-            None
-        };
-        
-        // Load fallback font (remaining 50% of total step)
-        let fallback_font = match fallback_path {
-            Some(path) if path.exists() => {
-                let buffer = Self::load_file_with_progress(
-                    loading_canvas,
-                    loading_steps,
-                    step,
-                    path,
-                    &format!("Loading fallback {}", font_name),
-                    0.5,
-                    0.9
-                ).await?;
-                
-                Self::animate_progress_smooth(
-                    loading_canvas,
-                    loading_steps,
-                    step,
-                    &format!("Parsing fallback {}", font_name),
-                    0.9,
-                    0.95,
-                    200
-                ).await;
-                
-                Some(load_ttf_font_from_bytes(&buffer).map_err(|e| format!("Failed to load fallback font: {:?}", e))?)
-            },
-            _ => {
-                Self::animate_progress_smooth(
-                    loading_canvas,
-                    loading_steps,
-                    step,
-                    &format!("No fallback for {}", font_name),
-                    0.5,
-                    0.95,
-                    100
-                ).await;
-                None
-            }
-        };
-        
-        Self::animate_progress_smooth(
-            loading_canvas,
-            loading_steps,
-            step,
-            &format!("Completed {}", font_name),
-            0.95,
-            1.0,
-            100
-        ).await;
-        
-        Ok(FontManager::from_loaded_font(primary_font, fallback_font, font_size))
     }
     
     
@@ -519,95 +290,7 @@ impl CardBrickApp {
         loading_canvas.end_frame();
         next_frame().await;
     }
-    
-    async fn load_file_with_progress(
-        loading_canvas: &mut CanvasManager,
-        loading_steps: &[&str],
-        step: usize,
-        file_path: &PathBuf,
-        base_message: &str,
-        progress_start: f32,
-        progress_end: f32
-    ) -> Result<Vec<u8>, String> {
-        use std::io::Read;
-        
-        let file_size = std::fs::metadata(file_path).map_err(|e| e.to_string())?.len() as usize;
-        let mut file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
-        let mut buffer = Vec::with_capacity(file_size);
-        
-        // Determine chunk size based on file size for 5% increments
-        let target_updates = 20; // 20 updates = 5% increments
-        let chunk_size = (file_size / target_updates).max(4096).min(64 * 1024); // 4KB minimum, 64KB maximum
-        
-        let mut temp_buffer = vec![0u8; chunk_size];
-        let mut last_progress_update = 0.0;
-        
-        loop {
-            let bytes_read = file.read(&mut temp_buffer).map_err(|e| e.to_string())?;
-            if bytes_read == 0 { break; }
-            
-            buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-            
-            // Calculate progress within this step
-            let file_progress = buffer.len() as f32 / file_size as f32;
-            let step_progress = progress_start + (progress_end - progress_start) * file_progress;
-            
-            // Only update display every 5% (0.05) to avoid too many updates
-            if step_progress - last_progress_update >= 0.05 || file_progress >= 1.0 {
-                Self::show_loading_progress(
-                    loading_canvas,
-                    loading_steps,
-                    step,
-                    &format!("{} ({:.1}KB/{:.1}KB)", base_message, buffer.len() as f32 / 1024.0, file_size as f32 / 1024.0),
-                    step_progress
-                ).await;
-                last_progress_update = step_progress;
-            }
-        }
-        
-        Ok(buffer)
-    }
-    
-    async fn animate_progress_smooth(
-        loading_canvas: &mut CanvasManager,
-        loading_steps: &[&str],
-        step: usize,
-        message: &str,
-        start_progress: f32,
-        end_progress: f32,
-        duration_ms: u64
-    ) {
-        let start_time = macroquad::time::get_time();
-        let duration_seconds = duration_ms as f64 / 1000.0;
-        
-        loop {
-            let elapsed = macroquad::time::get_time() - start_time;
-            if elapsed >= duration_seconds {
-                // Ensure we end exactly at the target
-                Self::show_loading_progress(
-                    loading_canvas,
-                    loading_steps,
-                    step,
-                    message,
-                    end_progress
-                ).await;
-                break;
-            }
-            
-            // Smooth interpolation (ease-out curve)
-            let t = elapsed / duration_seconds;
-            let eased_t = 1.0 - (1.0 - t).powi(3); // Cubic ease-out
-            let current_progress = start_progress + (end_progress - start_progress) * eased_t as f32;
-            
-            Self::show_loading_progress(
-                loading_canvas,
-                loading_steps,
-                step,
-                message,
-                current_progress
-            ).await;
-        }
-    }
+
 
     async fn start_background_font_loading() -> Result<std::sync::mpsc::Receiver<BackgroundFontMessage>, String> {
         use std::sync::mpsc;
@@ -686,16 +369,16 @@ impl CardBrickApp {
                                 None, // No fallback needed since Japanese font is comprehensive
                                 32
                             );
-                            self.app_state.small_font_manager = FontManager::from_loaded_font(
-                                Some(font.clone()), 
-                                None, // No fallback needed since Japanese font is comprehensive
-                                20
-                            );
-                            self.app_state.hint_font_manager = FontManager::from_loaded_font(
-                                Some(font), 
-                                None, // No fallback needed since Japanese font is comprehensive
-                                16
-                            );
+                            // self.app_state.small_font_manager = FontManager::from_loaded_font(
+                            //     Some(font.clone()), 
+                            //     None, // No fallback needed since Japanese font is comprehensive
+                            //     20
+                            // );
+                            // self.app_state.hint_font_manager = FontManager::from_loaded_font(
+                            //     Some(font), 
+                            //     None, // No fallback needed since Japanese font is comprehensive
+                            //     16
+                            // );
                             self.app_state.japanese_font_ready = true;
                             should_remove_receiver = true;
                         },
@@ -713,13 +396,6 @@ impl CardBrickApp {
         if should_remove_receiver {
             self.app_state.background_font_receiver = None;
         }
-    }
-
-    fn can_enter_study_mode(&self) -> bool {
-        // For now, we allow study mode even if Japanese font isn't ready
-        // The menu font can display basic text, and Japanese font will load in background
-        // In the future, we could show a "Fonts loading..." message for Japanese content
-        true
     }
 
     fn update(&mut self) -> Result<(), String> {
@@ -759,6 +435,16 @@ impl CardBrickApp {
         // Handle keyboard input (for testing)
         if is_key_pressed(KeyCode::Escape) {
             return Err("User quit".into());
+        }
+
+        if is_key_pressed(KeyCode::R) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::RightShoulder))?;
+            input_handled = true;
+        }
+
+        if is_key_pressed(KeyCode::L) {
+            self.handle_input(BrickInput::ButtonDown(BrickButton::LeftShoulder))?;
+            input_handled = true;
         }
 
         if is_key_pressed(KeyCode::A) {

@@ -34,6 +34,9 @@ pub trait Scheduler {
     fn add_card_to_front(&mut self, card_id: i64);
     fn introduce_new_cards(&mut self, count: usize) -> usize;
     fn load_more_cards(&mut self, count: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>>;
+    fn session_ratings(&self) -> &[(i64, Rating)];
+    fn get_card_note_id(&self, card_id: i64) -> Option<i64>;
+    fn get_card_note_from_db(&mut self, card_id: i64) -> Result<Option<(i64, Note)>, Box<dyn std::error::Error>>;
 }
 
 /// Implementation of the SM-2 algorithm.
@@ -46,6 +49,7 @@ pub struct Sm2Scheduler {
     failed_cards_today: Vec<i64>, // Track cards answered "Again" today
     last_answer: Option<(i64, Rating, Card)>, // Store a clone of the card state before modification
     today_completed_cards: Vec<i64>, // Track cards completed today
+    session_ratings: Vec<(i64, Rating)>, // Track each card's rating in session order for progress visualization
     deck_id: String, // Store deck ID for queue operations
 }
 
@@ -100,6 +104,7 @@ impl Scheduler for Sm2Scheduler {
             failed_cards_today: Vec::new(),
             last_answer: None,
             today_completed_cards: Vec::new(),
+            session_ratings: Vec::new(),
             deck_id,
         }
     }
@@ -141,6 +146,11 @@ impl Scheduler for Sm2Scheduler {
         
         self.last_answer = Some((card_id, rating, card.clone()));
         
+        // Track this rating for session progress visualization
+        println!("DEBUG: Tracking rating for card {}: {:?}", card_id, rating);
+        self.session_ratings.push((card_id, rating));
+        println!("DEBUG: Total session ratings now: {}", self.session_ratings.len());
+        
         // Store the result card to return after DB operations
         let mut result_card = Some(card.clone())?;
 
@@ -155,10 +165,6 @@ impl Scheduler for Sm2Scheduler {
                     self.failed_cards_today.push(card_id);
                 }
                 
-                // Record in database for prioritization in future sessions
-                if let Err(e) = self.deck.record_difficult_card(card_id, "failed") {
-                    eprintln!("Warning: Failed to record difficult card: {}", e);
-                }
                 
                 let cooldown_distance = 5_u32.saturating_sub(result_card.lapses).max(2) as usize;
                 let insertion_point = self.review_queue.len().saturating_sub(cooldown_distance);
@@ -195,10 +201,6 @@ impl Scheduler for Sm2Scheduler {
                             self.hard_cards_this_session.push(card_id);
                         }
                         
-                        // Record in database for prioritization in future sessions
-                        if let Err(e) = self.deck.record_difficult_card(card_id, "hard") {
-                            eprintln!("Warning: Failed to record difficult card: {}", e);
-                        }
                         
                         result_card.ease_factor = (result_card.ease_factor as i32 - 150).max(1300) as u32;
                         // "Hard" interval multiplier is 1.2
@@ -232,6 +234,12 @@ impl Scheduler for Sm2Scheduler {
             // Remove the card from wherever it was re-inserted in the queue.
             self.review_queue.retain(|&id| id != card_id);
             
+            // Remove the last rating from session tracking
+            if let Some(last_pos) = self.session_ratings.iter().rposition(|&(id, _)| id == card_id) {
+                self.session_ratings.remove(last_pos);
+                println!("DEBUG: Removed rating from session, now {} ratings", self.session_ratings.len());
+            }
+
             // Revert state changes.
             if rating != Rating::Again {
                 self.session_reviews_complete = self.session_reviews_complete.saturating_sub(1);
@@ -258,6 +266,52 @@ impl Scheduler for Sm2Scheduler {
     fn hard_cards(&self) -> &[i64] { &self.hard_cards_this_session }
     
     fn failed_cards_today(&self) -> &[i64] { &self.failed_cards_today }
+    
+    fn session_ratings(&self) -> &[(i64, Rating)] { &self.session_ratings }
+    
+    fn get_card_note_id(&self, card_id: i64) -> Option<i64> {
+        self.deck.cards.iter().find(|c| c.id == card_id).map(|c| c.note_id)
+    }
+    
+    fn get_card_note_from_db(&mut self, card_id: i64) -> Result<Option<(i64, Note)>, Box<dyn std::error::Error>> {
+        // First, get the note_id for this card from the database
+        let note_id_opt = if let Some(ref db_conn_info) = self.deck.db_connection {
+            let db_conn = rusqlite::Connection::open(&db_conn_info.db_path)?;
+            let mut stmt = db_conn.prepare("SELECT nid FROM cards WHERE id = ?1")?;
+            let mut rows = stmt.query_map([card_id], |row| {
+                Ok(row.get::<_, i64>(0)?)
+            })?;
+            
+            if let Some(row) = rows.next() {
+                Some(row?)
+            } else {
+                None
+            }
+        } else if let Some(ref cached_conn) = self.deck.cached_db_connection {
+            let db_conn = rusqlite::Connection::open(&cached_conn.db_path)?;
+            let mut stmt = db_conn.prepare("SELECT nid FROM cards WHERE id = ?1")?;
+            let mut rows = stmt.query_map([card_id], |row| {
+                Ok(row.get::<_, i64>(0)?)
+            })?;
+            
+            if let Some(row) = rows.next() {
+                Some(row?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        if let Some(note_id) = note_id_opt {
+            // Now get the note using the deck's get_note method
+            if let Ok(Some(note)) = self.deck.get_note(note_id) {
+                return Ok(Some((note_id, note)));
+            }
+        }
+        
+        Ok(None)
+    }
     
     fn introduce_new_cards(&mut self, count: usize) -> usize {
         // In this scheduler, all cards are in the review queue from the beginning.

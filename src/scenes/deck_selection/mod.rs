@@ -76,7 +76,7 @@ pub fn draw_deck_selection_scene(
     let item_step = item_line_height + list_spacing;
 
     // Draw static text instructions using top-left positioning
-    font_manager.draw_line_top_left("Select a Deck", TEXT_X as i32, title_top as i32, canvas_manager)?;
+    small_font_manager.draw_line_top_left("Select a Deck", TEXT_X as i32, title_top as i32, canvas_manager)?;
     small_font_manager.draw_line_top_left("Press Backspace to return to Main Menu", TEXT_X as i32, instruction_top as i32, canvas_manager)?;
 
     // Handle case where no decks are found

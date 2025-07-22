@@ -42,8 +42,8 @@ pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_f
         state.done_layout = None;
 
         // 2. Build banner layout once
-        let spans = html_parser::parse_html_to_spans("Daily goal complete! 🎯\nA: Continue  B: Menu");
-        state.banner_layout = font.layout_text_binary(&spans, 380, false).ok();
+        let spans = html_parser::parse_html_to_spans("Daily goal complete! 🎯");
+        state.banner_layout = small_font.layout_text_binary(&spans, 380, false).ok();
 
         // 3. Kick off animation timer (seconds since app start)
         state.banner_started = Some(get_time() as f32);

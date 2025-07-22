@@ -413,37 +413,6 @@ impl Deck {
         Ok(new_cards)
     }
 
-    /// Records a card as difficult (failed or hard) in the deck database
-    pub fn record_difficult_card(&self, card_id: i64, difficulty_type: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // Get database path
-        let db_path: &std::path::Path = if let Some(ref db_conn) = self.db_connection {
-            db_conn.db_path.as_ref()
-        } else if let Some(ref cached_db_conn) = self.cached_db_connection {
-            cached_db_conn.db_path.as_ref()
-        } else {
-            return Ok(()); // No database connection, skip recording
-        };
-        
-        let conn = rusqlite::Connection::open(db_path)?;
-        
-        // Ensure the complete database schema exists
-        ensure_database_schema(&conn)?;
-        
-        // Record the difficult card
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
-        
-        conn.execute(
-            "INSERT OR REPLACE INTO difficult_cards (card_id, difficulty_type, timestamp, date)
-             VALUES (?1, ?2, ?3, ?4)",
-            (card_id, difficulty_type, now, today),
-        )?;
-        
-        Ok(())
-    }
 }
 
 #[cfg(test)]

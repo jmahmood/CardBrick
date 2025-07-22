@@ -15,6 +15,7 @@ pub enum StudyingScreenMode {
     InProgress,          // normal Q&A flow
     SessionComplete,     // daily goal banner shown
     ExhaustedDeck,       // no more cards in deck banner
+    SessionDetails,      // detailed view of challenging cards from this session
 }
 
 /// Contains the state specific to the studying screen.
@@ -38,6 +39,8 @@ pub struct StudyingState<'a> {
     pub done_layout: Option<TextLayout>,
     pub banner_layout: Option<TextLayout>,
     pub banner_started: Option<f32>,   // animation timer
+    pub detail_layouts: Vec<TextLayout>,  // layouts for challenging cards detail view
+    pub detail_scroll_offset: i32,       // scroll offset for detail view
 }
 
 impl<'a> StudyingState<'a> {
@@ -63,6 +66,8 @@ impl<'a> StudyingState<'a> {
             done_layout: None,
             banner_layout: None,
             banner_started: None,
+            detail_layouts: Vec::new(),
+            detail_scroll_offset: 0,
         }
     }
 }
@@ -246,9 +251,16 @@ pub fn draw_studying_scene(
                     canvas_manager,
                 )?;
 
-                // Draw flashing prompt "Press A or B" below banner
+                // Draw colored progress boxes for SessionComplete mode
+                if studying_state.mode == StudyingScreenMode::SessionComplete {
+                    println!("DEBUG: About to call draw_session_progress_boxes");
+                    draw_session_progress_boxes(studying_state, canvas_manager, y_center + layout.total_height as f32 + 10.0)?;
+                    println!("DEBUG: draw_session_progress_boxes completed");
+                }
+
+                // Draw flashing prompt below banner/progress
                 let prompt_text = match studying_state.mode {
-                    StudyingScreenMode::SessionComplete => "Press A to Continue or B for Menu",
+                    StudyingScreenMode::SessionComplete => "Press A to Continue, B for Menu, R for Details",
                     StudyingScreenMode::ExhaustedDeck => "Press B to Return to Menu",
                     _ => "",
                 };
@@ -257,7 +269,11 @@ pub fn draw_studying_scene(
                 if (get_time() * 2.0).floor() as i32 % 2 == 0 {
                     let (prompt_w, _) = hint_font_manager.size_of_text(prompt_text)?;
                     let prompt_x = (512 - prompt_w) / 2;
-                    let prompt_y = y_center + layout.total_height as f32 + 24.0;
+                    let prompt_y = if studying_state.mode == StudyingScreenMode::SessionComplete {
+                        y_center + layout.total_height as f32 + 50.0  // Extra space for progress boxes
+                    } else {
+                        y_center + layout.total_height as f32 + 24.0
+                    };
                     let hint_ascent = hint_font_manager.metrics().0;
                     
                     hint_font_manager.draw_line_top_left(
@@ -269,7 +285,134 @@ pub fn draw_studying_scene(
                 }
             }
         }
+        
+        StudyingScreenMode::SessionDetails => {
+            // Detail view of challenging cards
+            draw_session_details(studying_state, small_font_manager, canvas_manager)?;
+        }
     }
+    
+    Ok(())
+}
+
+/// Draw colored progress boxes showing today's performance (persistent across sessions)
+fn draw_session_progress_boxes(studying_state: &StudyingState, canvas_manager: &CanvasManager, y_position: f32) -> Result<(), String> {
+    
+    // Get daily ratings from database instead of session-only ratings
+    let daily_ratings = match studying_state.db_manager.get_todays_ratings() {
+        Ok(ratings) => ratings,
+        Err(e) => {
+            println!("DEBUG: Failed to get daily ratings: {}", e);
+            return Ok(()); // No ratings to display
+        }
+    };
+    
+    let total_cards = daily_ratings.len();
+    
+    println!("DEBUG: Daily ratings count: {}", total_cards);
+    for (i, (card_id, rating_str)) in daily_ratings.iter().enumerate() {
+        println!("DEBUG: Card {}: ID={}, Rating={}", i, card_id, rating_str);
+    }
+    
+    if total_cards == 0 {
+        println!("DEBUG: No daily ratings found, not drawing progress bar");
+        return Ok(()); // No ratings to display
+    }
+    
+    // Calculate progressive compression based on total cards completed
+    let box_width = if total_cards <= 12 {
+        25.0  // Comfortable viewing for initial 12 cards
+    } else if total_cards <= 24 {
+        15.0  // More compact for 24 cards
+    } else if total_cards <= 36 {
+        10.0  // Even more compact for 36 cards
+    } else {
+        (400.0 / total_cards as f32).max(1.0)  // Minimum 1px per card, max 400px total width
+    };
+    
+    let total_width = total_cards as f32 * box_width;
+    let start_x = (512.0 - total_width) / 2.0;  // Center the progress bar
+    let box_height = 20.0;
+    
+    // Draw background bar
+    let (bg_x, bg_y) = canvas_manager.logical_to_screen(start_x, y_position);
+    let bg_w = total_width * canvas_manager.get_scale_factor();
+    let bg_h = box_height * canvas_manager.get_scale_factor();
+    draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(40, 40, 40, 255));
+    
+    // Draw individual rating boxes
+    for (i, (_card_id, rating_str)) in daily_ratings.iter().enumerate() {
+        let box_x = start_x + (i as f32 * box_width);
+        let (screen_x, screen_y) = canvas_manager.logical_to_screen(box_x, y_position);
+        let screen_w = box_width * canvas_manager.get_scale_factor();
+        let screen_h = bg_h;
+        
+        let color = match rating_str.as_str() {
+            "Easy" => Color::from_rgba(100, 200, 100, 255),   // Green - target achievement
+            "Good" => Color::from_rgba(255, 200, 100, 255),   // Yellow - solid performance  
+            "Hard" | "Again" => Color::from_rgba(255, 120, 120, 255), // Red - challenging (not "failed")
+            _ => Color::from_rgba(128, 128, 128, 255),        // Gray - unknown rating
+        };
+        
+        draw_rectangle(screen_x, screen_y, screen_w, screen_h, color);
+        
+        // Draw subtle border between boxes if they're wide enough
+        if box_width > 3.0 {
+            draw_rectangle(
+                screen_x + screen_w - canvas_manager.get_scale_factor(), 
+                screen_y, 
+                canvas_manager.get_scale_factor(), 
+                screen_h, 
+                Color::from_rgba(20, 20, 20, 255)
+            );
+        }
+    }
+    
+    Ok(())
+}
+
+/// Draw the session details view showing challenging cards
+fn draw_session_details(studying_state: &StudyingState, font_manager: &FontManager, canvas_manager: &CanvasManager) -> Result<(), String> {
+    let (_logical_width, logical_height) = canvas_manager.logical_size();
+    
+    // Draw background
+    let (bg_x, bg_y) = canvas_manager.logical_to_screen(0.0, 0.0);
+    let bg_w = 512.0 * canvas_manager.get_scale_factor();
+    let bg_h = logical_height * canvas_manager.get_scale_factor();
+    draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(30, 30, 35, 255));
+    
+    // Draw layouts with scroll offset
+    let mut current_y = 50 - studying_state.detail_scroll_offset;
+    let margin = 30;
+    
+    let font_ascent = font_manager.metrics().0;
+    
+    for layout in &studying_state.detail_layouts {
+        if current_y > -50 && current_y < logical_height as i32 + 50 { // Only draw visible layouts
+            font_manager.draw_layout(
+                layout,
+                margin,
+                current_y + font_ascent as i32,
+                false, // ruby text
+                canvas_manager,
+            )?;
+        }
+        current_y += layout.total_height as i32 + 20; // Spacing between layouts
+    }
+    
+    // Draw "Press B to return" at bottom
+    let prompt_text = "Press B to return";
+    let (prompt_w, _) = font_manager.size_of_text(prompt_text)?;
+    let prompt_x = (512 - prompt_w) / 2;
+    let prompt_y = logical_height as i32 - 40;
+    let font_ascent = font_manager.metrics().0;
+    
+    font_manager.draw_line_top_left(
+        prompt_text,
+        prompt_x as i32,
+        prompt_y + font_ascent as i32,
+        canvas_manager,
+    )?;
     
     Ok(())
 }

@@ -108,6 +108,18 @@ impl DatabaseManager {
             [],
         )?;
 
+        // Table for tracking all daily card ratings for progress bar visualization
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS daily_ratings (
+                card_id INTEGER,
+                rating TEXT NOT NULL, -- 'Easy', 'Good', 'Hard', 'Again'
+                timestamp INTEGER NOT NULL,
+                date TEXT NOT NULL, -- YYYY-MM-DD format
+                PRIMARY KEY (card_id, timestamp)
+            )",
+            [],
+        )?;
+
         // Set database version
         self.conn.execute("PRAGMA user_version = 1", [])?;
 
@@ -147,30 +159,6 @@ impl DatabaseManager {
         Ok(())
     }
     
-    /// Load existing card state from database
-    pub fn load_card_state(&self, card_id: i64) -> Result<Option<Card>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, due, interval, ease_factor, lapses 
-             FROM card_state WHERE id = ?1"
-        )?;
-        
-        let card_iter = stmt.query_map([card_id], |row| {
-            Ok(Card {
-                id: row.get(0)?,
-                note_id: 0, // Will be set by caller
-                due: row.get(1)?,
-                interval: row.get(2)?,
-                ease_factor: row.get(3)?,
-                lapses: row.get(4)?,
-            })
-        })?;
-        
-        for card in card_iter {
-            return Ok(Some(card?));
-        }
-        
-        Ok(None)
-    }
 
     /// Records a card as difficult (failed or hard) for today's date
     pub fn record_difficult_card(&self, card_id: i64, difficulty_type: &str) -> Result<()> {
@@ -191,6 +179,7 @@ impl DatabaseManager {
     }
 
     /// Gets difficult cards for a specific date, ordered by most recent first
+    #[allow(dead_code)]
     pub fn get_difficult_cards_for_date(&self, date: &str, difficulty_type: Option<&str>) -> Result<Vec<i64>> {
         let query = if let Some(_diff_type) = difficulty_type {
             "SELECT card_id FROM difficult_cards 
@@ -223,6 +212,7 @@ impl DatabaseManager {
     }
 
     /// Gets all difficult cards for today (both failed and hard)
+    #[allow(dead_code)]
     pub fn get_todays_difficult_cards(&self) -> Result<(Vec<i64>, Vec<i64>)> {
         let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
         
@@ -230,5 +220,48 @@ impl DatabaseManager {
         let hard_cards = self.get_difficult_cards_for_date(&today, Some("hard"))?;
         
         Ok((failed_cards, hard_cards))
+    }
+    
+    /// Record a card rating for daily progress tracking
+    pub fn record_daily_rating(&self, card_id: i64, rating: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        
+        self.conn.execute(
+            "INSERT OR REPLACE INTO daily_ratings (card_id, rating, timestamp, date)
+             VALUES (?1, ?2, ?3, ?4)",
+            (card_id, rating, now, today),
+        )?;
+        
+        Ok(())
+    }
+    
+    /// Get all daily ratings for today in chronological order
+    pub fn get_todays_ratings(&self) -> Result<Vec<(i64, String)>> {
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        
+        let mut stmt = self.conn.prepare(
+            "SELECT card_id, rating FROM daily_ratings 
+             WHERE date = ?1 
+             ORDER BY timestamp ASC"
+        )?;
+        
+        let rating_iter = stmt.query_map([today], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,    // card_id
+                row.get::<_, String>(1)?, // rating
+            ))
+        })?;
+        
+        let mut ratings = Vec::new();
+        for rating in rating_iter {
+            ratings.push(rating?);
+        }
+        
+        Ok(ratings)
     }
 }

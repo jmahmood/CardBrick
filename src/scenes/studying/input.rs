@@ -10,35 +10,52 @@ use super::{StudyingState, StudyingScreenMode};
 pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<(), String> {
     if let GameState::Studying(studying_state) = &mut state.game_state {
         match input {
-            // DPad Down: Reveal answer or scroll down when answer is revealed
+            // DPad Down: Reveal answer, scroll down, or scroll detail view
             BrickInput::ButtonDown(BrickButton::DPadDown) => {
-                if studying_state.mode == StudyingScreenMode::InProgress {
-                    if studying_state.is_answer_revealed {
-                        // Handle scrolling when answer is revealed
-                        let scroll_speed = 30;
-                        let viewport_height = 290;
-                        let total_height = if let (Some(front), Some(back)) = (&studying_state.small_front_layout_default, &studying_state.back_layout_default) {
-                            front.total_height + back.total_height + 20
-                        } else { 0 };
-                        let max_scroll = (total_height - viewport_height).max(0);
-                        studying_state.scroll_offset = (studying_state.scroll_offset + scroll_speed).min(max_scroll);
-                        println!("scroll_offset={}", studying_state.scroll_offset);
-                    } else {
-                        // Reveal the answer
-                        studying_state.is_answer_revealed = true;
-                        let margin: u32 = 30;
-                        let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard [LB:Rewind] [RB:Ruby]");
-                        studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, state.config.window_width / 2 - margin * 2, studying_state.show_ruby_text)?);
-                    }
+                match studying_state.mode {
+                    StudyingScreenMode::InProgress => {
+                        if studying_state.is_answer_revealed {
+                            // Handle scrolling when answer is revealed
+                            let scroll_speed = 30;
+                            let viewport_height = 350;
+                            let total_height = if let (Some(front), Some(back)) = (&studying_state.small_front_layout_default, &studying_state.back_layout_default) {
+                                front.total_height + back.total_height + 20
+                            } else { 0 };
+                            let max_scroll = (total_height - viewport_height + 50).max(0);
+                            studying_state.scroll_offset = (studying_state.scroll_offset + scroll_speed).min(max_scroll);
+                            println!("scroll_offset={}", studying_state.scroll_offset);
+                        } else {
+                            // Reveal the answer
+                            studying_state.is_answer_revealed = true;
+                            let margin: u32 = 30;
+                            let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard [LB:Rewind] [RB:Ruby]");
+                            studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, state.config.window_width / 2 - margin * 2, studying_state.show_ruby_text)?);
+                        }
+                    },
+                    StudyingScreenMode::SessionDetails => {
+                        // Scroll down in detail view
+                        let max_scroll = calculate_detail_max_scroll(studying_state);
+                        studying_state.detail_scroll_offset = (studying_state.detail_scroll_offset + 30).min(max_scroll);
+                    },
+                    _ => {},
                 }
             },
             
-            // DPad Up: Scroll up when answer is revealed
+            // DPad Up: Scroll up when answer is revealed or in detail view
             BrickInput::ButtonDown(BrickButton::DPadUp) => {
-                if studying_state.mode == StudyingScreenMode::InProgress && studying_state.is_answer_revealed {
-                    let scroll_speed = 30;
-                    println!("scroll_offset={}", studying_state.scroll_offset);
-                    studying_state.scroll_offset = (studying_state.scroll_offset - scroll_speed).max(0);
+                match studying_state.mode {
+                    StudyingScreenMode::InProgress => {
+                        if studying_state.is_answer_revealed {
+                            let scroll_speed = 30;
+                            println!("scroll_offset={}", studying_state.scroll_offset);
+                            studying_state.scroll_offset = (studying_state.scroll_offset - scroll_speed).max(0);
+                        }
+                    },
+                    StudyingScreenMode::SessionDetails => {
+                        // Scroll up in detail view
+                        studying_state.detail_scroll_offset = (studying_state.detail_scroll_offset - 30).max(0);
+                    },
+                    _ => {},
                 }
             },
             
@@ -57,6 +74,9 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                     StudyingScreenMode::ExhaustedDeck => {
                         // A button does nothing in exhausted deck mode
                     },
+                    StudyingScreenMode::SessionDetails => {
+                        // A button does nothing in session details mode
+                    },
                 }
             },
             
@@ -71,6 +91,11 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                     StudyingScreenMode::SessionComplete | StudyingScreenMode::ExhaustedDeck => {
                         // User wants to return to deck selection
                         state.game_state = GameState::GoToDeckSelection;
+                    },
+                    StudyingScreenMode::SessionDetails => {
+                        // Return to session complete screen
+                        studying_state.mode = StudyingScreenMode::SessionComplete;
+                        studying_state.detail_scroll_offset = 0; // Reset scroll
                     },
                 }
             },
@@ -104,10 +129,19 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                 }
             },
             
-            // Right Shoulder: Show ruby text (furigana) - CRITICAL for Japanese learning
+            // Right Shoulder: Show ruby text (furigana) in progress mode, switch to details in session complete
             BrickInput::ButtonDown(BrickButton::RightShoulder) => {
-                if studying_state.mode == StudyingScreenMode::InProgress {
-                    studying_state.show_ruby_text = true;
+                match studying_state.mode {
+                    StudyingScreenMode::InProgress => {
+                        studying_state.show_ruby_text = true;
+                    },
+                    StudyingScreenMode::SessionComplete => {
+                        // Switch to detail view of challenging cards
+                        studying_state.mode = StudyingScreenMode::SessionDetails;
+                        // Build detail layouts for cards marked as Hard or Again
+                        build_session_detail_layouts(studying_state, &mut state.small_font_manager)?;
+                    },
+                    _ => {},
                 }
             },
             
@@ -142,10 +176,119 @@ fn rate_card_and_continue(
 ) -> Result<(), String> {
     if let Some(card) = &studying_state.current_card {
         if let Some(updated_card) = studying_state.scheduler.answer_card(card.id, rating) {
+            // Record ALL ratings for daily progress bar visualization
+            let rating_str = match rating {
+                crate::scheduler::Rating::Easy => "Easy",
+                crate::scheduler::Rating::Good => "Good", 
+                crate::scheduler::Rating::Hard => "Hard",
+                crate::scheduler::Rating::Again => "Again",
+            };
+            if let Err(e) = studying_state.db_manager.record_daily_rating(card.id, rating_str) {
+                eprintln!("Warning: Failed to record daily rating: {}", e);
+            }
+            
+            // Also record difficult cards for prioritization in future sessions
+            match rating {
+                crate::scheduler::Rating::Again => {
+                    if let Err(e) = studying_state.db_manager.record_difficult_card(card.id, "failed") {
+                        eprintln!("Warning: Failed to record difficult card: {}", e);
+                    }
+                }
+                crate::scheduler::Rating::Hard => {
+                    if let Err(e) = studying_state.db_manager.record_difficult_card(card.id, "hard") {
+                        eprintln!("Warning: Failed to record difficult card: {}", e);
+                    }
+                }
+                _ => {} // Good and Easy ratings don't need recording for difficult_cards table
+            }
+            
             studying_state.replay_logger.log_action(&updated_card, rating).map_err(|e| e.to_string())?;
             studying_state.db_manager.update_card_state(&updated_card).map_err(|e| e.to_string())?;
         }
     }
     load_next_card(studying_state, font_manager, small_font_manager);
     Ok(())
+}
+
+/// Build text layouts for the session detail view showing challenging cards from the entire day
+pub fn build_session_detail_layouts(studying_state: &mut StudyingState, small_font_manager: &mut crate::ui::FontManager) -> Result<(), String> {
+    use crate::scheduler::Rating;
+    use crate::deck::html_parser;
+    
+    studying_state.detail_layouts.clear();
+    
+    // Get today's challenging cards from the database (persistent across sessions)
+    let (failed_cards, hard_cards) = studying_state.db_manager.get_todays_difficult_cards()
+        .map_err(|e| format!("Failed to get today's difficult cards: {}", e))?;
+    
+    // Combine into a single list with ratings - failed cards get Rating::Again, hard cards get Rating::Hard
+    let mut challenging_cards: Vec<(i64, Rating)> = Vec::new();
+    for card_id in failed_cards {
+        challenging_cards.push((card_id, Rating::Again));
+    }
+    for card_id in hard_cards {
+        challenging_cards.push((card_id, Rating::Hard));
+    }
+    
+    if challenging_cards.is_empty() {
+        // Show a message that there were no challenging cards today
+        let spans = html_parser::parse_html_to_spans("Great job! No challenging cards today. 🎯");
+        if let Ok(layout) = small_font_manager.layout_text_binary(&spans, 450, false) {
+            studying_state.detail_layouts.push(layout);
+        }
+        return Ok(());
+    }
+    
+    // Add header
+    let header_text = format!("Today's Challenging Cards ({} cards)", challenging_cards.len());
+    let header_spans = html_parser::parse_html_to_spans(&header_text);
+    if let Ok(layout) = small_font_manager.layout_text_binary(&header_spans, 450, false) {
+        studying_state.detail_layouts.push(layout);
+    }
+    
+    // Add each challenging card's front and back
+    for (card_id, rating) in challenging_cards {
+        println!("DEBUG: Processing challenging card_id: {}", card_id);
+        // Get the card and note info directly from the database (works for all cards from today)
+        match studying_state.scheduler.get_card_note_from_db(card_id) {
+            Ok(Some((note_id, note))) => {
+                println!("DEBUG: Successfully got note_id: {} and note for card_id: {}", note_id, card_id);
+            let rating_text = match rating {
+                Rating::Hard => "Hard",
+                Rating::Again => "Review Again", 
+                _ => "Challenging",
+            };
+            
+                let card_text = format!("--- {} ---\nQ: {}\nA: {}\n", rating_text, 
+                    note.fields.get(0).unwrap_or(&"[No front]".to_string()),
+                    note.fields.get(1).unwrap_or(&"[No back]".to_string())
+                );
+                let card_spans = html_parser::parse_html_to_spans(&card_text);
+                if let Ok(layout) = small_font_manager.layout_text_binary(&card_spans, 450, false) {
+                    studying_state.detail_layouts.push(layout);
+                    println!("DEBUG: Added layout for card_id: {}", card_id);
+                } else {
+                    println!("DEBUG: Failed to create layout for card_id: {}", card_id);
+                }
+            },
+            Ok(None) => {
+                println!("DEBUG: Card {} not found in database", card_id);
+            },
+            Err(e) => {
+                println!("DEBUG: Database error for card {}: {}", card_id, e);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Calculate the maximum scroll offset for the detail view
+pub fn calculate_detail_max_scroll(studying_state: &StudyingState) -> i32 {
+    let viewport_height = 400; // Available height for scrolling
+    let total_height: i32 = studying_state.detail_layouts.iter()
+        .map(|layout| layout.total_height + 20) // Add spacing between layouts
+        .sum();
+    
+    (total_height - viewport_height).max(0)
 }
