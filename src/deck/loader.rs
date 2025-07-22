@@ -1,86 +1,50 @@
 // src/deck/loader.rs
-// This file contains the logic for parsing .apkg files.
+// This file contains the logic for loading cached deck databases.
 
-use std::collections::HashMap;
-use std::fs;
-use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::mpsc::Sender;
 
 // We need to bring our structs into scope from the parent module (deck/mod.rs)
-use super::{Card, Deck, LazyDeck};
-use crate::LoaderMessage; // Import the message enum from main.rs
+use super::{Card, Deck, CachedDeck, scanner};
+use crate::state::LoaderMessage; // Import the message enum from state.rs
 
 
-/// The main function for this module. It takes a path to an .apkg file and a
+/// The main function for this module. It takes a path to a cached deck directory and a
 /// channel sender to report progress.
 pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
     // This function now sends its result through the channel instead of returning it.
     let result = (|| -> Result<Deck, Box<dyn std::error::Error>> {
-        println!("Attempting to load deck from: {:?}", path);
-
-        let file = fs::File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
+        let start_time = std::time::Instant::now();
+        println!("Attempting to load cached deck from: {:?}", path);
         
-        let db_filename = if archive.file_names().any(|name| name == "collection.anki21") {
-            "collection.anki21"
-        } else {
-            "collection.anki2"
-        };
-
-        let mut db_file = archive.by_name(db_filename)?;
-        tx.send(LoaderMessage::Progress(0.15)).unwrap(); // 15% - DB file located
-
-        // Create our own temp directory to avoid system /tmp limitations on handheld devices
-        let temp_dir = if std::path::Path::new("/storage").exists() {
-            // RG35XX Plus - use storage partition with plenty of space
-            let temp_path = std::path::PathBuf::from("/storage/tmp");
-            if !temp_path.exists() {
-                std::fs::create_dir_all(&temp_path)?;
-                println!("Created custom temp directory: /storage/tmp");
-            }
-            temp_path
-        } else if std::path::Path::new("/mnt/SDCARD").exists() {
-            // TrimUI Brick - use SD card with plenty of space
-            let temp_path = std::path::PathBuf::from("/mnt/SDCARD/tmp");
-            if !temp_path.exists() {
-                std::fs::create_dir_all(&temp_path)?;
-                println!("Created custom temp directory: /mnt/SDCARD/tmp");
-            }
-            temp_path
-        } else {
-            // Desktop/development - use system temp
-            std::env::temp_dir()
-        };
+        // Extract deck hash from path
+        let deck_hash = path.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid deck path")?;
         
-        println!("Using temp directory: {:?}", temp_dir);
+        tx.send(LoaderMessage::Progress(0.10)).unwrap(); // 10% - Starting
+        println!("⏱️  [{}ms] Extracted deck hash: {}", start_time.elapsed().as_millis(), deck_hash);
         
-        // Stream database to a small temp file with progress reporting
-        let mut temp_file = tempfile::NamedTempFile::new_in(&temp_dir)?;
-        let mut total_bytes = 0;
-        let mut buffer = vec![0u8; 8192]; // 8KB buffer for progress reporting
+        // Ensure cached deck exists and get database path
+        let db_path = scanner::ensure_cached_deck(deck_hash)?;
+        println!("⏱️  [{}ms] Found cached database at: {:?}", start_time.elapsed().as_millis(), db_path);
+        tx.send(LoaderMessage::Progress(0.20)).unwrap(); // 20% - Cache validated
         
-        loop {
-            let bytes_read = db_file.read(&mut buffer)?;
-            if bytes_read == 0 { break; }
-            
-            temp_file.write_all(&buffer[..bytes_read])?;
-            total_bytes += bytes_read;
-            
-            // Report progress every 1MB
-            if total_bytes % (1024 * 1024) == 0 {
-                let progress = 0.15 + (total_bytes as f32 / 50_000_000.0 * 0.15).min(0.15); // Up to 30%
-                tx.send(LoaderMessage::Progress(progress)).ok();
-            }
-        }
+        // Open database with read-only flags for performance
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        println!("⏱️  [{}ms] Database opened", start_time.elapsed().as_millis());
         
-        let temp_path = temp_file.into_temp_path();
-        println!("Extracted {} bytes to temporary database", total_bytes);
-        tx.send(LoaderMessage::Progress(0.35)).unwrap(); // 35% - DB extracted
+        // Apply performance PRAGMAs
+        conn.pragma_update(None, "journal_mode", "OFF")?;
+        conn.pragma_update(None, "synchronous", "OFF")?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
+        println!("⏱️  [{}ms] PRAGMAs applied", start_time.elapsed().as_millis());
         
-        let conn = rusqlite::Connection::open(&temp_path)?;
-        println!("Successfully opened Anki database");
-        tx.send(LoaderMessage::Progress(0.40)).unwrap(); // 40% - DB opened
+        println!("Successfully opened Anki database in read-only mode");
+        tx.send(LoaderMessage::Progress(0.30)).unwrap(); // 30% - DB opened
         
         // Get current timestamp for scheduling (Anki uses days since epoch)
         let today = std::time::SystemTime::now()
@@ -93,10 +57,10 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
         // Get total cards for progress tracking
         let mut stmt = conn.prepare("SELECT COUNT(*) FROM cards")?;
         let total_cards: i64 = stmt.query_row([], |row| row.get(0))?;
-        println!("Found {} total cards in deck", total_cards);
-        tx.send(LoaderMessage::Progress(0.60)).unwrap(); // 60% - Basic info loaded
+        println!("⏱️  [{}ms] Card count query completed: {} cards", start_time.elapsed().as_millis(), total_cards);
+        tx.send(LoaderMessage::Progress(0.50)).unwrap(); // 50% - Basic info loaded
         
-        // Step 1: Get cards that are due today or overdue
+        // Step 1: Get cards that are due today or overdue (using indexed query)
         let mut stmt = conn.prepare(
             "SELECT id, nid, due, ivl, factor, lapses FROM cards 
              WHERE due <= ? OR ivl = 0 
@@ -115,7 +79,7 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
         for card_result in cards_iter {
             scheduled_cards.push(card_result?);
         }
-        println!("Loaded {} scheduled cards (due today or overdue)", scheduled_cards.len());
+        println!("⏱️  [{}ms] Loaded {} scheduled cards (due today or overdue)", start_time.elapsed().as_millis(), scheduled_cards.len());
         tx.send(LoaderMessage::Progress(0.70)).unwrap(); // 70% - Due cards loaded
         
         // Step 2: If we have fewer than 10 cards, add more to reach the minimum
@@ -125,7 +89,6 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
             println!("Need {} more cards to reach minimum of {}", needed_cards, min_cards);
             
             // Get additional cards that aren't already selected
-            // For now, this is random selection, but we can improve this later with performance-based algorithms
             let (query, params): (String, Vec<rusqlite::types::Value>) = if scheduled_cards.is_empty() {
                 // No cards selected yet, just get random cards
                 (
@@ -169,22 +132,27 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
             
             let additional_count = additional_cards.len();
             scheduled_cards.extend(additional_cards);
-            println!("Added {} additional cards (random selection) for total of {}", 
-                     additional_count, scheduled_cards.len());
+            println!("⏱️  [{}ms] Added {} additional cards (random selection) for total of {}", 
+                     start_time.elapsed().as_millis(), additional_count, scheduled_cards.len());
         }
         
-        tx.send(LoaderMessage::Progress(0.80)).unwrap(); // 80% - All cards loaded
+        tx.send(LoaderMessage::Progress(0.90)).unwrap(); // 90% - All cards loaded
+        println!("⏱️  [{}ms] Card loading phase complete", start_time.elapsed().as_millis());
         
         // Create a deck with database connection for on-demand note loading
-        let lazy_deck = LazyDeck {
-            db_path: temp_path,
+        // We can directly use the cached database path without copying
+        let lazy_deck = CachedDeck {
+            db_path,
             initial_cards: scheduled_cards,
             total_card_count: total_cards,
         };
+        println!("⏱️  [{}ms] CachedDeck created", start_time.elapsed().as_millis());
         
         tx.send(LoaderMessage::Progress(1.0)).unwrap(); // 100% - Deck ready
 
-        Ok(lazy_deck.into_deck()?)
+        let deck = lazy_deck.into_deck()?;
+        println!("⏱️  [{}ms] TOTAL LOADING TIME - Deck ready", start_time.elapsed().as_millis());
+        Ok(deck)
     })(); // Immediately-invoked function expression to handle errors cleanly
 
     // Send the final result (either the Deck or an Error) through the channel.

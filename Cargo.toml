@@ -3,7 +3,6 @@ name        = "cardbrick"
 version     = "0.1.0"
 edition     = "2021"
 license     = "GPL-3.0-or-later"
-license-file = "LICENSE"
 description = "An Anki-compatible flash-card app for the TrimUI Brick"
 
 [dependencies]
@@ -34,6 +33,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.10"
 rand = "0.8"
+dirs = "5.0"
 
 # Remove web server for embedded version
 # tiny_http = "0.12"
@@ -55,3 +55,8 @@ path = "src/demo_main.rs"
 [[bin]]
 name = "test_display"
 path = "src/test_display.rs"
+
+[[bin]]
+name = "test_db"
+path = "src/test_db.rs"
+

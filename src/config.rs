@@ -1,21 +1,30 @@
 use std::env;
-use std::path::PathBuf;
-use crate::Path;
+use std::path::{Path, PathBuf};
+
+// Constants for Core Learning Loop
+
+
+#[allow(dead_code)]
+pub const BACKLOG_CAP: usize = 200;  // For future use.
+pub const PACK_SIZE_DEFAULT: usize = 12;
+pub const SMALL_FONT: &str = "PixelMplus10-Regular.ttf";
+pub const EMOJI_FONT: &str = "PixelMplus10-Regular.ttf";
+
+
+pub mod assets {
+    // Small menu font for fast startup
+    pub const MENU_FONT: &[u8] = include_bytes!("../assets/font/PixelMplus10-Regular.ttf");
+    pub const JAPANESE_FONT: &[u8] = include_bytes!("../assets/font/NotoSansJP-Regular.otf");
+    pub const CLICK_SOUND: &[u8] = include_bytes!("../assets/sfx/click.wav");
+    pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/sfx/open.wav");
+}
+
 
 pub struct Config {
-    pub window_title: &'static str,
     pub window_width: u32,
-    pub window_height: u32,
-    pub logical_window_width: u32,
-    pub logical_window_height: u32,
-    pub font_path: PathBuf,
-    pub command_font_path: PathBuf,
-    pub emoji_font_path: PathBuf,
     pub font_size_large: u32,
     pub font_size_medium: u32,
     pub font_size_small: u32,
-    pub decks_directory: PathBuf,
-    pub sfx_directory: PathBuf,
 }
 
 impl Config {
@@ -54,19 +63,10 @@ impl Config {
         println!("{:?}", sfx_directory);
 
         Self {
-            window_title: "CardBrick v0.1",
             window_width: 1024,
-            window_height: 768,
-            logical_window_width: 512,
-            logical_window_height: 384,
-            font_path: base_assets.join("font/M1MnRegular-M2Gn.ttf"),
-            command_font_path: base_assets.join("font/Ac437_Tandy1K-II_200L.ttf"),
-            emoji_font_path: base_assets.join("font/M1MnRegular-M2Gn.ttf"),
             font_size_large: 32,
             font_size_medium: 24,
             font_size_small: 10,
-            decks_directory: base_decks.to_path_buf(),
-            sfx_directory: sfx_directory.to_path_buf(),
         }
     }
 }
