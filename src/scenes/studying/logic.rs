@@ -3,7 +3,8 @@
 use crate::deck::{html_parser, Card};
 use crate::debug::Tracer;
 use crate::ui::FontManager;
-use crate::scheduler::queue::{self, PACK_SIZE_DEFAULT};
+use crate::scheduler::queue::{self};
+use crate::config::PACK_SIZE_DEFAULT;
 use super::{StudyingState, StudyingScreenMode};
 use chrono::{Utc};
 use macroquad::prelude::*;

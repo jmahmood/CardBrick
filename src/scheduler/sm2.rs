@@ -2,6 +2,7 @@
 
 // Contains the logic for the spaced repetition system.
 
+use crate::config::PACK_SIZE_DEFAULT;
 use crate::deck::{Card, Deck, Note};
 use crate::scheduler::queue;
 use rand::seq::SliceRandom;
@@ -69,7 +70,7 @@ impl Scheduler for Sm2Scheduler {
             // Fallback to limited subset using actual deck card IDs
             println!("⚠️ Queue system failed, using fallback limited deck");
             let mut limited_cards: Vec<i64> = deck.cards.iter()
-                .take(queue::PACK_SIZE_DEFAULT) // Limit to default pack size
+                .take(PACK_SIZE_DEFAULT) // Limit to default pack size
                 .map(|c| c.id)
                 .collect();
             
@@ -632,11 +633,11 @@ mod tests {
         drop(test_conn);
         
         // Now test load_more_cards - this simulates continuing study
-        let load_result = scheduler.load_more_cards(crate::scheduler::queue::PACK_SIZE_DEFAULT);
+        let load_result = scheduler.load_more_cards(crate::config::PACK_SIZE_DEFAULT);
         
         match load_result {
             Ok(new_cards) => {
-                assert_eq!(new_cards.len(), crate::scheduler::queue::PACK_SIZE_DEFAULT, "Should load requested number of cards");
+                assert_eq!(new_cards.len(), crate::config::PACK_SIZE_DEFAULT, "Should load requested number of cards");
                 
                 // Check if the database difficult cards appear in the results
                 let loaded_45 = new_cards.iter().any(|card| card.id == 45);
@@ -656,7 +657,7 @@ mod tests {
                 }
                 
                 // Verify cards were added to review queue
-                assert!(scheduler.review_queue.len() >= crate::scheduler::queue::PACK_SIZE_DEFAULT, "Cards should be added to review queue");
+                assert!(scheduler.review_queue.len() >= crate::config::PACK_SIZE_DEFAULT, "Cards should be added to review queue");
                 
             },
             Err(e) => {

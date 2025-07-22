@@ -8,7 +8,7 @@ pub mod scanner;
 
 use std::collections::{HashMap, HashSet};
 use chrono;
-use crate::scheduler::queue::PACK_SIZE_DEFAULT;
+use crate::config::PACK_SIZE_DEFAULT;
 
 /// Represents a single Anki card.
 /// We use `#[derive(Debug)]` to allow for easy printing to the console, which is great for debugging.

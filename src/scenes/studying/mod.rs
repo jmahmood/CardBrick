@@ -114,7 +114,7 @@ pub fn draw_studying_scene(
     let (logical_width, logical_height) = canvas_manager.logical_size();
     let scale = canvas_manager.scale_factor;
 
-    let mut clip_cam = Camera2D::from_display_rect(Rect::new(0., 0., logical_width * scale, logical_height * scale));
+    let mut clip_cam = Camera2D::from_display_rect(Rect::new(0., 0., logical_width * scale, logical_height * scale - (CONTENT_TOP + 10.0) * scale));
 
     // B) CRITICAL FIX: Invert the camera's Y-axis. This prevents the text from being flipped upside down.
     clip_cam.zoom.y = -clip_cam.zoom.y;
@@ -123,7 +123,7 @@ pub fn draw_studying_scene(
     let (viewport_x, viewport_y) = canvas_manager.logical_to_screen(0.0, CONTENT_TOP);
     let viewport_w = logical_width;
     let viewport_h = logical_height - CONTENT_TOP;
-    clip_cam.viewport = Some((viewport_x as i32, viewport_y as i32 - (CONTENT_TOP + 10.0) as i32 , (viewport_w * scale) as i32, (viewport_h * scale) as i32));
+    clip_cam.viewport = Some((viewport_x as i32, viewport_y as i32, (viewport_w * scale) as i32, (viewport_h * scale - CONTENT_TOP * scale) as i32));
 
 
     // Draw progress bar

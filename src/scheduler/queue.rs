@@ -1,7 +1,7 @@
 // src/scheduler/queue.rs
 // Daily queue builder for Core Learning Loop
 
-use crate::config::BACKLOG_CAP;
+use crate::config::{BACKLOG_CAP, PACK_SIZE_DEFAULT};
 use crate::deck::Deck;
 // use crate::storage::models::{CardId, SrsRow, DailyLogRow};
 use crate::storage::models::{CardId};
@@ -10,8 +10,6 @@ use rusqlite::{Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-
-pub const PACK_SIZE_DEFAULT: usize = 12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueData {
