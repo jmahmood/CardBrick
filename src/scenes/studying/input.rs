@@ -22,6 +22,7 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                         } else { 0 };
                         let max_scroll = (total_height - viewport_height).max(0);
                         studying_state.scroll_offset = (studying_state.scroll_offset + scroll_speed).min(max_scroll);
+                        println!("scroll_offset={}", studying_state.scroll_offset);
                     } else {
                         // Reveal the answer
                         studying_state.is_answer_revealed = true;
@@ -36,6 +37,7 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
             BrickInput::ButtonDown(BrickButton::DPadUp) => {
                 if studying_state.mode == StudyingScreenMode::InProgress && studying_state.is_answer_revealed {
                     let scroll_speed = 30;
+                    println!("scroll_offset={}", studying_state.scroll_offset);
                     studying_state.scroll_offset = (studying_state.scroll_offset - scroll_speed).max(0);
                 }
             },

@@ -289,6 +289,35 @@ impl FontManager {
         Ok((dimensions.width as u32, dimensions.height as u32))
     }
 
+    fn draw_text_span_segment_camera(&self, text: &str, x: i32, y: i32, _is_bold: bool, _is_italic: bool, _canvas_manager: &crate::ui::CanvasManager) -> Result<(u32, u32), String> {
+        if text.is_empty() {
+            return Ok((0, 0));
+        }
+
+        // --- REMOVED MANUAL SCALING ---
+        // The camera now handles all coordinate transformation and scaling.
+        // We pass logical coordinates and unscaled font sizes directly to macroquad.
+        // We no longer need these two lines:
+        // let (screen_x, screen_y) = canvas_manager.logical_to_screen(x as f32, y as f32);
+        // let scaled_font_size = self.font_size * canvas_manager.get_scale_factor();
+
+        let font_to_use = self.font.as_ref().or(self.fallback_font.as_ref());
+
+        let text_params = TextParams {
+            font: font_to_use,
+            font_size: self.font_size as u16, // Use the original, unscaled font size
+            color: WHITE,
+            ..Default::default()
+        };
+
+        // Draw using the logical coordinates directly
+        draw_text_ex(text, x as f32, y as f32, text_params);
+
+        // Measure text to return its logical (unscaled) dimensions
+        let dimensions = measure_text(text, font_to_use, self.font_size as u16, 1.0);
+        Ok((dimensions.width as u32, dimensions.height as u32))
+    }
+
 
     pub fn draw_single_line(&self, text: &str, x: i32, y: i32, canvas_manager: &crate::ui::CanvasManager) -> Result<(), String> {
         self.draw_text_span_segment(text, x, y, false, false, canvas_manager)?;

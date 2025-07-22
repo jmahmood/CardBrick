@@ -111,8 +111,21 @@ pub fn draw_studying_scene(
     
     let margin: u32 = 30;
     let total = studying_state.scheduler.total_session_cards();
-    let (_, logical_height) = canvas_manager.logical_size();
-    
+    let (logical_width, logical_height) = canvas_manager.logical_size();
+    let scale = canvas_manager.scale_factor;
+
+    let mut clip_cam = Camera2D::from_display_rect(Rect::new(0., 0., logical_width * scale, logical_height * scale));
+
+    // B) CRITICAL FIX: Invert the camera's Y-axis. This prevents the text from being flipped upside down.
+    clip_cam.zoom.y = -clip_cam.zoom.y;
+
+    // C) Define the viewport on the SCREEN where the scrolling content should appear.
+    let (viewport_x, viewport_y) = canvas_manager.logical_to_screen(0.0, CONTENT_TOP);
+    let viewport_w = logical_width;
+    let viewport_h = logical_height - CONTENT_TOP;
+    clip_cam.viewport = Some((viewport_x as i32, viewport_y as i32 - (CONTENT_TOP + 10.0) as i32 , viewport_w as i32 * scale as i32, viewport_h as i32 * scale as i32));
+
+
     // Draw progress bar
     if total > 0 {
         let completed = studying_state.scheduler.reviews_complete();
@@ -154,6 +167,7 @@ pub fn draw_studying_scene(
     // Branch on current screen mode
     match studying_state.mode {
         StudyingScreenMode::InProgress => {
+
             // Normal Q&A flow
             if !studying_state.is_answer_revealed {
                 // Question mode: Show large front text only
@@ -165,7 +179,9 @@ pub fn draw_studying_scene(
                 
                 if let Some(layout) = layout_to_draw {
                     let y_pos = CONTENT_TOP as i32 - studying_state.scroll_offset;
+                    set_camera(&clip_cam);
                     font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
+                    set_default_camera(); // IMPORTANT – disable clipping afterwards
                 }
             } else {
                 // Answer mode: Show small front + full back text with scrolling
@@ -179,8 +195,11 @@ pub fn draw_studying_scene(
                 };
                 
                 if let Some(layout) = small_front_layout_to_draw {
+                    set_camera(&clip_cam);
                     small_font_manager.draw_layout(layout, margin as i32, y_pos + small_font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
                     y_pos += layout.total_height + 20;
+                    set_default_camera(); // IMPORTANT – disable clipping afterwards
+
                 }
                 
                 // Draw back text (the answer)
@@ -191,7 +210,10 @@ pub fn draw_studying_scene(
                 };
                 
                 if let Some(layout) = back_layout_to_draw {
+                    set_camera(&clip_cam);
                     font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
+                    set_default_camera(); // IMPORTANT – disable clipping afterwards
+
                 }
             }
             
@@ -203,6 +225,7 @@ pub fn draw_studying_scene(
                     hint_font_manager.draw_layout(hint_layout, margin as i32, hint_y as i32 + hint_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
                 }
             }
+            set_default_camera(); // IMPORTANT – disable clipping afterwards
         },
         
         StudyingScreenMode::SessionComplete | StudyingScreenMode::ExhaustedDeck => {

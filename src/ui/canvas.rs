@@ -9,7 +9,7 @@ const LOGICAL_HEIGHT: u32 = 384;
 pub struct CanvasManager {
     logical_width: f32,
     logical_height: f32,
-    scale_factor: f32,
+    pub scale_factor: f32,
     offset_x: f32,
     offset_y: f32,
 }
@@ -28,6 +28,29 @@ impl CanvasManager {
         Self::new_with_screen_size(screen_w, screen_h)
     }
     
+
+    pub fn sub_camera(&self, x: i32, y: i32, w: u32, h: u32) -> Camera2D {
+        // First, calculate the viewport rectangle in final screen pixel coordinates.
+        // This part of the original suggestion was correct.
+        let (sx, sy) = self.logical_to_screen(x as f32, y as f32);
+        let sw = w as f32 * self.scale_factor;
+        let sh = h as f32 * self.scale_factor;
+
+        // Now, create a camera that mimics the default camera's coordinate system,
+        // where world coordinates are equivalent to screen coordinates.
+        // This prevents the "double transformation" problem.
+        let mut cam = Camera2D {
+            zoom: vec2(1.0 / screen_width(), 1.0 / screen_height()),
+            target: vec2(screen_width() / 2.0, screen_height() / 2.0),
+            ..Default::default()
+        };
+
+        // Finally, apply the calculated viewport to this simple camera.
+        // This is the only modification we make to the default camera behavior.
+        cam.viewport = Some((sx as i32, sy as i32, sw as i32, sh as i32));
+        cam
+    }
+
     /// Create a CanvasManager with specific screen dimensions (for testing)
     pub fn new_with_screen_size(screen_w: f32, screen_h: f32) -> Result<Self, String> {
         let logical_width = LOGICAL_WIDTH as f32;
@@ -78,11 +101,7 @@ impl CanvasManager {
     pub fn logical_size(&self) -> (f32, f32) {
         (self.logical_width, self.logical_height)
     }
-    
-    /// Clear the clipping rectangle.
-    pub fn clear_clip_rect(&self) {
-        // Note: macroquad doesn't have built-in clipping
-    }
+
 }
 
 #[cfg(test)]
