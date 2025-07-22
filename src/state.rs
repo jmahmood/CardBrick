@@ -93,8 +93,11 @@ pub enum BrickButton {
     DPadDown,
     DPadLeft,
     DPadRight,
+    #[allow(dead_code)]
     Power,
+    #[allow(dead_code)]
     VolumeUp,
+    #[allow(dead_code)]
     VolumeDown,
     LeftShoulder,
     RightShoulder,
@@ -108,7 +111,9 @@ pub enum BrickButton {
 /// All the *analog axes* you care about.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum BrickAxis {
+    #[allow(dead_code)]
     TriggerLeft,
+    #[allow(dead_code)]
     TriggerRight,
 }
 
@@ -117,11 +122,12 @@ pub enum BrickAxis {
 pub enum BrickInput {
     ButtonDown(BrickButton),
     ButtonUp(BrickButton),
+    #[allow(dead_code)]
     AxisMotion { axis: BrickAxis, value: f32 },
 }
 
 pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput> {
-    use evdev::{EventType, Key};
+    use evdev::{EventType};
     
     if event.event_type() == EventType::KEY && event.value() == 1 {
         let button = match event.code() {

@@ -64,7 +64,7 @@ pub fn draw_deck_selection_scene(
     const TEXT_X: f32 = 20.0;
     const PADDING: f32 = 2.0;
 
-    let (screen_width, screen_height) = canvas_manager.logical_size();
+    let (_screen_width, screen_height) = canvas_manager.logical_size();
     let title_line_height = font_manager.line_height();
     let item_line_height = small_font_manager.line_height();
     let list_spacing = 8.0;

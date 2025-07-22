@@ -1,5 +1,4 @@
 // CardBrick - Macroquad Version with Device Compatibility
-use std::time::Duration;
 
 use macroquad::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Source};
@@ -56,7 +55,7 @@ enum DeviceType { Desktop, TrimUIBrick, RG35XXPlus }
 
 #[derive(Clone)]
 struct DeviceConfig {
-    device_type: DeviceType,
+    _device_type: DeviceType,
     display_width: u32,
     display_height: u32,
     fullscreen: bool,
@@ -72,7 +71,7 @@ impl DeviceConfig {
         if std::path::Path::new(trimui_path).exists() {
             info!("Detected TrimUI Brick device");
             return Self {
-                device_type: DeviceType::TrimUIBrick,
+                _device_type: DeviceType::TrimUIBrick,
                 display_width: 640,
                 display_height: 480,
                 fullscreen: true,
@@ -85,7 +84,7 @@ impl DeviceConfig {
         if std::path::Path::new(rg35xx_path).exists() {
             info!("Detected RG35XX Plus device");
             return Self {
-                device_type: DeviceType::RG35XXPlus,
+                _device_type: DeviceType::RG35XXPlus,
                 display_width: 640,
                 display_height: 480,
                 fullscreen: true,
@@ -95,7 +94,7 @@ impl DeviceConfig {
         // Default to desktop
         info!("Defaulting to Desktop device");
         Self {
-            device_type: DeviceType::Desktop,
+            _device_type: DeviceType::Desktop,
             display_width: 1024,
             display_height: 768,
             fullscreen: false,
@@ -191,11 +190,12 @@ impl CardBrickApp {
         }
     }
 
+
     fn find_gamepad() -> Option<EvdevDevice> {
         info!("Searching for gamepad...");
         for i in 0..32 {
             let path = format!("/dev/input/event{}", i);
-            if let Ok(mut dev) = EvdevDevice::open(&path) {
+            if let Ok(dev) = EvdevDevice::open(&path) {
                 let name = dev.name().unwrap_or_default().to_lowercase();
                 if name.contains("h700 gamepad") {
                     info!("Success! Found device: {}", path);
@@ -230,7 +230,7 @@ impl CardBrickApp {
             match gamepad.fetch_events() {
                 Ok(events) => {
                     for event in events {
-                        use evdev::{EventType, Key};
+                        use evdev::EventType;
                         
                         if event.event_type() == EventType::KEY && event.value() == 1 {
                             match event.code() {
@@ -412,7 +412,7 @@ impl CardBrickApp {
 
         // Draw text content
         let text_color = WHITE;
-        let instruction_color = Color::from_rgba(153, 166, 179, 255);
+        let _instruction_color = Color::from_rgba(153, 166, 179, 255);
 
         // Use Japanese font if available
         if let Some(font) = &self.font {
@@ -420,13 +420,13 @@ impl CardBrickApp {
             draw_text_ex(&counter, 60.0, 100.0, TextParams {
                 font: Some(font),
                 font_size: 24,
-                color: WHITE,
+                color: text_color,
                 ..Default::default()
             });
             draw_text_ex(text_to_display, 60.0, 150.0, TextParams {
                 font: Some(font),
                 font_size: 48,
-                color: WHITE,
+                color: text_color,
                 ..Default::default()
             });
             draw_text_ex(instruction, 60.0, screen_height - 80.0, TextParams {

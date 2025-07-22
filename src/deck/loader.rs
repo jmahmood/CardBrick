@@ -1,7 +1,6 @@
 // src/deck/loader.rs
 // This file contains the logic for loading cached deck databases.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 

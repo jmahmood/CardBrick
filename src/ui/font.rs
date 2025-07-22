@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 use macroquad::prelude::*;
-use crate::Config;
 use std::collections::VecDeque;
 use crate::debug::Tracer;
 use crate::deck::html_parser::TextSpan;
@@ -91,13 +90,6 @@ impl FontManager {
 
     /// Get the pixel dimensions of a string of text.
     pub fn size_of_text_with_style(&self, text: &str, _is_bold: bool, _is_italic: bool) -> Result<(u32, u32), String> {
-        let text_params = TextParams {
-            font: self.font.as_ref(),
-            font_size: self.font_size as u16,
-            color: WHITE,
-            ..Default::default()
-        };
-        
         let dimensions = measure_text(text, self.font.as_ref(), self.font_size as u16, 1.0);
         Ok((dimensions.width as u32, dimensions.height as u32))
     }
@@ -342,7 +334,6 @@ impl FontManager {
         let mut low = min_pt;
         let mut high = max_pt;
         let mut best = min_pt;
-        let config = Config::new();
         while low <= high {
             let mid = (low + high) / 2;
             // Simulate text wrapping manually for the trial font size

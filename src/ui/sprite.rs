@@ -12,7 +12,8 @@ pub enum SpriteState {
 }
 
 pub struct Sprite {
-    state: SpriteState,
+    #[allow(dead_code)]
+    state: SpriteState,  // We plan on using this in tehfuture.
     last_frame_time: Instant,
     is_blinking: bool,
 }

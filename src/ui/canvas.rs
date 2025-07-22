@@ -16,8 +16,10 @@ pub struct CanvasManager {
 
 impl CanvasManager {
     pub fn new() -> Result<Self, String> {
-        let logical_width = LOGICAL_WIDTH as f32;
-        let logical_height = LOGICAL_HEIGHT as f32;
+
+        // Not using yet.
+        let _logical_width = LOGICAL_WIDTH as f32;
+        let _logical_height = LOGICAL_HEIGHT as f32;
         
         // Calculate scaling and centering
         let screen_w = screen_width();
@@ -75,15 +77,6 @@ impl CanvasManager {
     /// Get logical dimensions.
     pub fn logical_size(&self) -> (f32, f32) {
         (self.logical_width, self.logical_height)
-    }
-    
-    /// Set a clipping rectangle in logical coordinates.
-    pub fn set_clip_rect(&self, x: i32, y: i32, w: u32, h: u32) {
-        let (screen_x, screen_y) = self.logical_to_screen(x as f32, y as f32);
-        let screen_w = w as f32 * self.scale_factor;
-        let screen_h = h as f32 * self.scale_factor;
-        
-        // Note: macroquad doesn't have built-in clipping, we'll need to handle this in drawing calls
     }
     
     /// Clear the clipping rectangle.

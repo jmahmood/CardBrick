@@ -4,6 +4,7 @@
 use rusqlite::{Connection, Result};
 use std::fs;
 use std::path::Path;
+use chrono;
 
 use crate::deck::Card;
 
@@ -83,6 +84,18 @@ impl DatabaseManager {
             [],
         )?;
 
+        // Table for tracking difficult cards for prioritization
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS difficult_cards (
+                card_id INTEGER,
+                difficulty_type TEXT NOT NULL, -- 'failed' or 'hard'
+                timestamp INTEGER NOT NULL,
+                date TEXT NOT NULL, -- YYYY-MM-DD format for easy daily queries
+                PRIMARY KEY (card_id, difficulty_type, date)
+            )",
+            [],
+        )?;
+
         // Set database version
         self.conn.execute("PRAGMA user_version = 1", [])?;
 
@@ -145,5 +158,65 @@ impl DatabaseManager {
         }
         
         Ok(None)
+    }
+
+    /// Records a card as difficult (failed or hard) for today's date
+    pub fn record_difficult_card(&self, card_id: i64, difficulty_type: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        
+        self.conn.execute(
+            "INSERT OR REPLACE INTO difficult_cards (card_id, difficulty_type, timestamp, date)
+             VALUES (?1, ?2, ?3, ?4)",
+            (card_id, difficulty_type, now, today),
+        )?;
+        
+        Ok(())
+    }
+
+    /// Gets difficult cards for a specific date, ordered by most recent first
+    pub fn get_difficult_cards_for_date(&self, date: &str, difficulty_type: Option<&str>) -> Result<Vec<i64>> {
+        let query = if let Some(_diff_type) = difficulty_type {
+            "SELECT card_id FROM difficult_cards 
+             WHERE date = ?1 AND difficulty_type = ?2 
+             ORDER BY timestamp DESC"
+        } else {
+            "SELECT card_id FROM difficult_cards 
+             WHERE date = ?1 
+             ORDER BY timestamp DESC"
+        };
+        
+        let mut stmt = self.conn.prepare(query)?;
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<i64> {
+            Ok(row.get::<_, i64>(0)?)
+        };
+
+        
+        let card_iter = if let Some(diff_type) = difficulty_type {
+            stmt.query_map([date, diff_type], map_row)?
+        } else {
+            stmt.query_map([date], map_row)?
+        };
+        
+        let mut cards = Vec::new();
+        for card in card_iter {
+            cards.push(card?);
+        }
+        
+        Ok(cards)
+    }
+
+    /// Gets all difficult cards for today (both failed and hard)
+    pub fn get_todays_difficult_cards(&self) -> Result<(Vec<i64>, Vec<i64>)> {
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        
+        let failed_cards = self.get_difficult_cards_for_date(&today, Some("failed"))?;
+        let hard_cards = self.get_difficult_cards_for_date(&today, Some("hard"))?;
+        
+        Ok((failed_cards, hard_cards))
     }
 }

@@ -1,6 +1,6 @@
 // CardBrick - Macroquad Version with Device Compatibility
 use crate::scenes::deck_selection::draw_deck_selection_scene;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::io::Write;
 
 use macroquad::prelude::*;
@@ -25,7 +25,7 @@ use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
 use scenes::deck_selection::DeckSelectionState;
 use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, AudioManager, map_evdev_to_brick_input};
-use ui::{CanvasManager, FontManager, sprite::Sprite};
+use ui::{CanvasManager, FontManager, Sprite};
 
 mod assets {
     // Small menu font for fast startup
@@ -52,7 +52,7 @@ pub enum BackgroundFontMessage {
 
 #[derive(Clone)]
 struct DeviceConfig {
-    device_type: DeviceType,
+    _device_type: DeviceType,
     display_width: u32,
     display_height: u32,
     fullscreen: bool,
@@ -68,7 +68,7 @@ impl DeviceConfig {
         if std::path::Path::new(trimui_path).exists() {
             info!("Detected TrimUI Brick device");
             return Self {
-                device_type: DeviceType::TrimUIBrick,
+                _device_type: DeviceType::TrimUIBrick,
                 display_width: 640,
                 display_height: 480,
                 fullscreen: true,
@@ -81,7 +81,7 @@ impl DeviceConfig {
         if std::path::Path::new(rg35xx_path).exists() {
             info!("Detected RG35XX Plus device");
             return Self {
-                device_type: DeviceType::RG35XXPlus,
+                _device_type: DeviceType::RG35XXPlus,
                 display_width: 640,
                 display_height: 480,
                 fullscreen: true,
@@ -91,7 +91,7 @@ impl DeviceConfig {
         // Default to desktop
         info!("Defaulting to Desktop device");
         Self {
-            device_type: DeviceType::Desktop,
+            _device_type: DeviceType::Desktop,
             display_width: 1024,
             display_height: 768,
             fullscreen: false,
@@ -334,7 +334,7 @@ impl CardBrickApp {
         }
         
         // Get file size for progress calculation
-        let file_size = std::fs::metadata(font_path).map_err(|e| e.to_string())?.len() as usize;
+        let _file_size = std::fs::metadata(font_path).map_err(|e| e.to_string())?.len() as usize;
         
         // Load file with real progress tracking
         let buffer = Self::load_file_with_progress(
@@ -926,7 +926,7 @@ fn find_gamepad() -> Option<EvdevDevice> {
     info!("Searching for gamepad...");
     for i in 0..32 {
         let path = format!("/dev/input/event{}", i);
-        if let Ok(mut dev) = EvdevDevice::open(&path) {
+        if let Ok(dev) = EvdevDevice::open(&path) {
             let name = dev.name().unwrap_or_default().to_lowercase();
             if name.contains("h700 gamepad") {
                 info!("Success! Found device: {}", path);

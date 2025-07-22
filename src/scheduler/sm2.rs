@@ -1,11 +1,11 @@
 // src/scheduler.rs
+
 // Contains the logic for the spaced repetition system.
 
 use crate::deck::{Card, Deck, Note};
 use crate::scheduler::queue;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::HashMap;
 use chrono::Utc;
 
 
@@ -17,6 +17,7 @@ pub enum Rating {
     Good,
     Easy,
 }
+
 
 /// A trait defining the core behavior of any scheduling algorithm.
 pub trait Scheduler {
@@ -113,7 +114,7 @@ impl Scheduler for Sm2Scheduler {
             
             // If card not in memory, try to load more from DB
             if self.deck.db_connection.is_some() || self.deck.cached_db_connection.is_some() {
-                if let Ok(new_cards) = self.deck.load_more_cards(50, &[], &[]) {
+                if let Ok(new_cards) = self.deck.load_more_cards(50) {
                     // Try to find the card in the newly loaded batch
                     if let Some(card) = new_cards.iter().find(|c| c.id == card_id).cloned() {
                         return Some(card);
@@ -138,21 +139,29 @@ impl Scheduler for Sm2Scheduler {
         let card = self.deck.cards.iter_mut().find(|c| c.id == card_id)?;
         
         self.last_answer = Some((card_id, rating, card.clone()));
+        
+        // Store the result card to return after DB operations
+        let mut result_card = Some(card.clone())?;
 
         match rating {
             Rating::Again => {
-                card.lapses += 1;
-                card.ease_factor = (card.ease_factor as i32 - 200).max(1300) as u32;
-                card.interval = 0;
+                result_card.lapses += 1;
+                result_card.ease_factor = (result_card.ease_factor as i32 - 200).max(1300) as u32;
+                result_card.interval = 0;
                 
                 // Track this card as failed today
                 if !self.failed_cards_today.contains(&card_id) {
                     self.failed_cards_today.push(card_id);
                 }
                 
-                let cooldown_distance = 5_u32.saturating_sub(card.lapses).max(2) as usize;
+                // Record in database for prioritization in future sessions
+                if let Err(e) = self.deck.record_difficult_card(card_id, "failed") {
+                    eprintln!("Warning: Failed to record difficult card: {}", e);
+                }
+                
+                let cooldown_distance = 5_u32.saturating_sub(result_card.lapses).max(2) as usize;
                 let insertion_point = self.review_queue.len().saturating_sub(cooldown_distance);
-                self.review_queue.insert(insertion_point, card.id);
+                self.review_queue.insert(insertion_point, result_card.id);
             }
             _ => { // Hard, Good, or Easy
                 self.session_reviews_complete += 1;
@@ -168,45 +177,51 @@ impl Scheduler for Sm2Scheduler {
                     }
                 }
                 
-               let ease_factor_multiplier = card.ease_factor as f32 / 1000.0;
+               let ease_factor_multiplier = result_card.ease_factor as f32 / 1000.0;
 
                 match rating {
                     Rating::Good => { 
-                        let new_interval = if card.interval == 0 {
+                        let new_interval = if result_card.interval == 0 {
                             1
                         } else {
-                            (card.interval as f32 * ease_factor_multiplier).round() as u32
+                            (result_card.interval as f32 * ease_factor_multiplier).round() as u32
                         };
                         // The new interval should be at least one day longer than the previous one.
-                        card.interval = new_interval.max(card.interval + 1);
+                        result_card.interval = new_interval.max(result_card.interval + 1);
                     }
                     Rating::Hard => {
                         if !self.hard_cards_this_session.contains(&card_id) {
                             self.hard_cards_this_session.push(card_id);
                         }
-                        card.ease_factor = (card.ease_factor as i32 - 150).max(1300) as u32;
+                        
+                        // Record in database for prioritization in future sessions
+                        if let Err(e) = self.deck.record_difficult_card(card_id, "hard") {
+                            eprintln!("Warning: Failed to record difficult card: {}", e);
+                        }
+                        
+                        result_card.ease_factor = (result_card.ease_factor as i32 - 150).max(1300) as u32;
                         // "Hard" interval multiplier is 1.2
-                        let new_interval = (card.interval as f32 * 1.2).round() as u32;
-                        card.interval = new_interval.max(card.interval + 1);
+                        let new_interval = (result_card.interval as f32 * 1.2).round() as u32;
+                        result_card.interval = new_interval.max(result_card.interval + 1);
                     }
                     Rating::Easy => {
-                    // Increase ease by 150 (15%)
-                    card.ease_factor = (card.ease_factor as i32 + 150) as u32;
-                    // "Easy" bonus multiplier is typically 1.3
-                    let easy_bonus = 1.3;
-                    let new_interval = if card.interval == 0 {
-                        // A common default for the first "Easy" rating is 4 days
-                        4
-                    } else {
-                        (card.interval as f32 * ease_factor_multiplier * easy_bonus).round() as u32
-                    };
-                    card.interval = new_interval.max(card.interval + 1);
-                }
+                        // Increase ease by 150 (15%)
+                        result_card.ease_factor = (result_card.ease_factor as i32 + 150) as u32;
+                        // "Easy" bonus multiplier is typically 1.3
+                        let easy_bonus = 1.3;
+                        let new_interval = if result_card.interval == 0 {
+                            // A common default for the first "Easy" rating is 4 days
+                            4
+                        } else {
+                            (result_card.interval as f32 * ease_factor_multiplier * easy_bonus).round() as u32
+                        };
+                        result_card.interval = new_interval.max(result_card.interval + 1);
+                    }
                     Rating::Again => {} // Already handled
                 }
             }
         }
-        Some(card.clone()) // Return a clone of the modified card
+        Some(result_card) // Return a clone of the modified card
     }
 
     fn rewind_last_answer(&mut self) -> Option<Card> {
@@ -271,8 +286,8 @@ impl Scheduler for Sm2Scheduler {
     }
 
     fn load_more_cards(&mut self, count: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>> {
-        // Load more cards from the deck, passing today's failed and hard cards for prioritization
-        let new_cards = self.deck.load_more_cards(count, &self.failed_cards_today, &self.hard_cards_this_session)?;
+        // Load more cards from the deck using database-stored difficult cards for prioritization
+        let new_cards = self.deck.load_more_cards(count)?;
         
         // Add the new card IDs to the review queue
         for card in &new_cards {
@@ -291,6 +306,9 @@ impl Scheduler for Sm2Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deck::CachedDeckConnection;
+    use std::collections::HashMap;
+
 
     fn create_test_deck(num_cards: usize) -> Deck {
         let mut cards = Vec::new();
@@ -385,5 +403,265 @@ mod tests {
         scheduler.answer_card(next.id, Rating::Good);
         let final_card = scheduler.next_card().unwrap();
         assert_eq!(final_card.id, 2);
+    }
+
+    #[test]
+    fn test_failed_cards_tracking() {
+        let mut scheduler = Sm2Scheduler::new(create_test_deck(5));
+        
+        // Answer first card with "Again"
+        let card1 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card1.id, Rating::Again);
+        assert_eq!(scheduler.failed_cards_today(), &[card1.id]);
+        
+        // Answer second card with "Again"
+        let card2 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card2.id, Rating::Again);
+        assert_eq!(scheduler.failed_cards_today(), &[card1.id, card2.id]);
+        
+        // Answer third card with "Good" - should not be in failed list
+        let card3 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card3.id, Rating::Good);
+        assert_eq!(scheduler.failed_cards_today(), &[card1.id, card2.id]);
+    }
+
+    #[test]
+    fn test_hard_cards_tracking() {
+        let mut scheduler = Sm2Scheduler::new(create_test_deck(5));
+        
+        // Answer first card with "Hard"
+        let card1 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card1.id, Rating::Hard);
+        assert_eq!(scheduler.hard_cards(), &[card1.id]);
+        
+        // Answer second card with "Hard"
+        let card2 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card2.id, Rating::Hard);
+        assert_eq!(scheduler.hard_cards(), &[card1.id, card2.id]);
+        
+        // Answer third card with "Easy" - should not be in hard list
+        let card3 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card3.id, Rating::Easy);
+        assert_eq!(scheduler.hard_cards(), &[card1.id, card2.id]);
+    }
+
+    #[test]
+    fn test_duplicate_tracking() {
+        let mut scheduler = Sm2Scheduler::new(create_test_deck(3));
+        
+        // Answer first card with "Again"
+        let card1 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card1.id, Rating::Again);
+        assert_eq!(scheduler.failed_cards_today(), &[card1.id]);
+        
+        // The same card should come back due to cooldown - answer "Again" again
+        let _returned_card = scheduler.next_card().unwrap();
+        // Skip a few cards to get back to the failed one
+        for _ in 0..3 {
+            if let Some(card) = scheduler.next_card() {
+                if card.id == card1.id {
+                    scheduler.answer_card(card.id, Rating::Again);
+                    break;
+                }
+                scheduler.answer_card(card.id, Rating::Good);
+            }
+        }
+        
+        // Should still only appear once in failed_cards_today
+        assert_eq!(scheduler.failed_cards_today().len(), 1);
+        assert!(scheduler.failed_cards_today().contains(&card1.id));
+    }
+
+    #[test]
+    fn test_mixed_difficult_cards_tracking() {
+        let mut scheduler = Sm2Scheduler::new(create_test_deck(5));
+        
+        // Answer cards with different ratings
+        let card1 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card1.id, Rating::Again); // Failed
+        
+        let card2 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card2.id, Rating::Hard); // Hard
+        
+        let card3 = scheduler.next_card().unwrap();
+        scheduler.answer_card(card3.id, Rating::Good); // Neither
+        
+        // Check both tracking arrays
+        assert_eq!(scheduler.failed_cards_today(), &[card1.id]);
+        assert_eq!(scheduler.hard_cards(), &[card2.id]);
+    }
+
+    #[test]
+    fn test_continue_studying_prioritizes_difficult_cards() {
+        // This is an integration test that verifies the complete flow:
+        // 1. Create scheduler with test database 
+        // 2. Answer some cards as failed/hard
+        // 3. Call load_more_cards
+        // 4. Verify difficult cards are prioritized in results
+
+        use tempfile;
+        
+        // Create test database with more cards
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_db_path = temp_dir.path().join("integration_test.db");
+        let file_conn = rusqlite::Connection::open(&temp_db_path).unwrap();
+        
+        // Create database schema
+        file_conn.execute(
+            "CREATE TABLE cards (
+                id INTEGER PRIMARY KEY,
+                nid INTEGER,
+                due INTEGER,
+                ivl INTEGER,
+                factor INTEGER,
+                lapses INTEGER
+            )",
+            [],
+        ).unwrap();
+        
+        file_conn.execute(
+            "CREATE TABLE revlog (
+                id INTEGER PRIMARY KEY,
+                cid INTEGER,
+                usn INTEGER,
+                ease INTEGER,
+                ivl INTEGER,
+                lastIvl INTEGER,
+                factor INTEGER,
+                time INTEGER,
+                type INTEGER
+            )",
+            [],
+        ).unwrap();
+        
+        // Insert test cards
+        for i in 1..=50 {
+            file_conn.execute(
+                "INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (?, ?, 0, 0, 2500, 0)",
+                [i, i * 10],
+            ).unwrap();
+        }
+        
+        // Create difficult_cards table for testing
+        file_conn.execute(
+            "CREATE TABLE IF NOT EXISTS difficult_cards (
+                card_id INTEGER,
+                difficulty_type TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                PRIMARY KEY (card_id, difficulty_type, date)
+            )",
+            [],
+        ).unwrap();
+        
+        drop(file_conn);
+        
+        // Create deck with database connection
+        let deck = Deck {
+            cards: (1..=12).map(|i| Card { 
+                id: i, 
+                note_id: i * 10, 
+                due: 0, 
+                interval: 0, 
+                ease_factor: 2500, 
+                lapses: 0 
+            }).collect(),
+            notes: HashMap::new(),
+            db_connection: None,
+            cached_db_connection: Some(CachedDeckConnection {
+                db_path: temp_db_path.clone(),
+                total_card_count: 50,
+            }),
+        };
+        
+        // Create scheduler
+        let mut scheduler = Sm2Scheduler::new(deck);
+        
+        // Simulate answering cards during initial session
+        let mut answered_cards = Vec::new();
+        let mut failed_cards = Vec::new();
+        let mut hard_cards = Vec::new();
+        
+        // Answer several cards, marking some as failed/hard
+        for i in 0..8 {
+            if let Some(card) = scheduler.next_card() {
+                answered_cards.push(card.id);
+                
+                let rating = match i {
+                    0 | 2 => {
+                        failed_cards.push(card.id);
+                        Rating::Again // Cards will be marked as failed
+                    },
+                    1 | 4 => {
+                        hard_cards.push(card.id);
+                        Rating::Hard // Cards will be marked as hard
+                    },
+                    _ => Rating::Good,
+                };
+                
+                scheduler.answer_card(card.id, rating);
+            }
+        }
+        
+        // Verify tracking is working
+        assert!(!scheduler.failed_cards_today().is_empty(), "Failed cards should be tracked");
+        assert!(!scheduler.hard_cards().is_empty(), "Hard cards should be tracked");
+        
+        // Now manually insert some difficult cards from a higher range (to avoid exclusion)
+        // to test database-based prioritization
+        let test_conn = rusqlite::Connection::open(&temp_db_path).unwrap();
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        
+        // Insert some cards from the high range as difficult 
+        test_conn.execute(
+            "INSERT OR REPLACE INTO difficult_cards (card_id, difficulty_type, timestamp, date)
+             VALUES (45, 'failed', ?, ?)",
+            (now, &today),
+        ).unwrap();
+        
+        test_conn.execute(
+            "INSERT OR REPLACE INTO difficult_cards (card_id, difficulty_type, timestamp, date)
+             VALUES (47, 'hard', ?, ?)",
+            (now, &today),
+        ).unwrap();
+        
+        drop(test_conn);
+        
+        // Now test load_more_cards - this simulates continuing study
+        let load_result = scheduler.load_more_cards(crate::scheduler::queue::PACK_SIZE_DEFAULT);
+        
+        match load_result {
+            Ok(new_cards) => {
+                assert_eq!(new_cards.len(), crate::scheduler::queue::PACK_SIZE_DEFAULT, "Should load requested number of cards");
+                
+                // Check if the database difficult cards appear in the results
+                let loaded_45 = new_cards.iter().any(|card| card.id == 45);
+                let loaded_47 = new_cards.iter().any(|card| card.id == 47);
+                
+                println!("Cards in load_more_cards result: {:?}", new_cards.iter().map(|c| c.id).collect::<Vec<_>>());
+                println!("Card 45 (failed) found in result: {}", loaded_45);
+                println!("Card 47 (hard) found in result: {}", loaded_47);
+                
+                // At least one of the difficult cards should be prioritized
+                assert!(loaded_45 || loaded_47, "At least one difficult card should be prioritized from database");
+                
+                // Verify cards have valid data
+                for card in &new_cards {
+                    assert!(card.id > 0, "Card should have valid ID");
+                    assert!(card.note_id > 0, "Card should have valid note ID");
+                }
+                
+                // Verify cards were added to review queue
+                assert!(scheduler.review_queue.len() >= crate::scheduler::queue::PACK_SIZE_DEFAULT, "Cards should be added to review queue");
+                
+            },
+            Err(e) => {
+                panic!("load_more_cards should succeed when database has available cards: {}", e);
+            }
+        }
     }
 }

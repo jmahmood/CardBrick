@@ -3,12 +3,13 @@
 
 use crate::config::BACKLOG_CAP;
 use crate::deck::Deck;
-use crate::storage::models::{CardId, SrsRow, DailyLogRow};
-use chrono::{NaiveDate, Utc};
+// use crate::storage::models::{CardId, SrsRow, DailyLogRow};
+use crate::storage::models::{CardId};
+use chrono::{NaiveDate};
 use rusqlite::{Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub const PACK_SIZE_DEFAULT: usize = 12;
 
@@ -64,7 +65,7 @@ pub fn load_today(today: NaiveDate) -> Vec<CardId> {
 
 /// Get cards that are due for review today
 pub fn due_cards(today: NaiveDate, conn: &Connection) -> SqlResult<Vec<CardId>> {
-    let today_timestamp = today.and_hms_opt(9, 0, 0).unwrap().timestamp();
+    let today_timestamp = today.and_hms_opt(9, 0, 0).unwrap().and_utc().timestamp();
     
     let mut stmt = conn.prepare(
         "SELECT card_id FROM srs_log 

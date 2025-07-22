@@ -2,7 +2,11 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 // Constants for Core Learning Loop
-pub const BACKLOG_CAP: usize = 200;
+
+
+#[allow(dead_code)]
+pub const BACKLOG_CAP: usize = 200;  // For future use.
+#[allow(dead_code)]
 pub const PACK_SIZE_DEFAULT: usize = 12;
 
 pub struct Config {

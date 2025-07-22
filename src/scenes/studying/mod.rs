@@ -65,7 +65,6 @@ pub fn draw_studying_scene(
 ) -> Result<(), String> {
     // Layout constants
     const BAR_HEIGHT: f32 = 25.0;
-    const BAR_PADDING: f32 = 4.0;
     const CONTENT_TOP: f32 = BAR_HEIGHT + 15.0;
     
     let margin: u32 = 30;
@@ -104,7 +103,7 @@ pub fn draw_studying_scene(
     sprite.draw(canvas_manager)?;
     
     // Set clipping rectangle for scrollable content area - start after progress bar
-    canvas_manager.set_clip_rect(0, BAR_HEIGHT as i32, 512, (logical_height - BAR_HEIGHT) as u32);
+    // canvas_manager.set_clip_rect(0, BAR_HEIGHT as i32, 512, (logical_height - BAR_HEIGHT) as u32);
     
     // Calculate content origin with proper ascent handling
     let font_ascent = font_manager.metrics().0;
@@ -160,7 +159,7 @@ pub fn draw_studying_scene(
     }
     
     // Clear clipping and draw hint text at bottom
-    canvas_manager.clear_clip_rect();
+    // canvas_manager.clear_clip_rect();
     if studying_state.is_answer_revealed {
         if let Some(hint_layout) = &studying_state.hint_layout {
             let hint_ascent = hint_font_manager.metrics().0;

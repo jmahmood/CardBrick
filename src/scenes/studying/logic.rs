@@ -3,11 +3,11 @@
 use crate::deck::{html_parser, Card};
 use crate::debug::Tracer;
 use crate::ui::FontManager;
-use crate::scheduler::queue;
+use crate::scheduler::queue::{self, PACK_SIZE_DEFAULT};
 use super::StudyingState;
-use chrono::{Utc, TimeZone};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use chrono::{Utc};
+// use rand::seq::SliceRandom; // We moved this logic into the db.
+// use rand::thread_rng;
 
 /// Loads the next card from the scheduler into the state.
 /// Now integrates with the daily queue system from Core Learning Loop.
@@ -54,7 +54,7 @@ pub fn load_card_layouts(state: &mut StudyingState, card: &Card, font: &mut Font
 /// Load more cards for continued studying beyond the daily goal
 pub fn continue_studying(state: &mut StudyingState, font: &mut FontManager, small_font: &mut FontManager) {
     // First try to load more cards from the deck
-    if let Ok(new_cards) = state.scheduler.load_more_cards(12) {
+    if let Ok(new_cards) = state.scheduler.load_more_cards(PACK_SIZE_DEFAULT) {
         if new_cards.len() > 0 {
             // Reset the done state and load next card
             state.is_done = false;
@@ -64,7 +64,7 @@ pub fn continue_studying(state: &mut StudyingState, font: &mut FontManager, smal
     }
     
     // If no new cards available, try to reorder existing cards
-    let additional_count = state.scheduler.introduce_new_cards(12);
+    let additional_count = state.scheduler.introduce_new_cards(PACK_SIZE_DEFAULT);
     
     if additional_count > 0 {
         // Reset the done state and load next card
