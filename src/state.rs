@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use crate::config::Config;
+use crate::config::{Config, UiAssets};
 use crate::deck::Deck;
 use crate::scenes::deck_selection::DeckSelectionState;
 use crate::scenes::main_menu::MainMenuState;
@@ -80,6 +80,7 @@ pub struct AppState {
     pub audio: AudioManager,
     pub background_font_receiver: Option<std::sync::mpsc::Receiver<crate::BackgroundFontMessage>>,
     pub japanese_font_ready: bool,
+    pub ui_assets: Option<UiAssets>,
 }
 
 /// All the *buttons* as they’re silkscreened (or logically present) on the Brick.

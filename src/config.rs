@@ -1,5 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use macroquad::prelude::*;
 
 // Constants for Core Learning Loop
 
@@ -17,6 +18,59 @@ pub mod assets {
     pub const JAPANESE_FONT: &[u8] = include_bytes!("../assets/font/NotoSansJP-Regular.otf");
     pub const CLICK_SOUND: &[u8] = include_bytes!("../assets/sfx/click.wav");
     pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/sfx/open.wav");
+}
+
+/// UI assets for the deck selection screen
+pub struct UiAssets {
+    pub deck_selection_bg: Texture2D,
+    pub character_sprite: Texture2D,
+}
+
+impl UiAssets {
+    /// Load UI assets from embedded bytes or files
+    pub fn load() -> Result<Self, String> {
+        // Create efficient placeholder textures with less extreme scaling
+        
+        // Create small background (64x48 - 16:12 aspect ratio, easy to scale)
+        let mut bg_pixels = vec![0u8; 64 * 48 * 4];
+        for i in 0..(64 * 48) {
+            let idx = i * 4;
+            bg_pixels[idx] = 45;      // R
+            bg_pixels[idx + 1] = 50;  // G  
+            bg_pixels[idx + 2] = 65;  // B
+            bg_pixels[idx + 3] = 255; // A
+        }
+        let deck_selection_bg = Texture2D::from_rgba8(64, 48, &bg_pixels);
+        
+        // Create small character sprite (16x4 for 4 frames of 4x4 each)
+        let mut sprite_pixels = vec![0u8; 16 * 4 * 4];
+        for frame in 0..4 {
+            let colors = [
+                [200u8, 100u8, 100u8, 255u8], // Red
+                [255u8, 150u8, 100u8, 255u8], // Orange  
+                [255u8, 200u8, 100u8, 255u8], // Yellow
+                [150u8, 255u8, 100u8, 255u8], // Green
+            ];
+            let color = colors[frame];
+            
+            for y in 0..4 {
+                for x in 0..4 {
+                    let sprite_x = frame * 4 + x;
+                    let idx = (y * 16 + sprite_x) * 4;
+                    sprite_pixels[idx] = color[0];
+                    sprite_pixels[idx + 1] = color[1];
+                    sprite_pixels[idx + 2] = color[2];
+                    sprite_pixels[idx + 3] = color[3];
+                }
+            }
+        }
+        let character_sprite = Texture2D::from_rgba8(16, 4, &sprite_pixels);
+        
+        Ok(Self {
+            deck_selection_bg,
+            character_sprite,
+        })
+    }
 }
 
 

@@ -4,6 +4,7 @@ use macroquad::prelude::*;
 
 use crate::DeckMetadata;
 use crate::ui::{CanvasManager, FontManager};
+use crate::config::UiAssets;
 
 pub mod input;
 
@@ -14,16 +15,39 @@ pub struct DeckSelectionState {
     pub decks: Vec<DeckMetadata>,
     pub selected_index: usize,
     first_visible: usize,
+    pub character_anim_timer: f32,
+    pub character_current_frame: usize,
+    display_names: Vec<String>, // Pre-computed display names for performance
 }
 
 impl DeckSelectionState {
     /// Creates a new state for the deck selection screen.
     pub fn new(decks: Vec<DeckMetadata>) -> Result<Self, String> {
+        // Pre-compute display names for performance
+        let display_names: Vec<String> = decks.iter()
+            .map(|deck| deck.name.replace('_', " "))
+            .collect();
+            
         Ok(Self {
             decks,
             selected_index: 0,
             first_visible: 0,
+            character_anim_timer: 0.0,
+            character_current_frame: 0,
+            display_names,
         })
+    }
+
+    /// Updates the character animation state
+    pub fn update(&mut self, delta_time: f32) {
+        const FRAME_DURATION: f32 = 0.25;
+        const NUM_FRAMES: usize = 4;
+        
+        self.character_anim_timer += delta_time;
+        if self.character_anim_timer >= FRAME_DURATION {
+            self.character_current_frame = (self.character_current_frame + 1) % NUM_FRAMES;
+            self.character_anim_timer -= FRAME_DURATION;
+        }
     }
 
     pub fn index_changes(&mut self, delta: isize, total: usize) -> bool {
@@ -54,43 +78,91 @@ impl DeckSelectionState {
 
 
 pub fn draw_deck_selection_scene(
-    font_manager: &FontManager,
+    _font_manager: &FontManager,
     small_font_manager: &FontManager,
     canvas_manager: &CanvasManager,
     state: &DeckSelectionState,
+    ui_assets: &Option<UiAssets>,
 ) -> Result<(), String> {
-    // Use font-derived layout constants
-    const MARGIN_TOP: f32 = 10.0;
-    const TEXT_X: f32 = 20.0;
-    const PADDING: f32 = 2.0;
+    // Layout constants for 512x384 pixel-art design
+    const LOGICAL_HEIGHT: f32 = 384.0;
+    const TITLE_POS: (i32, i32) = (51, 38);
+    const LIST_START_POS: (i32, i32) = (51, 90);
+    const LIST_ITEM_HEIGHT: f32 = 26.0;
+    const CHARACTER_POS: (f32, f32) = (312.0, 120.0);
+    const FOOTER_POS: (i32, i32) = (51, 346);
+    const FOOTER_AREA_HEIGHT: f32 = 40.0;
+    const FRAME_WIDTH: f32 = 64.0;
+    const FRAME_HEIGHT: f32 = 64.0;
 
-    let (_screen_width, screen_height) = canvas_manager.logical_size();
-    let title_line_height = font_manager.line_height();
-    let item_line_height = small_font_manager.line_height();
-    let list_spacing = 8.0;
+    // Calculate screen coordinates once
+    let (screen_x, screen_y) = canvas_manager.logical_to_screen(0.0, 0.0);
+    let scale = canvas_manager.get_scale_factor();
+    let screen_w = 512.0 * scale;
+    let screen_h = 384.0 * scale;
     
-    // Calculate layout positions using font metrics
-    let title_top = MARGIN_TOP;
-    let instruction_top = title_top + title_line_height + 8.0;
-    let list_top = instruction_top + item_line_height + 20.0;
-    let item_step = item_line_height + list_spacing;
+    // 1. Draw Background (solid color fallback if assets not loaded)
+    if let Some(assets) = ui_assets {
+        draw_texture_ex(
+            &assets.deck_selection_bg, 
+            screen_x, 
+            screen_y, 
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(Vec2::new(screen_w, screen_h)),
+                ..Default::default()
+            }
+        );
+    } else {
+        // Fallback: solid color background
+        draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(45, 50, 65, 255));
+    }
 
-    // Draw static text instructions using top-left positioning
-    small_font_manager.draw_line_top_left("Select a Deck", TEXT_X as i32, title_top as i32, canvas_manager)?;
-    small_font_manager.draw_line_top_left("Press Backspace to return to Main Menu", TEXT_X as i32, instruction_top as i32, canvas_manager)?;
+    // 2. Draw Animated Character (if assets are loaded)
+    if let Some(assets) = ui_assets {
+        let source_rect = Rect::new(
+            state.character_current_frame as f32 * 4.0,  // Each frame is 4 pixels wide
+            0.0,
+            4.0,  // Source width: 4 pixels
+            4.0,  // Source height: 4 pixels
+        );
+        
+        let (char_screen_x, char_screen_y) = canvas_manager.logical_to_screen(CHARACTER_POS.0, CHARACTER_POS.1);
+        let char_dest_size = Vec2::new(FRAME_WIDTH * scale, FRAME_HEIGHT * scale);
+        
+        draw_texture_ex(
+            &assets.character_sprite,
+            char_screen_x,
+            char_screen_y,
+            WHITE,
+            DrawTextureParams {
+                source: Some(source_rect),
+                dest_size: Some(char_dest_size),
+                ..Default::default()
+            }
+        );
+    }
 
-    // Handle case where no decks are found
+    // 3. Draw Title
+    small_font_manager.draw_line_top_left("Select a Deck", TITLE_POS.0, TITLE_POS.1, canvas_manager)?;
+
+    // 4. Draw Dynamic Footer (selected deck name if decks exist)
+    if !state.decks.is_empty() {
+        let display_name = &state.display_names[state.selected_index]; // Use pre-computed display name
+        small_font_manager.draw_line_top_left(display_name, FOOTER_POS.0, FOOTER_POS.1, canvas_manager)?;
+    }
+
+    // 5. Draw Deck List
     if state.decks.is_empty() {
-        let no_decks_top = list_top;
-        let instructions_top = no_decks_top + item_line_height + 8.0;
-        small_font_manager.draw_line_top_left("No cached decks found.", TEXT_X as i32, no_decks_top as i32, canvas_manager)?;
-        small_font_manager.draw_line_top_left("Run precache_decks.py to cache .apkg files.", TEXT_X as i32, instructions_top as i32, canvas_manager)?;
+        // Empty list message
+        small_font_manager.draw_line_top_left("No cached decks found.", LIST_START_POS.0, LIST_START_POS.1, canvas_manager)?;
+        small_font_manager.draw_line_top_left("Run precache_decks.py to cache .apkg files.", LIST_START_POS.0, LIST_START_POS.1 + 30, canvas_manager)?;
         return Ok(());
     }
 
-    // Calculate how many items can fit on screen
-    let available_height = screen_height - list_top;
-    let visible_items = (available_height / item_step).floor() as usize;
+    // Calculate visible items dynamically
+    let available_height = LOGICAL_HEIGHT - LIST_START_POS.1 as f32 - FOOTER_AREA_HEIGHT;
+    let visible_items = (available_height / LIST_ITEM_HEIGHT).floor() as usize;
 
     for row in 0..visible_items {
         let idx = state.first_visible + row;
@@ -98,35 +170,31 @@ pub fn draw_deck_selection_scene(
             break;
         }
 
-        let deck = &state.decks[idx];
-        let display_title = deck.name.replace('_', " ");
-        let item_top = list_top + (row as f32 * item_step);
+        let display_title = &state.display_names[idx]; // Use pre-computed display name
+        let item_top = LIST_START_POS.1 as f32 + (row as f32 * LIST_ITEM_HEIGHT);
 
-        // Draw highlight rectangle for the selected item (in logical space)
+        // Selection Highlight with new blue color (fixed width for performance)
         if idx == state.selected_index {
-            let (text_w, text_h) = small_font_manager.size_of_text(&display_title)?;
-            
-            // Compute rectangle in logical space
-            let rect_x = TEXT_X - PADDING;
+            // Use fixed width to avoid text measurement every frame
+            let rect_x = LIST_START_POS.0 as f32 - 2.0;
             let rect_y = item_top;
-            let rect_w = text_w as f32 + PADDING * 2.0;
-            let rect_h = text_h as f32 + PADDING * 2.0;
+            let rect_w = 300.0; // Fixed reasonable width
+            let rect_h = LIST_ITEM_HEIGHT;
 
-            // Convert to screen space once
+            // Convert to screen space
             let (screen_x, screen_y) = canvas_manager.logical_to_screen(rect_x, rect_y);
-            let scale = canvas_manager.get_scale_factor();
             
             draw_rectangle(
                 screen_x,
                 screen_y,
                 rect_w * scale,
                 rect_h * scale,
-                Color::from_rgba(80, 80, 80, 255),
+                Color::from_rgba(57, 85, 165, 255), // New blue selection color
             );
         }
 
-        // Draw the deck name using top-left positioning
-        small_font_manager.draw_line_top_left(&display_title, TEXT_X as i32, item_top as i32, canvas_manager)?;
+        // Draw deck name text
+        small_font_manager.draw_line_top_left(display_title, LIST_START_POS.0, item_top as i32, canvas_manager)?;
     }
 
     Ok(())

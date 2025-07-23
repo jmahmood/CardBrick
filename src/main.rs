@@ -3,7 +3,7 @@ use crate::scenes::deck_selection::draw_deck_selection_scene;
 use std::path::PathBuf;
 use std::io::Write;
 
-use config::assets;
+use config::{assets, UiAssets};
 
 use macroquad::prelude::*;
 use log::{info, warn, error, debug};
@@ -152,12 +152,15 @@ impl CardBrickApp {
             ));
         }
 
-        // Step 5: Start background font loading (non-blocking)
+        // Step 5: Skip UI assets loading (load lazily when needed)
         Self::show_loading_step(loading_canvas, loading_steps, 5).await;
+
+        // Step 6: Start background font loading (non-blocking)
+        Self::show_loading_step(loading_canvas, loading_steps, 6).await;
         let background_font_receiver = Self::start_background_font_loading().await?;
 
-        // Step 6: Finalize setup
-        Self::show_loading_step(loading_canvas, loading_steps, 6).await;
+        // Step 7: Finalize setup
+        Self::show_loading_step(loading_canvas, loading_steps, 7).await;
 
         let app_state = AppState {
             game_state: GameState::MainMenu(MainMenuState::new()),
@@ -172,6 +175,7 @@ impl CardBrickApp {
             audio,
             background_font_receiver: Some(background_font_receiver),
             japanese_font_ready: false,
+            ui_assets: None,
         };
 
         info!("CardBrick application initialized successfully");
@@ -501,6 +505,11 @@ impl CardBrickApp {
         self.update_state()?;
         self.app_state.sprite.update();
 
+        // Update deck selection animation if in deck selection state
+        if let GameState::DeckSelection(deck_selection_state) = &mut self.app_state.game_state {
+            deck_selection_state.update(get_frame_time());
+        }
+
         Ok(())
     }
 
@@ -557,6 +566,13 @@ impl CardBrickApp {
                     self.app_state.available_decks.clone(),
                 )?;
 
+                // Load UI assets once when entering deck selection
+                if self.app_state.ui_assets.is_none() {
+                    if let Ok(assets) = UiAssets::load() {
+                        self.app_state.ui_assets = Some(assets);
+                    }
+                }
+
                 GameState::DeckSelection(new_state)
             }
             other_state => other_state,
@@ -576,12 +592,12 @@ impl CardBrickApp {
                 )
             },
             GameState::DeckSelection(deck_selection_state) => {
-                // TODO: Fix deck_selection scene drawing
                 draw_deck_selection_scene(
                     &self.app_state.font_manager, 
                     &self.app_state.small_font_manager, 
                     &self.app_state.canvas_manager,
-                    deck_selection_state)
+                    deck_selection_state,
+                    &self.app_state.ui_assets)
             },
             GameState::Loading { loading_layout, progress, .. } => {
                 draw_loading_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, loading_layout, *progress)
@@ -730,6 +746,7 @@ async fn main() {
         "Creating canvas manager...",
         "Creating basic font managers...",
         "Loading available decks...",
+        "Preparing graphics system...",
         "Starting background font loading...",
         "Finalizing setup...",
     ];

@@ -10,7 +10,9 @@ use crate::{AppState, GameState};
 pub fn handle_deck_selection_input(state: &mut AppState, input: BrickInput) -> Result<(), String> {
 
     if let GameState::DeckSelection(deck_selection_state) = &mut state.game_state {
-        const VISIBLE_ITEMS: usize = 4;
+        // Calculate visible items dynamically from layout constants
+        let available_height = 384.0f32 - 90.0f32 - 40.0f32; // LOGICAL_HEIGHT - LIST_START_Y - FOOTER_AREA_HEIGHT
+        let visible_items = (available_height / 26.0f32).floor() as usize; // available_height / LIST_ITEM_HEIGHT
         let total_decks = deck_selection_state.decks.len();
 
         match input {
@@ -19,7 +21,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, input: BrickInput) -> R
                     if deck_selection_state.index_changes(-1, total_decks) {
                         let _ = state.audio.play_sound(crate::assets::CLICK_SOUND);
                     }
-                    deck_selection_state.move_selection(-1, total_decks, VISIBLE_ITEMS);
+                    deck_selection_state.move_selection(-1, total_decks, visible_items);
                 }
             },
             BrickInput::ButtonDown(BrickButton::DPadDown) => {
@@ -29,7 +31,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, input: BrickInput) -> R
                         let _ = state.audio.play_sound(crate::assets::CLICK_SOUND);
                     }
 
-                    deck_selection_state.move_selection(1, total_decks, VISIBLE_ITEMS);
+                    deck_selection_state.move_selection(1, total_decks, visible_items);
 
                 }
             }
