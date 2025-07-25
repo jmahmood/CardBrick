@@ -4,10 +4,13 @@ use macroquad::prelude::*;
 
 // Constants for Core Learning Loop
 
-
 #[allow(dead_code)]
 pub const BACKLOG_CAP: usize = 200;  // For future use.
 pub const PACK_SIZE_DEFAULT: usize = 12;
+
+// Bandit constants for adaptive parameter tuning
+pub const ROUND_ROBIN_DAYS: u8 = 6;
+pub const BANDIT_DECAY_THRESHOLD: u32 = 200;
 pub const SMALL_FONT: &str = "PixelMplus10-Regular.ttf";
 pub const EMOJI_FONT: &str = "PixelMplus10-Regular.ttf";
 
@@ -28,7 +31,7 @@ pub struct UiAssets {
 
 impl UiAssets {
     /// Load UI assets from embedded bytes or files
-    pub fn load() -> Result<Self, String> {
+    pub async fn load(assets_dir: &Path) -> Result<Self, String> {
         // Create efficient placeholder textures with less extreme scaling
         
         // Create small background (64x48 - 16:12 aspect ratio, easy to scale)
@@ -42,29 +45,36 @@ impl UiAssets {
         }
         let deck_selection_bg = Texture2D::from_rgba8(64, 48, &bg_pixels);
         
-        // Create small character sprite (16x4 for 4 frames of 4x4 each)
-        let mut sprite_pixels = vec![0u8; 16 * 4 * 4];
-        for frame in 0..4 {
-            let colors = [
-                [200u8, 100u8, 100u8, 255u8], // Red
-                [255u8, 150u8, 100u8, 255u8], // Orange  
-                [255u8, 200u8, 100u8, 255u8], // Yellow
-                [150u8, 255u8, 100u8, 255u8], // Green
-            ];
-            let color = colors[frame];
-            
-            for y in 0..4 {
-                for x in 0..4 {
-                    let sprite_x = frame * 4 + x;
-                    let idx = (y * 16 + sprite_x) * 4;
-                    sprite_pixels[idx] = color[0];
-                    sprite_pixels[idx + 1] = color[1];
-                    sprite_pixels[idx + 2] = color[2];
-                    sprite_pixels[idx + 3] = color[3];
+        // Load the upward jump sprite animation
+        let sprite_path = assets_dir.join("animations").join("Upward Jump.png");
+        let character_sprite = match load_texture(&sprite_path.to_string_lossy()).await {
+            Ok(texture) => texture,
+            Err(_) => {
+                // Fallback: create placeholder sprite (16x4 for 4 frames of 4x4 each)
+                let mut sprite_pixels = vec![0u8; 16 * 4 * 4];
+                for frame in 0..4 {
+                    let colors = [
+                        [200u8, 100u8, 100u8, 255u8], // Red
+                        [255u8, 150u8, 100u8, 255u8], // Orange  
+                        [255u8, 200u8, 100u8, 255u8], // Yellow
+                        [150u8, 255u8, 100u8, 255u8], // Green
+                    ];
+                    let color = colors[frame];
+                    
+                    for y in 0..4 {
+                        for x in 0..4 {
+                            let sprite_x = frame * 4 + x;
+                            let idx = (y * 16 + sprite_x) * 4;
+                            sprite_pixels[idx] = color[0];
+                            sprite_pixels[idx + 1] = color[1];
+                            sprite_pixels[idx + 2] = color[2];
+                            sprite_pixels[idx + 3] = color[3];
+                        }
+                    }
                 }
+                Texture2D::from_rgba8(16, 4, &sprite_pixels)
             }
-        }
-        let character_sprite = Texture2D::from_rgba8(16, 4, &sprite_pixels);
+        };
         
         Ok(Self {
             deck_selection_bg,
@@ -79,6 +89,7 @@ pub struct Config {
     pub font_size_large: u32,
     pub font_size_medium: u32,
     pub font_size_small: u32,
+    pub assets_dir: PathBuf,
 }
 
 impl Config {
@@ -121,6 +132,7 @@ impl Config {
             font_size_large: 32,
             font_size_medium: 24,
             font_size_small: 10,
+            assets_dir: base_assets.to_path_buf(),
         }
     }
 }

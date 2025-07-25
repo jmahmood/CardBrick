@@ -69,6 +69,10 @@ This project is being developed in Rust (2021 Edition).  We use `evdev` for inpu
 - If you need scp / rsync for your device, you can build them using `toolchain/Dockerfile.scp_and_rsync`
 - I have a script that fixes ruby tags so they are properly read by the script I am using.  You can find it under `scripts/ruby_fixer.py`
 
+## Artwork
+
+Using free artwork from Craftpix.net (thanks!)
+
 ## License
 
-Licensed under GPL‑3.0 or later. See LICENSE for details.
+Code is licensed under GPL‑3.0 or later. See LICENSE for details.

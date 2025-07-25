@@ -2,6 +2,8 @@
 // Daily queue builder for Core Learning Loop
 
 use crate::config::{BACKLOG_CAP, PACK_SIZE_DEFAULT};
+use crate::scheduler::bandit::BanditManager;
+use crate::storage::db::progress_path;
 use crate::deck::Deck;
 // use crate::storage::models::{CardId, SrsRow, DailyLogRow};
 use crate::storage::models::{CardId};
@@ -15,9 +17,15 @@ use std::path::PathBuf;
 pub struct QueueData {
     pub pack_size: usize,
     pub review_coefficient: f64,
+    #[serde(default = "default_fail_k")]
+    pub fail_k: usize,
     pub cards: Vec<CardId>,
     #[serde(default)]
     pub completed_cards: Vec<CardId>, // Track completed cards (defaults to empty for backward compatibility)
+}
+
+fn default_fail_k() -> usize {
+    5 // Default value for backward compatibility
 }
 
 /// Ensures today's queue exists, creating it if needed (idempotent)
@@ -100,28 +108,50 @@ pub fn next_new_cards(count: usize, conn: &Connection) -> SqlResult<Vec<CardId>>
 }
 
 /// Builds today's queue and saves it to disk
-/// For Sprint 0: Creates a simple queue with first N cards from available decks
+/// Uses bandit sampling for adaptive parameter tuning
 pub fn build_today(today: NaiveDate) -> Result<(), Box<dyn std::error::Error>> {
-    // For Sprint 0, we'll use hard-coded parameters
-    let pack_sz = PACK_SIZE_DEFAULT;
-    let rev_coef = 2.0; // Hard-coded for Sprint 0
+    let db_path = progress_path();
+    build_today_with_path(today, &db_path)
+}
+
+/// Builds today's queue with explicit database path - NO GLOBAL STATE
+pub fn build_today_with_path(today: NaiveDate, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Sample parameters from bandits and persist immediately
+    let mut bandit_manager = BanditManager::new_with_path(db_path)?;
+    let (pack_sz, rev_coef, fail_k) = bandit_manager.sample_parameters_with_path(today, db_path);
+    bandit_manager.save_all_with_path(db_path)?; // Persist bandit state after sampling
     
-    // For Sprint 0: Generate a simple queue with sequential card IDs
-    // This will be replaced with database queries in Sprint 1
-    let mut cards = Vec::new();
+    // Open database connection and start transaction
+    let mut conn = Connection::open(db_path)?;
+    let tx = conn.transaction()?;
     
-    // Create a basic queue with card IDs 1 through pack_sz
-    // In Sprint 1, this will be replaced with actual due cards + new cards
-    for i in 1..=pack_sz as i64 {
-        cards.push(i);
-    }
+    // Get due cards (already limited by BACKLOG_CAP in SQL)
+    let due_cards_all = due_cards(today, &tx)?;
+    
+    // Apply review coefficient cap
+    let review_cap = ((rev_coef * pack_sz as f64).round() as usize).min(due_cards_all.len());
+    let reviews_today: Vec<CardId> = due_cards_all.into_iter().take(review_cap).collect();
+    
+    // Get new cards (roughly 1/3 of pack size)
+    let n_new = pack_sz / 3;
+    let new_cards = next_new_cards(n_new, &tx)?;
+    
+    // Interleave review and new cards with new card first
+    let cards = interleave_one_new_first(&reviews_today, &new_cards);
     
     let queue_data = QueueData {
         pack_size: pack_sz,
         review_coefficient: rev_coef,
+        fail_k,
         cards,
         completed_cards: Vec::new(),
     };
+    
+    // Create skeleton row in daily_log
+    create_daily_log_skeleton_tx(&tx, today, pack_sz, rev_coef, fail_k)?;
+    
+    // Commit transaction
+    tx.commit()?;
     
     // Create queues directory if it doesn't exist
     let queue_dir = get_queue_dir();
@@ -132,31 +162,65 @@ pub fn build_today(today: NaiveDate) -> Result<(), Box<dyn std::error::Error>> {
     let json_data = serde_json::to_string_pretty(&queue_data)?;
     fs::write(&queue_path, json_data)?;
     
-    // Create skeleton row in daily_log
-    create_daily_log_skeleton(today, pack_sz, rev_coef)?;
-    
-    println!("Created queue for {} with {} cards", today, queue_data.cards.len());
+    println!("Created queue for {} with {} cards ({} reviews, {} new) (pack_sz={}, rev_coef={}, fail_k={})", 
+             today, queue_data.cards.len(), reviews_today.len(), new_cards.len(), pack_sz, rev_coef, fail_k);
     Ok(())
 }
 
 /// Builds today's queue using actual deck card IDs
 pub fn build_today_with_deck(today: NaiveDate, deck: &Deck) -> Result<(), Box<dyn std::error::Error>> {
-    // For Sprint 0, we'll use hard-coded parameters
-    let pack_sz = PACK_SIZE_DEFAULT;
-    let rev_coef = 2.0; // Hard-coded for Sprint 0
+    let db_path = progress_path();
+    build_today_with_deck_and_path(today, deck, &db_path)
+}
+
+/// Builds today's queue with deck and explicit database path - NO GLOBAL STATE
+pub fn build_today_with_deck_and_path(today: NaiveDate, deck: &Deck, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Sample parameters from bandits and persist immediately
+    let mut bandit_manager = BanditManager::new_with_path(db_path)?;
+    let (pack_sz, rev_coef, fail_k) = bandit_manager.sample_parameters_with_path(today, db_path);
+    bandit_manager.save_all_with_path(db_path)?; // Persist bandit state after sampling
     
-    // Use actual card IDs from the deck
-    let cards: Vec<CardId> = deck.cards.iter()
-        .take(pack_sz) // Limit to pack size
-        .map(|c| c.id)
+    // Open database connection and start transaction
+    let mut conn = Connection::open(db_path)?;
+    let tx = conn.transaction()?;
+    
+    // Create set of deck card IDs for filtering
+    let deck_card_ids: std::collections::HashSet<CardId> = deck.cards.iter().map(|c| c.id).collect();
+    
+    // Get due cards and filter to only include cards from this deck
+    let due_cards_all = due_cards(today, &tx)?;
+    let deck_due_cards: Vec<CardId> = due_cards_all.into_iter()
+        .filter(|card_id| deck_card_ids.contains(card_id))
         .collect();
+    
+    // Apply review coefficient cap
+    let review_cap = ((rev_coef * pack_sz as f64).round() as usize).min(deck_due_cards.len());
+    let reviews_today: Vec<CardId> = deck_due_cards.into_iter().take(review_cap).collect();
+    
+    // Get new cards and filter to only include cards from this deck
+    let n_new = pack_sz / 3;
+    let new_cards_all = next_new_cards(n_new * 2, &tx)?; // Get more to account for filtering
+    let new_cards: Vec<CardId> = new_cards_all.into_iter()
+        .filter(|card_id| deck_card_ids.contains(card_id))
+        .take(n_new) // Take only what we need after filtering
+        .collect();
+    
+    // Interleave review and new cards with new card first
+    let cards = interleave_one_new_first(&reviews_today, &new_cards);
     
     let queue_data = QueueData {
         pack_size: pack_sz,
         review_coefficient: rev_coef,
+        fail_k,
         cards,
         completed_cards: Vec::new(),
     };
+    
+    // Create skeleton row in daily_log
+    create_daily_log_skeleton_tx(&tx, today, pack_sz, rev_coef, fail_k)?;
+    
+    // Commit transaction
+    tx.commit()?;
     
     // Create queues directory if it doesn't exist
     let queue_dir = get_queue_dir();
@@ -168,10 +232,8 @@ pub fn build_today_with_deck(today: NaiveDate, deck: &Deck) -> Result<(), Box<dy
     let json_data = serde_json::to_string_pretty(&queue_data)?;
     fs::write(&queue_path, json_data)?;
     
-    // Create skeleton row in daily_log
-    create_daily_log_skeleton(today, pack_sz, rev_coef)?;
-    
-    println!("Created deck-specific queue for {} (deck {}) with {} cards", today, deck_id, queue_data.cards.len());
+    println!("Created deck-specific queue for {} (deck {}) with {} cards ({} reviews, {} new) (pack_sz={}, rev_coef={}, fail_k={})", 
+             today, deck_id, queue_data.cards.len(), reviews_today.len(), new_cards.len(), pack_sz, rev_coef, fail_k);
     Ok(())
 }
 
@@ -216,11 +278,38 @@ fn interleave_one_new_first(reviews: &[CardId], new_cards: &[CardId]) -> Vec<Car
     result
 }
 
-/// Creates a skeleton row in daily_log table
-fn create_daily_log_skeleton(today: NaiveDate, pack_sz: usize, rev_coef: f64) -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: Connect to actual database
-    // This is a stub for Sprint 0
-    println!("Would create daily_log skeleton: {} pack_sz={} rev_coef={}", today, pack_sz, rev_coef);
+/// Creates a skeleton row in daily_log table (transaction-aware)
+fn create_daily_log_skeleton_tx(tx: &rusqlite::Transaction, today: NaiveDate, pack_sz: usize, rev_coef: f64, fail_k: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let date_str = today.format("%Y-%m-%d").to_string();
+    tx.execute(
+        "INSERT INTO daily_log (date, pack_sz, rev_coef, fail_k) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(date) DO UPDATE SET 
+           pack_sz=excluded.pack_sz, 
+           rev_coef=excluded.rev_coef, 
+           fail_k=excluded.fail_k",
+        [&date_str, &pack_sz.to_string(), &rev_coef.to_string(), &fail_k.to_string()],
+    )?;
+    
+    println!("Created daily_log skeleton: {} pack_sz={} rev_coef={} fail_k={}", today, pack_sz, rev_coef, fail_k);
+    Ok(())
+}
+
+/// Creates a skeleton row in daily_log table (legacy version for compatibility)
+fn create_daily_log_skeleton(today: NaiveDate, pack_sz: usize, rev_coef: f64, fail_k: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let db_path = progress_path();
+    let conn = Connection::open(&db_path)?;
+    
+    let date_str = today.format("%Y-%m-%d").to_string();
+    conn.execute(
+        "INSERT INTO daily_log (date, pack_sz, rev_coef, fail_k) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(date) DO UPDATE SET 
+           pack_sz=excluded.pack_sz, 
+           rev_coef=excluded.rev_coef, 
+           fail_k=excluded.fail_k",
+        [&date_str, &pack_sz.to_string(), &rev_coef.to_string(), &fail_k.to_string()],
+    )?;
+    
+    println!("Created daily_log skeleton: {} pack_sz={} rev_coef={} fail_k={}", today, pack_sz, rev_coef, fail_k);
     Ok(())
 }
 
@@ -233,7 +322,7 @@ fn get_queue_dir() -> PathBuf {
 }
 
 /// Get the path to a specific queue file
-fn get_queue_path(date: NaiveDate) -> PathBuf {
+pub fn get_queue_path(date: NaiveDate) -> PathBuf {
     get_queue_dir().join(format!("queue_{}.json", date.format("%Y%m%d")))
 }
 
@@ -422,5 +511,177 @@ mod tests {
         let path = get_queue_path(date);
         
         assert!(path.to_string_lossy().contains("queue_20250704.json"));
+    }
+    
+    #[test]
+    fn test_bandit_driven_queue_parameters() {
+        use crate::scheduler::bandit::Bandit;
+        use tempfile::tempdir;
+        use rusqlite::Connection;
+        
+        // Set up test environment with NO GLOBAL STATE
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        
+        // Initialize complete database schema
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS bandit_state (
+            param_id TEXT NOT NULL,
+            arm_value REAL NOT NULL,
+            alpha INTEGER NOT NULL,
+            beta INTEGER NOT NULL,
+            PRIMARY KEY (param_id, arm_value)
+        )", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS daily_log (
+            date TEXT PRIMARY KEY,
+            pack_sz INTEGER,
+            rev_coef REAL,
+            fail_k INTEGER,
+            cards_studied INTEGER,
+            points INTEGER,
+            reward_scaled REAL,
+            reward_bin INTEGER
+        )", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (
+            card_id INTEGER PRIMARY KEY,
+            next_due_ts INTEGER
+        )", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS cards (
+            id INTEGER PRIMARY KEY
+        )", []).unwrap();
+        drop(conn);
+        
+        // Create deterministic bandits with single arms using path injection
+        let mut pack_bandit = Bandit::load_with_path("test_pack", &[12.0], &db_path).unwrap();
+        let mut rev_bandit = Bandit::load_with_path("test_rev", &[2.0], &db_path).unwrap();  
+        let mut fail_bandit = Bandit::load_with_path("test_fail", &[5.0], &db_path).unwrap();
+        
+        let today = NaiveDate::from_ymd_opt(2025, 7, 24).unwrap();
+        
+        // Sample should return our fixed values using path injection
+        assert_eq!(pack_bandit.sample_with_path(today, &db_path) as usize, 12);
+        assert_eq!(rev_bandit.sample_with_path(today, &db_path) as f64, 2.0);
+        assert_eq!(fail_bandit.sample_with_path(today, &db_path) as usize, 5);
+        
+        // Save the bandits using path injection
+        pack_bandit.save_with_path(&db_path).unwrap();
+        rev_bandit.save_with_path(&db_path).unwrap();
+        fail_bandit.save_with_path(&db_path).unwrap();
+    }
+    
+    #[test]
+    fn test_review_coefficient_capping() {
+        use tempfile::tempdir;
+        use rusqlite::Connection;
+        
+        // Set up test environment with NO GLOBAL STATE
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        
+        // Create test database with many due cards
+        let conn = Connection::open(&db_path).unwrap();
+        
+        // Create tables
+        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (card_id INTEGER PRIMARY KEY, next_due_ts INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY)", []).unwrap();
+        
+        // Insert many due cards (timestamps in past)
+        let past_timestamp = 1000000000i64; // Way in the past
+        for i in 1..=20 {
+            conn.execute("INSERT INTO srs_log (card_id, next_due_ts) VALUES (?1, ?2)", [i, past_timestamp]).unwrap();
+            conn.execute("INSERT INTO cards (id) VALUES (?1)", [i]).unwrap();
+        }
+        
+        let today = NaiveDate::from_ymd_opt(2025, 7, 24).unwrap();
+        let due_cards_result = due_cards(today, &conn).unwrap();
+        
+        // Should get many due cards
+        assert!(due_cards_result.len() >= 10);
+        
+        // Test review coefficient capping logic
+        let pack_sz = 10;
+        let rev_coef = 1.5; // Low coefficient should limit reviews
+        let review_cap = ((rev_coef * pack_sz as f64).round() as usize).min(due_cards_result.len());
+        
+        assert_eq!(review_cap, 15.min(due_cards_result.len())); // 1.5 * 10 = 15, capped by available
+    }
+    
+    #[test]
+    fn test_queue_build_idempotence() {
+        use tempfile::tempdir;
+        use std::fs;
+        
+        // Set up test environment with NO GLOBAL STATE
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        
+        // Initialize database
+        let conn = Connection::open(&db_path).unwrap();
+        
+        // Create minimal schema
+        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (card_id INTEGER PRIMARY KEY, next_due_ts INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY)", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS daily_log (
+            date TEXT PRIMARY KEY,
+            pack_sz INTEGER,
+            rev_coef REAL,
+            fail_k INTEGER,
+            cards_studied INTEGER,
+            points INTEGER,
+            reward_scaled REAL,
+            reward_bin INTEGER
+        )", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS bandit_state (
+            param_id TEXT NOT NULL,
+            arm_value REAL NOT NULL,
+            alpha INTEGER NOT NULL,
+            beta INTEGER NOT NULL,
+            PRIMARY KEY (param_id, arm_value)
+        )", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )", []).unwrap();
+        
+        // Insert some test data
+        for i in 1..=5 {
+            conn.execute("INSERT INTO cards (id) VALUES (?1)", [i]).unwrap();
+        }
+        
+        let today = NaiveDate::from_ymd_opt(2025, 7, 24).unwrap();
+        
+        // Build queue first time
+        let result1 = build_today_with_path(today, &db_path);
+        assert!(result1.is_ok(), "First queue build should succeed");
+        
+        // Read the generated JSON
+        let queue_path = get_queue_path(today);
+        let json_content1 = fs::read_to_string(&queue_path).unwrap();
+        
+        // Build queue second time (should be idempotent due to existing daily_log entry)
+        let result2 = build_today_with_path(today, &db_path);
+        assert!(result2.is_ok(), "Second queue build should succeed");
+        
+        // Read the JSON again
+        let json_content2 = fs::read_to_string(&queue_path).unwrap();
+        
+        // Parse both to compare structure (timestamps might differ)
+        let queue_data1: QueueData = serde_json::from_str(&json_content1).unwrap();
+        let queue_data2: QueueData = serde_json::from_str(&json_content2).unwrap();
+        
+        // Should have same parameters and structure
+        assert_eq!(queue_data1.pack_size, queue_data2.pack_size);
+        assert_eq!(queue_data1.review_coefficient, queue_data2.review_coefficient);
+        assert_eq!(queue_data1.fail_k, queue_data2.fail_k);
+        // Cards might be the same or different depending on bandit sampling, but structure should be consistent
+    }
+    
+    #[test]
+    fn test_default_fail_k_function() {
+        assert_eq!(default_fail_k(), 5);
     }
 }

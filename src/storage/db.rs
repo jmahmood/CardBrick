@@ -7,6 +7,7 @@ use std::path::Path;
 use chrono;
 
 use crate::deck::Card;
+use std::path::PathBuf;
 
 pub struct DatabaseManager {
     conn: Connection,
@@ -120,8 +121,20 @@ impl DatabaseManager {
             [],
         )?;
 
+        // Bandit state table for Thompson sampling
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS bandit_state (
+                param_id TEXT NOT NULL,
+                arm_value REAL NOT NULL,
+                alpha INTEGER NOT NULL,
+                beta INTEGER NOT NULL,
+                PRIMARY KEY (param_id, arm_value)
+            )",
+            [],
+        )?;
+
         // Set database version
-        self.conn.execute("PRAGMA user_version = 1", [])?;
+        self.conn.execute("PRAGMA user_version = 2", [])?;
 
         Ok(())
     }
@@ -264,4 +277,12 @@ impl DatabaseManager {
         
         Ok(ratings)
     }
+}
+
+/// Get the path to the progress database file
+pub fn progress_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cardbrick")
+        .join("progress.db")
 }

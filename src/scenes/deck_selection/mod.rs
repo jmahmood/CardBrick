@@ -40,8 +40,8 @@ impl DeckSelectionState {
 
     /// Updates the character animation state
     pub fn update(&mut self, delta_time: f32) {
-        const FRAME_DURATION: f32 = 0.25;
-        const NUM_FRAMES: usize = 4;
+        const FRAME_DURATION: f32 = 0.1; // Faster animation for jumping
+        const NUM_FRAMES: usize = 10; // Upward Jump sprite has 10 frames
         
         self.character_anim_timer += delta_time;
         if self.character_anim_timer >= FRAME_DURATION {
@@ -120,11 +120,19 @@ pub fn draw_deck_selection_scene(
 
     // 2. Draw Animated Character (if assets are loaded)
     if let Some(assets) = ui_assets {
+        // Calculate frame dimensions from the loaded texture
+        let texture_height = assets.character_sprite.height();
+        
+        // Use integer frame width to avoid alignment issues
+        // 1408 pixels ÷ 10 frames = 140.8, so use 140 pixels per frame
+        let frame_width = 140.0; // Fixed frame width based on sprite sheet
+        let frame_height = texture_height; // Single row (128 pixels)
+        
         let source_rect = Rect::new(
-            state.character_current_frame as f32 * 4.0,  // Each frame is 4 pixels wide
+            state.character_current_frame as f32 * frame_width,
             0.0,
-            4.0,  // Source width: 4 pixels
-            4.0,  // Source height: 4 pixels
+            frame_width,
+            frame_height,
         );
         
         let (char_screen_x, char_screen_y) = canvas_manager.logical_to_screen(CHARACTER_POS.0, CHARACTER_POS.1);

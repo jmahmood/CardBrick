@@ -568,7 +568,10 @@ impl CardBrickApp {
 
                 // Load UI assets once when entering deck selection
                 if self.app_state.ui_assets.is_none() {
-                    if let Ok(assets) = UiAssets::load() {
+                    // Since we can't await in a sync function, we'll use futures::executor::block_on
+                    // This is acceptable for asset loading during state transitions
+                    let assets_dir = &self.app_state.config.assets_dir;
+                    if let Ok(assets) = futures::executor::block_on(UiAssets::load(assets_dir)) {
                         self.app_state.ui_assets = Some(assets);
                     }
                 }
