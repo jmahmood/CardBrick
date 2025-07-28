@@ -5,8 +5,9 @@ use crate::debug::Tracer;
 use crate::ui::FontManager;
 use crate::scheduler::queue::{self};
 use crate::scheduler::bandit;
-use crate::config::PACK_SIZE_DEFAULT;
-use super::{StudyingState, StudyingScreenMode};
+use crate::scheduler::{points, Rating, sm2};
+use crate::config::{PACK_SIZE_DEFAULT, DAILY_GOAL_POINTS};
+use super::{StudyingState, StudyingScreenMode, haptics};
 use chrono::{Utc, NaiveDate};
 use macroquad::prelude::*;
 // use rand::seq::SliceRandom; // We moved this logic into the db.
@@ -31,9 +32,19 @@ pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_f
         // Normal path - we have a card to show
         state.mode = StudyingScreenMode::InProgress;
         state.is_done = false;
+        state.is_answer_revealed = false;
+        
+        // Reset flip time - will be set when answer is revealed
+        state.card_flip_time = None;
+        
         load_card_layouts(state, &card, font, small_font);
     } else {
         // ===== Session finished =====
+        // Sprint 3: Finalize session with points, database updates, and bandit rewards
+        if let Err(e) = finalize_study_session(state) {
+            eprintln!("Warning: Failed to finalize study session: {}", e);
+        }
+        
         state.mode = StudyingScreenMode::SessionComplete;
         state.is_done = true;
 
@@ -47,8 +58,13 @@ pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_f
         state.hint_layout = None;
         state.done_layout = None;
 
-        // 2. Build banner layout once
-        let spans = html_parser::parse_html_to_spans("Daily goal complete! 🎯");
+        // 2. Build banner layout with points information
+        let banner_text = if state.points_today >= DAILY_GOAL_POINTS {
+            format!("Daily goal complete! 🎯\n{} points achieved!", state.points_today)
+        } else {
+            format!("Session complete!\n{} points earned", state.points_today)
+        };
+        let spans = html_parser::parse_html_to_spans(&banner_text);
         state.banner_layout = small_font.layout_text_binary(&spans, 380, false).ok();
 
         // 3. Kick off animation timer (seconds since app start)
@@ -209,6 +225,216 @@ fn finalize_daily_log(date: NaiveDate, points: i64, reward: bool) -> Result<(), 
     
     println!("💾 Finalized daily_log for {}: {} cards, {} points, reward: {}", 
              date, cards_studied, points, reward);
+    
+    Ok(())
+}
+
+/// Handles card rating with complete point-accounting system
+pub fn handle_card_rating(
+    state: &mut StudyingState, 
+    card_id: i64, 
+    rating: Rating, 
+    font: &mut FontManager
+) -> Result<(), Box<dyn std::error::Error>> {
+    let timestamp = chrono::Utc::now().timestamp();
+    
+    // Get current ease factor for difficulty calculation
+    let ease_factor = if let Some(card) = &state.current_card {
+        card.ease_factor
+    } else {
+        2500 // Default ease factor if no current card
+    };
+    
+    // Apply SM-2 rating to database (updates srs_log table)
+    sm2::apply_rating(card_id, rating, timestamp)?;
+    
+    // Apply rating to scheduler (updates in-memory card)
+    if let Some(_updated_card) = state.scheduler.answer_card(card_id, rating) {
+        // Calculate response time for speed bonus
+        let response_time = if let Some(flip_time) = state.card_flip_time {
+            (get_time() - flip_time as f64) as f32
+        } else {
+            10.0 // Default to slow if no flip time recorded
+        };
+        
+        // Calculate combo bonus and update combo state
+        let (new_combo, cb) = points::combo_bonus(state.current_combo, rating);
+        state.current_combo = new_combo;
+        
+        // Calculate all point components
+        let bp = points::base_points(rating);
+        let df = points::difficulty_factor(ease_factor);
+        let sb = points::speed_bonus(response_time);
+        let pa = points::calculate_points_awarded(rating, ease_factor, cb, sb);
+        
+        // Update session state
+        state.points_today += pa;
+        state.cards_completed_today += 1;
+        if rating == Rating::Again {
+            state.session_has_again = true;
+        }
+        
+        // Record complete study event in database
+        state.db_manager.record_study_event(card_id, timestamp, bp, df, cb, sb, pa)?;
+        
+        // Update profile scores
+        state.db_manager.update_profile_scores(pa)?;
+        
+        println!("📊 Points: BP={} × DF={} + CB={} + SB={} = PA={} (combo={}, time={:.1}s)", 
+                bp, df, cb, sb, pa, new_combo, response_time);
+        
+        // Check if goal is achieved for the first time
+        if !state.goal_achieved && state.points_today >= DAILY_GOAL_POINTS {
+            state.goal_achieved = true;
+            trigger_goal_splash(state, font)?;
+        }
+        
+        // Record rating in database for progress tracking
+        record_daily_rating(card_id, rating, timestamp)?;
+        
+        // Auto-save progress (S3-7 requirement)
+        flush_database()?;
+        
+        println!("✅ Card {} rated {:?}, PA={}, total today: {}, combo: {}", 
+                card_id, rating, pa, state.points_today, state.current_combo);
+    }
+    
+    Ok(())
+}
+
+/// Triggers the goal splash screen with haptic feedback and audio
+fn trigger_goal_splash(state: &mut StudyingState, font: &mut FontManager) -> Result<(), Box<dyn std::error::Error>> {
+    // Switch to goal splash mode
+    state.mode = StudyingScreenMode::GoalSplash;
+    state.goal_splash_started = Some(get_time() as f32);
+    
+    // Create goal achievement banner
+    let goal_text = format!("🎯 Goal Met! {} points achieved!", state.points_today);
+    let spans = html_parser::parse_html_to_spans(&goal_text);
+    state.banner_layout = font.layout_text_binary(&spans, 380, false).ok();
+    
+    // Trigger haptic feedback
+    haptics::short_rumble();
+    
+    // TODO: Play goal chime audio (requires audio module integration)
+    // audio::play_sound(GOAL_CHIME_WAV)?;
+    
+    println!("🎯 GOAL ACHIEVED! {} points reached - triggering splash screen", state.points_today);
+    
+    Ok(())
+}
+
+/// Records a daily rating in the database for progress tracking
+fn record_daily_rating(card_id: i64, rating: Rating, timestamp: i64) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::storage::db::progress_path;
+    use rusqlite::Connection;
+    
+    let db_path = progress_path();
+    let conn = Connection::open(&db_path)?;
+    
+    let date = chrono::Utc::now().date_naive();
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let rating_str = match rating {
+        Rating::Again => "Again",
+        Rating::Hard => "Hard", 
+        Rating::Good => "Good",
+        Rating::Easy => "Easy",
+    };
+    
+    conn.execute(
+        "INSERT INTO daily_ratings (card_id, rating, timestamp, date) VALUES (?1, ?2, ?3, ?4)",
+        [card_id.to_string(), rating_str.to_string(), timestamp.to_string(), date_str],
+    )?;
+    
+    Ok(())
+}
+
+/// Flushes database changes to disk for auto-save protection
+fn flush_database() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::storage::db::progress_path;
+    use rusqlite::Connection;
+    
+    let db_path = progress_path();
+    let conn = Connection::open(&db_path)?;
+    
+    // Force WAL checkpoint to ensure data is written to disk
+    conn.execute("PRAGMA wal_checkpoint(FULL)", [])?;
+    
+    Ok(())
+}
+
+/// Updates the goal splash screen state and handles auto-transition
+pub fn update_goal_splash(state: &mut StudyingState) {
+    if let Some(start_time) = state.goal_splash_started {
+        let elapsed = get_time() as f32 - start_time;
+        
+        // Auto-transition back to studying after 2 seconds
+        if elapsed > 2.0 {
+            state.mode = StudyingScreenMode::InProgress;
+            state.goal_splash_started = None;
+            
+            // Clear goal splash layouts
+            if state.mode == StudyingScreenMode::InProgress {
+                // Banner layout will be cleared when next card loads
+            }
+        }
+    }
+}
+
+/// Finalizes the study session by updating daily_log and applying bandit rewards
+pub fn finalize_study_session(state: &mut StudyingState) -> Result<(), Box<dyn std::error::Error>> {
+    let today = chrono::Utc::now().date_naive();
+    
+    // Calculate final session metrics
+    let cards_studied = state.scheduler.reviews_complete();
+    let points_earned = state.points_today;
+    let reward_achieved = points_earned >= DAILY_GOAL_POINTS;
+    
+    println!("🏁 Finalizing session: {} cards studied, {} points, goal achieved: {}", 
+             cards_studied, points_earned, reward_achieved);
+    
+    // Update daily_log with final session data
+    let date_str = today.format("%Y-%m-%d").to_string();
+    let reward_bin = if reward_achieved { 1 } else { 0 };
+    let reward_scaled = (points_earned as f64 / DAILY_GOAL_POINTS as f64).min(1.0);
+    
+    use crate::storage::db::progress_path;
+    use rusqlite::Connection;
+    
+    let db_path = progress_path();
+    let conn = Connection::open(&db_path)?;
+    
+    // Update daily_log with session completion data
+    conn.execute(
+        "UPDATE daily_log SET cards_studied = ?1, points = ?2, reward_scaled = ?3, reward_bin = ?4 WHERE date = ?5",
+        [cards_studied as i64, points_earned as i64, reward_scaled as i64, reward_bin as i64, 0], // Note: will be converted to strings in the actual call
+    )?;
+    
+    // Alternative approach using string parameters to match existing schema
+    conn.execute(
+        "INSERT OR REPLACE INTO daily_log (date, cards_studied, points, reward_scaled, reward_bin) 
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(date) DO UPDATE SET 
+           cards_studied = excluded.cards_studied,
+           points = excluded.points,
+           reward_scaled = excluded.reward_scaled,
+           reward_bin = excluded.reward_bin",
+        [
+            &date_str,
+            &cards_studied.to_string(),
+            &points_earned.to_string(), 
+            &reward_scaled.to_string(),
+            &reward_bin.to_string()
+        ],
+    )?;
+    
+    // Apply bandit rewards for today's chosen parameters
+    bandit::apply_reward(today, reward_achieved)?;
+    
+    // Force database flush for persistence 
+    flush_database()?;
+    
+    println!("💾 Session finalized: daily_log updated, bandit rewards applied");
     
     Ok(())
 }

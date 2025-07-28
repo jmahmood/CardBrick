@@ -523,6 +523,7 @@ impl CardBrickApp {
             GameState::MainMenu(_) => scenes::main_menu::input::handle_main_menu_input(&mut self.app_state, input),
             GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(&mut self.app_state, input),
             GameState::Studying(_) => scenes::studying::input::handle_studying_input(&mut self.app_state, input),
+            GameState::Progress(_) => scenes::progress::input::handle_progress_input(&mut self.app_state, input),
             _ => Ok(()),
         }
     }
@@ -539,6 +540,10 @@ impl CardBrickApp {
                             
                             let scheduler = Box::new(Sm2Scheduler::new(deck));
                             println!("🎯 [{}ms] Scheduler created", start_time.elapsed().as_millis());
+                            
+                            // Initialize progress database with all required tables
+                            crate::storage::db::init_progress_database().map_err(|e| e.to_string())?;
+                            println!("🎯 [{}ms] Progress database initialized", start_time.elapsed().as_millis());
                             
                             let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
                             println!("🎯 [{}ms] DatabaseManager created", start_time.elapsed().as_millis());
@@ -612,6 +617,14 @@ impl CardBrickApp {
                     &self.app_state.small_font_manager,
                     &self.app_state.hint_font_manager,
                     &mut self.app_state.sprite,
+                    &self.app_state.canvas_manager,
+                )
+            },
+            GameState::Progress(progress_state) => {
+                scenes::progress::draw_progress_scene(
+                    progress_state,
+                    &self.app_state.font_manager,
+                    &self.app_state.small_font_manager,
                     &self.app_state.canvas_manager,
                 )
             },

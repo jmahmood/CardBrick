@@ -3,12 +3,14 @@
 use crate::state::{BrickInput, BrickButton, AppState, GameState};
 use crate::deck::html_parser;
 use crate::scheduler::Rating;
-use super::logic::{load_card_layouts, load_next_card, continue_studying};
+use super::logic::{load_card_layouts, load_next_card, continue_studying, handle_card_rating, update_goal_splash};
 use super::{StudyingState, StudyingScreenMode};
 
 /// Handles input events for the studying scene - ported from SDL2 to pure evdev
 pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<(), String> {
     if let GameState::Studying(studying_state) = &mut state.game_state {
+        // Update goal splash auto-transition
+        update_goal_splash(studying_state);
         match input {
             // DPad Down: Reveal answer, scroll down, or scroll detail view
             BrickInput::ButtonDown(BrickButton::DPadDown) => {
@@ -27,6 +29,10 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                         } else {
                             // Reveal the answer
                             studying_state.is_answer_revealed = true;
+                            
+                            // Record flip time for speed bonus calculation
+                            studying_state.card_flip_time = Some(macroquad::time::get_time() as f32);
+                            
                             let margin: u32 = 30;
                             let hint_spans = html_parser::parse_html_to_spans("A:Good B:Again X:Easy Y:Hard [LB:Rewind] [RB:Ruby]");
                             studying_state.hint_layout = Some(state.hint_font_manager.layout_text_binary(&hint_spans, state.config.window_width / 2 - margin * 2, studying_state.show_ruby_text)?);
@@ -67,6 +73,11 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                             rate_card_and_continue(studying_state, Rating::Good, &mut state.font_manager, &mut state.small_font_manager)?;
                         }
                     },
+                    StudyingScreenMode::GoalSplash => {
+                        // Skip goal splash and return to studying
+                        studying_state.mode = StudyingScreenMode::InProgress;
+                        studying_state.goal_splash_started = None;
+                    },
                     StudyingScreenMode::SessionComplete => {
                         // User wants to continue studying beyond daily goal
                         continue_studying(studying_state, &mut state.font_manager, &mut state.small_font_manager);
@@ -87,6 +98,11 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                         if studying_state.is_answer_revealed {
                             rate_card_and_continue(studying_state, Rating::Again, &mut state.font_manager, &mut state.small_font_manager)?;
                         }
+                    },
+                    StudyingScreenMode::GoalSplash => {
+                        // Skip goal splash and return to studying  
+                        studying_state.mode = StudyingScreenMode::InProgress;
+                        studying_state.goal_splash_started = None;
                     },
                     StudyingScreenMode::SessionComplete | StudyingScreenMode::ExhaustedDeck => {
                         // User wants to return to deck selection
@@ -167,46 +183,51 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
     Ok(())
 }
 
-/// Helper function to rate a card and proceed to the next one
+/// Helper function to rate a card and proceed to the next one - Sprint 3 version with points tracking
 fn rate_card_and_continue(
     studying_state: &mut StudyingState,
     rating: Rating,
     font_manager: &mut crate::ui::FontManager,
     small_font_manager: &mut crate::ui::FontManager,
 ) -> Result<(), String> {
-    if let Some(card) = &studying_state.current_card {
-        if let Some(updated_card) = studying_state.scheduler.answer_card(card.id, rating) {
-            // Record ALL ratings for daily progress bar visualization
-            let rating_str = match rating {
-                crate::scheduler::Rating::Easy => "Easy",
-                crate::scheduler::Rating::Good => "Good", 
-                crate::scheduler::Rating::Hard => "Hard",
-                crate::scheduler::Rating::Again => "Again",
-            };
-            if let Err(e) = studying_state.db_manager.record_daily_rating(card.id, rating_str) {
-                eprintln!("Warning: Failed to record daily rating: {}", e);
-            }
-            
-            // Also record difficult cards for prioritization in future sessions
-            match rating {
-                crate::scheduler::Rating::Again => {
-                    if let Err(e) = studying_state.db_manager.record_difficult_card(card.id, "failed") {
-                        eprintln!("Warning: Failed to record difficult card: {}", e);
-                    }
-                }
-                crate::scheduler::Rating::Hard => {
-                    if let Err(e) = studying_state.db_manager.record_difficult_card(card.id, "hard") {
-                        eprintln!("Warning: Failed to record difficult card: {}", e);
-                    }
-                }
-                _ => {} // Good and Easy ratings don't need recording for difficult_cards table
-            }
-            
-            studying_state.replay_logger.log_action(&updated_card, rating).map_err(|e| e.to_string())?;
-            studying_state.db_manager.update_card_state(&updated_card).map_err(|e| e.to_string())?;
-        }
+    let card_id = if let Some(card) = &studying_state.current_card {
+        card.id
+    } else {
+        return Ok(());
+    };
+    
+    // Use new Sprint 3 logic for handling card rating with points and goal detection
+    if let Err(e) = handle_card_rating(studying_state, card_id, rating, font_manager) {
+        eprintln!("Warning: Failed to handle card rating: {}", e);
     }
-    load_next_card(studying_state, font_manager, small_font_manager);
+    
+    // Legacy integrations for existing systems - record difficult cards for prioritization
+    match rating {
+        crate::scheduler::Rating::Again => {
+            if let Err(e) = studying_state.db_manager.record_difficult_card(card_id, "failed") {
+                eprintln!("Warning: Failed to record difficult card: {}", e);
+            }
+        }
+        crate::scheduler::Rating::Hard => {
+            if let Err(e) = studying_state.db_manager.record_difficult_card(card_id, "hard") {
+                eprintln!("Warning: Failed to record difficult card: {}", e);
+            }
+        }
+        _ => {}
+    }
+    
+    // Get updated card state from current_card for legacy systems logging
+    if let Some(ref card_after_rating) = studying_state.current_card {
+        // Legacy systems
+        studying_state.replay_logger.log_action(card_after_rating, rating).map_err(|e| e.to_string())?;
+        studying_state.db_manager.update_card_state(card_after_rating).map_err(|e| e.to_string())?;
+    }
+    
+    // Only load next card if we're not in goal splash mode
+    if studying_state.mode != StudyingScreenMode::GoalSplash {
+        load_next_card(studying_state, font_manager, small_font_manager);
+    }
+    
     Ok(())
 }
 

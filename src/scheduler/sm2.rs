@@ -5,9 +5,11 @@
 use crate::config::PACK_SIZE_DEFAULT;
 use crate::deck::{Card, Deck, Note};
 use crate::scheduler::queue;
+use crate::storage::db::progress_path;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use chrono::Utc;
+use rusqlite::Connection;
 
 
 /// Represents the user's rating for a card.
@@ -17,6 +19,88 @@ pub enum Rating {
     Hard,
     Good,
     Easy,
+}
+
+/// Applies SM-2 algorithm with database persistence for a card rating
+/// Updates srs_log table with new interval, ease factor, repetitions, and next due date
+pub fn apply_rating(card_id: i64, quality: Rating, timestamp: i64) -> Result<(), Box<dyn std::error::Error>> {
+    let db_path = progress_path();
+    apply_rating_with_path(card_id, quality, timestamp, &db_path)
+}
+
+/// Applies SM-2 algorithm with explicit database path - supports dependency injection
+pub fn apply_rating_with_path(card_id: i64, quality: Rating, timestamp: i64, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = Connection::open(db_path)?;
+    
+    // Get current card state from srs_log, or create new entry
+    let mut stmt = conn.prepare(
+        "SELECT interval, ease_factor, reps, lapses FROM srs_log WHERE card_id = ?1"
+    )?;
+    
+    let (mut interval, mut ease_factor, mut reps, mut lapses) = match stmt.query_row([card_id], |row| {
+        Ok((
+            row.get::<_, Option<i64>>(0)?.unwrap_or(0) as u32,
+            row.get::<_, Option<i64>>(1)?.unwrap_or(2500) as u32,
+            row.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
+            row.get::<_, Option<i64>>(3)?.unwrap_or(0) as u32,
+        ))
+    }) {
+        Ok(values) => values,
+        Err(_) => (0, 2500, 0, 0), // New card defaults
+    };
+    
+    // Apply SM-2 algorithm based on quality rating
+    match quality {
+        Rating::Again => {
+            lapses += 1;
+            ease_factor = (ease_factor as i32 - 200).max(1300) as u32; // Clamp minimum ease to 1.3
+            interval = 1; // Reset interval to 1 day
+            reps = 0; // Reset repetition count
+        }
+        Rating::Hard => {
+            ease_factor = (ease_factor as i32 - 150).max(1300) as u32; // Clamp minimum ease to 1.3
+            reps += 1;
+            interval = if interval == 0 {
+                1
+            } else {
+                ((interval as f32 * 1.2).round() as u32).max(interval + 1)
+            };
+        }
+        Rating::Good => {
+            reps += 1;
+            interval = if interval == 0 {
+                1
+            } else if interval == 1 {
+                6 // Standard SM-2: second interval is 6 days
+            } else {
+                let ease_multiplier = ease_factor as f32 / 1000.0;
+                ((interval as f32 * ease_multiplier).round() as u32).max(interval + 1)
+            };
+        }
+        Rating::Easy => {
+            ease_factor = (ease_factor as i32 + 150).min(2500) as u32; // Clamp maximum ease to 2.5
+            reps += 1;
+            interval = if interval == 0 {
+                4 // Easy first rating gets 4 days
+            } else {
+                let ease_multiplier = ease_factor as f32 / 1000.0;
+                let easy_bonus = 1.3;
+                ((interval as f32 * ease_multiplier * easy_bonus).round() as u32).max(interval + 1)
+            };
+        }
+    }
+    
+    // Calculate next due timestamp (today + interval days)
+    let next_due_ts = timestamp + (interval as i64 * 24 * 60 * 60);
+    
+    // Update or insert srs_log entry
+    conn.execute(
+        "INSERT OR REPLACE INTO srs_log (card_id, interval, ease_factor, reps, lapses, next_due_ts)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        [card_id, interval as i64, ease_factor as i64, reps as i64, lapses as i64, next_due_ts],
+    )?;
+    
+    Ok(())
 }
 
 

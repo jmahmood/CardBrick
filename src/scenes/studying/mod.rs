@@ -8,11 +8,13 @@ use crate::ui::{FontManager, CanvasManager, font::TextLayout, sprite::Sprite};
 
 pub mod input;
 pub mod logic;
+pub mod haptics;
 
 /// How we render the studying scene
 #[derive(Debug, Clone, PartialEq)]
 pub enum StudyingScreenMode {
     InProgress,          // normal Q&A flow
+    GoalSplash,          // goal achieved banner with fade-in overlay
     SessionComplete,     // daily goal banner shown
     ExhaustedDeck,       // no more cards in deck banner
     SessionDetails,      // detailed view of challenging cards from this session
@@ -41,11 +43,27 @@ pub struct StudyingState<'a> {
     pub banner_started: Option<f32>,   // animation timer
     pub detail_layouts: Vec<TextLayout>,  // layouts for challenging cards detail view
     pub detail_scroll_offset: i32,       // scroll offset for detail view
+    // Sprint 3 additions for points tracking
+    pub points_today: i32,             // accumulated points for today's session
+    pub goal_achieved: bool,           // whether daily goal has been reached
+    pub goal_splash_started: Option<f32>, // goal splash animation timer
+    
+    // Complete point-accounting system fields
+    pub current_combo: i32,            // consecutive correct answers (Good/Easy)
+    pub card_flip_time: Option<f32>,   // time when card was flipped (for speed bonus)
+    pub session_has_again: bool,       // track if any "Again" was pressed (for perfect session bonus)
+    pub cards_completed_today: i32,    // total cards completed in today's session
 }
 
 impl<'a> StudyingState<'a> {
     /// Creates a new StudyingState.
     pub fn new(scheduler: Box<dyn Scheduler + 'a>, db_manager: DatabaseManager, replay_logger: ReplayLogger) -> Self {
+        // Load today's existing points from the database
+        let points_today = db_manager.get_todays_points().unwrap_or(0);
+        let goal_achieved = points_today >= crate::config::DAILY_GOAL_POINTS;
+        
+        println!("📊 Starting session with {} points already earned today", points_today);
+        
         Self {
             is_done: false,
             mode: StudyingScreenMode::InProgress,
@@ -68,6 +86,13 @@ impl<'a> StudyingState<'a> {
             banner_started: None,
             detail_layouts: Vec::new(),
             detail_scroll_offset: 0,
+            points_today,
+            goal_achieved,
+            goal_splash_started: None,
+            current_combo: 0,
+            card_flip_time: None,
+            session_has_again: false,
+            cards_completed_today: 0,
         }
     }
 }
@@ -119,16 +144,9 @@ pub fn draw_studying_scene(
     let (logical_width, logical_height) = canvas_manager.logical_size();
     let scale = canvas_manager.scale_factor;
 
-    let mut clip_cam = Camera2D::from_display_rect(Rect::new(0., 0., logical_width * scale, logical_height * scale - (CONTENT_TOP + 10.0) * scale));
-
-    // B) CRITICAL FIX: Invert the camera's Y-axis. This prevents the text from being flipped upside down.
-    clip_cam.zoom.y = -clip_cam.zoom.y;
-
-    // C) Define the viewport on the SCREEN where the scrolling content should appear.
-    let (viewport_x, viewport_y) = canvas_manager.logical_to_screen(0.0, CONTENT_TOP);
-    let viewport_w = logical_width;
-    let viewport_h = logical_height - CONTENT_TOP;
-    clip_cam.viewport = Some((viewport_x as i32, viewport_y as i32, (viewport_w * scale) as i32, (viewport_h * scale - CONTENT_TOP * scale) as i32));
+    // Simple approach: just calculate the content area bounds for later use
+    let content_area_top = CONTENT_TOP + 40.0; // Start below score display
+    let content_area_bottom = logical_height - 60.0; // Leave space for help text
 
 
     // Draw progress bar
@@ -162,6 +180,29 @@ pub fn draw_studying_scene(
     // Draw animated sprite
     sprite.draw(canvas_manager)?;
     
+    // Draw on-screen score overlay (top-left corner)
+    if studying_state.mode == StudyingScreenMode::InProgress {
+        let score_text = format!("Score: {}/{}", studying_state.points_today, crate::config::DAILY_GOAL_POINTS);
+        let (score_w, score_h) = hint_font_manager.size_of_text(&score_text)?;
+        
+        // Draw semi-transparent background for score
+        let (bg_x, bg_y) = canvas_manager.logical_to_screen(10.0, BAR_HEIGHT + 10.0);
+        let bg_w = (score_w + 10) as f32 * canvas_manager.get_scale_factor();
+        let bg_h = (score_h + 6) as f32 * canvas_manager.get_scale_factor();
+        draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(0, 0, 0, 150));
+        
+        // Draw score text
+        let text_x = 15.0;
+        let text_y = BAR_HEIGHT + 13.0;
+        let hint_ascent = hint_font_manager.metrics().0;
+        hint_font_manager.draw_line_top_left(
+            &score_text,
+            text_x as i32,
+            text_y as i32 + hint_ascent as i32,
+            canvas_manager,
+        )?;
+    }
+    
     // Set clipping rectangle for scrollable content area - start after progress bar
     // canvas_manager.set_clip_rect(0, BAR_HEIGHT as i32, 512, (logical_height - BAR_HEIGHT) as u32);
     
@@ -183,14 +224,15 @@ pub fn draw_studying_scene(
                 };
                 
                 if let Some(layout) = layout_to_draw {
-                    let y_pos = CONTENT_TOP as i32 - studying_state.scroll_offset;
-                    set_camera(&clip_cam);
-                    font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
-                    set_default_camera(); // IMPORTANT – disable clipping afterwards
+                    let y_pos = content_area_top as i32 - studying_state.scroll_offset;
+                    // Only draw if the content is within the visible area
+                    if y_pos + layout.total_height > content_area_top as i32 && y_pos < content_area_bottom as i32 {
+                        font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
+                    }
                 }
             } else {
                 // Answer mode: Show small front + full back text with scrolling
-                let mut y_pos = CONTENT_TOP as i32 - studying_state.scroll_offset;
+                let mut y_pos = content_area_top as i32 - studying_state.scroll_offset;
                 
                 // Draw small front text
                 let small_front_layout_to_draw = if studying_state.show_ruby_text { 
@@ -200,11 +242,11 @@ pub fn draw_studying_scene(
                 };
                 
                 if let Some(layout) = small_front_layout_to_draw {
-                    set_camera(&clip_cam);
-                    small_font_manager.draw_layout(layout, margin as i32, y_pos + small_font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
+                    // Only draw if the content is within the visible area
+                    if y_pos + layout.total_height > content_area_top as i32 && y_pos < content_area_bottom as i32 {
+                        small_font_manager.draw_layout(layout, margin as i32, y_pos + small_font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
+                    }
                     y_pos += layout.total_height + 20;
-                    set_default_camera(); // IMPORTANT – disable clipping afterwards
-
                 }
                 
                 // Draw back text (the answer)
@@ -215,10 +257,10 @@ pub fn draw_studying_scene(
                 };
                 
                 if let Some(layout) = back_layout_to_draw {
-                    set_camera(&clip_cam);
-                    font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
-                    set_default_camera(); // IMPORTANT – disable clipping afterwards
-
+                    // Only draw if the content is within the visible area
+                    if y_pos + layout.total_height > content_area_top as i32 && y_pos < content_area_bottom as i32 {
+                        font_manager.draw_layout(layout, margin as i32, y_pos + font_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
+                    }
                 }
             }
             
@@ -230,7 +272,52 @@ pub fn draw_studying_scene(
                     hint_font_manager.draw_layout(hint_layout, margin as i32, hint_y as i32 + hint_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
                 }
             }
-            set_default_camera(); // IMPORTANT – disable clipping afterwards
+        },
+        
+        StudyingScreenMode::GoalSplash => {
+            // Goal achieved banner with fade-in animation
+            if let Some(layout) = &studying_state.banner_layout {
+                // Calculate fade-in alpha based on animation timer
+                let alpha = if let Some(start_time) = studying_state.goal_splash_started {
+                    let elapsed = get_time() as f32 - start_time;
+                    let fade_duration = 0.5; // 500ms fade-in
+                    (elapsed / fade_duration).min(1.0)
+                } else {
+                    1.0 // Fully visible if no animation timer
+                };
+                
+                // Draw semi-transparent overlay
+                let (bg_x, bg_y) = canvas_manager.logical_to_screen(0.0, 0.0);
+                let bg_w = 512.0 * canvas_manager.get_scale_factor();
+                let bg_h = logical_height * canvas_manager.get_scale_factor();
+                draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(0, 0, 0, (128.0 * alpha) as u8));
+                
+                // Draw goal achievement panel with fade-in
+                draw_retro_panel(canvas_manager, layout);
+                
+                // Draw goal text with alpha
+                let x_center = (512 - 380) / 2;
+                let y_center = (logical_height - layout.total_height as f32) / 2.0;
+                
+                // Set text alpha for fade-in effect
+                let old_alpha = WHITE.a;
+                let fade_color = Color::from_rgba(255, 255, 255, (old_alpha as f32 * alpha) as u8);
+                
+                font_manager.draw_layout(
+                    layout,
+                    x_center as i32,
+                    y_center as i32 + font_ascent as i32,
+                    studying_state.show_ruby_text,
+                    canvas_manager,
+                )?;
+                
+                // Auto-transition after 2 seconds
+                if let Some(start_time) = studying_state.goal_splash_started {
+                    if get_time() as f32 - start_time > 2.0 {
+                        // Note: State transition will be handled in logic.rs
+                    }
+                }
+            }
         },
         
         StudyingScreenMode::SessionComplete | StudyingScreenMode::ExhaustedDeck => {

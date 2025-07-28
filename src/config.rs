@@ -14,6 +14,10 @@ pub const BANDIT_DECAY_THRESHOLD: u32 = 200;
 pub const SMALL_FONT: &str = "PixelMplus10-Regular.ttf";
 pub const EMOJI_FONT: &str = "PixelMplus10-Regular.ttf";
 
+// Sprint 3 constants for study session and points
+pub const DAILY_GOAL_POINTS: i32 = 10;
+pub const GOAL_CHIME_WAV: &str = "assets/audio/goal_chime.wav";
+
 
 pub mod assets {
     // Small menu font for fast startup

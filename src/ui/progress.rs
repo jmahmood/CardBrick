@@ -3,7 +3,7 @@
 
 use crate::storage::db::progress_path;
 use chrono::NaiveDate;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone)]
 pub struct DailyProgress {

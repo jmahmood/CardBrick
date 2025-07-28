@@ -8,6 +8,7 @@ use crate::deck::Deck;
 use crate::scenes::deck_selection::DeckSelectionState;
 use crate::scenes::main_menu::MainMenuState;
 use crate::scenes::studying::StudyingState;
+use crate::scenes::progress::ProgressState;
 use crate::ui::font::TextLayout;
 use crate::ui::{CanvasManager, FontManager, sprite::Sprite};
 use rodio::{OutputStream, OutputStreamHandle, Decoder, Source};
@@ -41,6 +42,7 @@ pub enum GameState {
         deck_id_to_load: String,
     },
     Studying(StudyingState<'static>),
+    Progress(ProgressState),
     Error(String),
 }
 

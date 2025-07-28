@@ -26,7 +26,7 @@ pub fn draw_main_menu_scene(
     canvas_manager: &CanvasManager,
     state: &MainMenuState,
 ) -> Result<(), String> {
-    let options = ["Study", "Profile", "Quit"];
+    let options = ["Study", "Progress", "Quit"];
     
     // Draw background for logical canvas area
     let (logical_width, logical_height) = canvas_manager.logical_size();
