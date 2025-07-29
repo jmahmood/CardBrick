@@ -19,6 +19,9 @@ mod debug;
 mod scenes;
 mod state;
 
+#[cfg(test)]
+mod testing;
+
 use config::Config;
 use deck::scanner;
 use scheduler::{Scheduler, Sm2Scheduler};

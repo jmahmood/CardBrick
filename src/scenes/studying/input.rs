@@ -201,7 +201,7 @@ fn rate_card_and_continue(
         eprintln!("Warning: Failed to handle card rating: {}", e);
     }
     
-    // Legacy integrations for existing systems - record difficult cards for prioritization
+    // Record difficult cards for prioritization
     match rating {
         crate::scheduler::Rating::Again => {
             if let Err(e) = studying_state.db_manager.record_difficult_card(card_id, "failed") {
@@ -216,11 +216,9 @@ fn rate_card_and_continue(
         _ => {}
     }
     
-    // Get updated card state from current_card for legacy systems logging
+    // Log the action for replay analysis
     if let Some(ref card_after_rating) = studying_state.current_card {
-        // Legacy systems
         studying_state.replay_logger.log_action(card_after_rating, rating).map_err(|e| e.to_string())?;
-        studying_state.db_manager.update_card_state(card_after_rating).map_err(|e| e.to_string())?;
     }
     
     // Only load next card if we're not in goal splash mode

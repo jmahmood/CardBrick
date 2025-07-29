@@ -4,6 +4,8 @@
 pub mod db;
 pub mod models;
 pub mod replay_log;
+pub mod schema;
+pub mod connection;
 
 // Re-export the main structs for easier access.
 pub use self::db::DatabaseManager;

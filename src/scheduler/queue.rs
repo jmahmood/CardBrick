@@ -294,24 +294,6 @@ fn create_daily_log_skeleton_tx(tx: &rusqlite::Transaction, today: NaiveDate, pa
     Ok(())
 }
 
-/// Creates a skeleton row in daily_log table (legacy version for compatibility)
-fn create_daily_log_skeleton(today: NaiveDate, pack_sz: usize, rev_coef: f64, fail_k: usize) -> Result<(), Box<dyn std::error::Error>> {
-    let db_path = progress_path();
-    let conn = Connection::open(&db_path)?;
-    
-    let date_str = today.format("%Y-%m-%d").to_string();
-    conn.execute(
-        "INSERT INTO daily_log (date, pack_sz, rev_coef, fail_k) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(date) DO UPDATE SET 
-           pack_sz=excluded.pack_sz, 
-           rev_coef=excluded.rev_coef, 
-           fail_k=excluded.fail_k",
-        [&date_str, &pack_sz.to_string(), &rev_coef.to_string(), &fail_k.to_string()],
-    )?;
-    
-    println!("Created daily_log skeleton: {} pack_sz={} rev_coef={} fail_k={}", today, pack_sz, rev_coef, fail_k);
-    Ok(())
-}
 
 /// Get the path to the queue directory
 fn get_queue_dir() -> PathBuf {
@@ -381,33 +363,6 @@ pub fn mark_card_completed_for_deck_id(today: NaiveDate, card_id: CardId, deck_i
     Ok(())
 }
 
-/// Mark a card as completed in today's queue (legacy function - needs deck)
-pub fn mark_card_completed(today: NaiveDate, card_id: CardId) -> Result<(), Box<dyn std::error::Error>> {
-    // This is a fallback for compatibility - will need deck parameter in the future
-    println!("⚠️ Using legacy mark_card_completed - consider updating to mark_card_completed_for_deck");
-    let queue_path = get_queue_path(today);
-    
-    if !queue_path.exists() {
-        return Ok(()); // No queue exists, nothing to mark
-    }
-    
-    // Load existing queue
-    let mut queue_data: QueueData = serde_json::from_str(
-        &fs::read_to_string(&queue_path)?
-    )?;
-    
-    // Add to completed cards if not already there
-    if !queue_data.completed_cards.contains(&card_id) {
-        queue_data.completed_cards.push(card_id);
-        println!("✅ Marked card {} as completed", card_id);
-    }
-    
-    // Save updated queue
-    let json_data = serde_json::to_string_pretty(&queue_data)?;
-    fs::write(&queue_path, json_data)?;
-    
-    Ok(())
-}
 
 /// Get remaining (uncompleted) cards from today's deck-specific queue
 pub fn get_remaining_cards_for_deck(today: NaiveDate, deck: &Deck) -> Vec<CardId> {
@@ -445,40 +400,6 @@ pub fn get_remaining_cards_for_deck(today: NaiveDate, deck: &Deck) -> Vec<CardId
     }
 }
 
-/// Get remaining (uncompleted) cards from today's queue (legacy function)
-pub fn get_remaining_cards(today: NaiveDate) -> Vec<CardId> {
-    let queue_path = get_queue_path(today);
-    
-    if !queue_path.exists() {
-        println!("⚠️ No queue file exists for {}", today);
-        return Vec::new();
-    }
-    
-    match fs::read_to_string(&queue_path) {
-        Ok(content) => {
-            match serde_json::from_str::<QueueData>(&content) {
-                Ok(queue_data) => {
-                    let total_cards = queue_data.cards.len();
-                    let completed_count = queue_data.completed_cards.len();
-                    let remaining: Vec<CardId> = queue_data.cards.into_iter()
-                        .filter(|card_id| !queue_data.completed_cards.contains(card_id))
-                        .collect();
-                    println!("📋 Queue has {} total cards, {} completed, {} remaining", 
-                            total_cards, completed_count, remaining.len());
-                    remaining
-                }
-                Err(e) => {
-                    println!("⚠️ Failed to parse queue file: {}", e);
-                    Vec::new()
-                }
-            }
-        }
-        Err(e) => {
-            println!("⚠️ Failed to read queue file: {}", e);
-            Vec::new()
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -548,7 +469,11 @@ mod tests {
         )", []).unwrap();
         conn.execute("CREATE TABLE IF NOT EXISTS srs_log (
             card_id INTEGER PRIMARY KEY,
-            next_due_ts INTEGER
+            next_due_ts INTEGER,
+            interval INTEGER,
+            ease_factor REAL,
+            reps INTEGER,
+            lapses INTEGER
         )", []).unwrap();
         conn.execute("CREATE TABLE IF NOT EXISTS cards (
             id INTEGER PRIMARY KEY
@@ -586,7 +511,14 @@ mod tests {
         let conn = Connection::open(&db_path).unwrap();
         
         // Create tables
-        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (card_id INTEGER PRIMARY KEY, next_due_ts INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (
+            card_id INTEGER PRIMARY KEY,
+            next_due_ts INTEGER,
+            interval INTEGER,
+            ease_factor REAL,
+            reps INTEGER,
+            lapses INTEGER
+        )", []).unwrap();
         conn.execute("CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY)", []).unwrap();
         
         // Insert many due cards (timestamps in past)
@@ -623,7 +555,14 @@ mod tests {
         let conn = Connection::open(&db_path).unwrap();
         
         // Create minimal schema
-        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (card_id INTEGER PRIMARY KEY, next_due_ts INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (
+            card_id INTEGER PRIMARY KEY,
+            next_due_ts INTEGER,
+            interval INTEGER,
+            ease_factor REAL,
+            reps INTEGER,
+            lapses INTEGER
+        )", []).unwrap();
         conn.execute("CREATE TABLE IF NOT EXISTS cards (id INTEGER PRIMARY KEY)", []).unwrap();
         conn.execute("CREATE TABLE IF NOT EXISTS daily_log (
             date TEXT PRIMARY KEY,

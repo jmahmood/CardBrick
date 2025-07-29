@@ -6,61 +6,15 @@ mod sprint2_tests {
     use super::super::bandit::*;
     use super::super::queue::*;
     use crate::storage::db::progress_path;
+    use crate::storage::schema::*;
+    use crate::testing::*;
     use chrono::NaiveDate;
     use rusqlite::Connection;
     use tempfile::tempdir;
 
     /// Test helper to set up isolated test environment - NO GLOBAL STATE POLLUTION
     fn setup_test_env() -> (tempfile::TempDir, std::path::PathBuf) {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        
-        // Create database directly in the temp directory
-        let conn = Connection::open(&db_path).unwrap();
-        
-        // Create all required tables
-        conn.execute("CREATE TABLE IF NOT EXISTS bandit_state (
-            param_id TEXT NOT NULL,
-            arm_value REAL NOT NULL,
-            alpha INTEGER NOT NULL,
-            beta INTEGER NOT NULL,
-            PRIMARY KEY (param_id, arm_value)
-        )", []).unwrap();
-        
-        conn.execute("CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )", []).unwrap();
-        
-        conn.execute("CREATE TABLE IF NOT EXISTS daily_log (
-            date TEXT PRIMARY KEY,
-            pack_sz INTEGER,
-            rev_coef REAL,
-            fail_k INTEGER,
-            cards_studied INTEGER,
-            points INTEGER,
-            reward_scaled REAL,
-            reward_bin INTEGER
-        )", []).unwrap();
-        
-        conn.execute("CREATE TABLE IF NOT EXISTS srs_log (
-            card_id INTEGER PRIMARY KEY,
-            next_due_ts INTEGER
-        )", []).unwrap();
-        
-        conn.execute("CREATE TABLE IF NOT EXISTS cards (
-            id INTEGER PRIMARY KEY
-        )", []).unwrap();
-        
-        conn.execute("CREATE TABLE IF NOT EXISTS daily_ratings (
-            card_id INTEGER,
-            rating TEXT NOT NULL,
-            timestamp INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            PRIMARY KEY (card_id, timestamp)
-        )", []).unwrap();
-        
-        (temp_dir, db_path)
+        setup_test_database()
     }
 
     /// Create a bandit with custom database path for testing - NO GLOBAL STATE

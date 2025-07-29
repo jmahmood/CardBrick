@@ -37,18 +37,10 @@ pub struct Deck {
     pub cards: Vec<Card>,
     // We use a HashMap to quickly look up a note by its ID.
     pub notes: HashMap<i64, Note>,
-    // Optional database connection for lazy loading (legacy)
-    pub db_connection: Option<LazyDeckConnection>,
     // Optional cached database connection for lazy loading
     pub cached_db_connection: Option<CachedDeckConnection>,
 }
 
-/// Database connection info for lazy loading cards and notes
-#[derive(Debug)]
-pub struct LazyDeckConnection {
-    pub db_path: tempfile::TempPath,
-    pub _total_card_count: i64,
-}
 
 /// Cached deck connection info for lazy loading cards and notes
 #[derive(Debug)]
@@ -57,12 +49,6 @@ pub struct CachedDeckConnection {
     pub total_card_count: i64,
 }
 
-/// Temporary structure for lazy deck loading (legacy)
-pub struct LazyDeck {
-    pub db_path: tempfile::TempPath,
-    pub initial_cards: Vec<Card>,
-    pub total_card_count: i64,
-}
 
 /// Structure for cached deck loading
 pub struct CachedDeck {
@@ -71,26 +57,12 @@ pub struct CachedDeck {
     pub total_card_count: i64,
 }
 
-impl LazyDeck {
-    pub fn into_deck(self) -> Result<Deck, Box<dyn std::error::Error>> {
-        Ok(Deck {
-            cards: self.initial_cards,
-            notes: HashMap::new(), // Will be loaded on demand
-            db_connection: Some(LazyDeckConnection {
-                db_path: self.db_path,
-                _total_card_count: self.total_card_count,
-            }),
-            cached_db_connection: None,
-        })
-    }
-}
 
 impl CachedDeck {
     pub fn into_deck(self) -> Result<Deck, Box<dyn std::error::Error>> {
         Ok(Deck {
             cards: self.initial_cards,
             notes: HashMap::new(), // Will be loaded on demand
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: self.db_path,
                 total_card_count: self.total_card_count,
@@ -139,16 +111,6 @@ pub fn ensure_database_schema(conn: &rusqlite::Connection) -> Result<(), Box<dyn
     )?;
     
     // CardBrick-specific tables
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS card_state (
-            id INTEGER PRIMARY KEY,
-            due INTEGER,
-            interval INTEGER,
-            ease_factor INTEGER,
-            lapses INTEGER
-        )",
-        [],
-    )?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS srs_log (
@@ -221,10 +183,8 @@ impl Deck {
             return Ok(Some(note.clone()));
         }
         
-        // Load from database if we have a connection (legacy or cached)
-        let db_path: &std::path::Path = if let Some(ref db_conn) = self.db_connection {
-            db_conn.db_path.as_ref()
-        } else if let Some(ref cached_db_conn) = self.cached_db_connection {
+        // Load from database if we have a cached connection
+        let db_path: &std::path::Path = if let Some(ref cached_db_conn) = self.cached_db_connection {
             cached_db_conn.db_path.as_ref()
         } else {
             return Ok(None);
@@ -260,10 +220,8 @@ impl Deck {
     // Uses intelligent random selection: prioritizes uncovered cards and cards the user found difficult TODAY
 
     pub fn load_more_cards(&mut self, limit: usize) -> Result<Vec<Card>, Box<dyn std::error::Error>> {
-        // Load from database if we have a connection (legacy or cached)
-        let db_path: &std::path::Path = if let Some(ref db_conn) = self.db_connection {
-            db_conn.db_path.as_ref()
-        } else if let Some(ref cached_db_conn) = self.cached_db_connection {
+        // Load from database if we have a cached connection
+        let db_path: &std::path::Path = if let Some(ref cached_db_conn) = self.cached_db_connection {
             cached_db_conn.db_path.as_ref()
         } else {
             return Ok(Vec::new());
@@ -472,13 +430,11 @@ mod tests {
         let deck = Deck {
             cards,
             notes,
-            db_connection: None,
             cached_db_connection: None,
         };
         
         assert_eq!(deck.cards.len(), 2);
         assert_eq!(deck.notes.len(), 2);
-        assert!(deck.db_connection.is_none());
         assert!(deck.cached_db_connection.is_none());
     }
 
@@ -493,7 +449,6 @@ mod tests {
         let deck = cached_deck.into_deck().unwrap();
         assert_eq!(deck.cards.len(), 1);
         assert_eq!(deck.cards[0].id, 1);
-        assert!(deck.db_connection.is_none());
         assert!(deck.cached_db_connection.is_some());
         
         let cached_conn = deck.cached_db_connection.unwrap();
@@ -509,7 +464,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![create_test_card(1, 100)],
             notes,
-            db_connection: None,
             cached_db_connection: None,
         };
         
@@ -528,7 +482,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![create_test_card(1, 100)],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: None,
         };
         
@@ -542,7 +495,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![create_test_card(1, 100)],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: None,
         };
         
@@ -686,7 +638,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![], // Start with no cards loaded
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path.clone(),
                 total_card_count: 20,
@@ -775,7 +726,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path.clone(),
                 total_card_count: 15,
@@ -843,7 +793,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path,
                 total_card_count: 10,
@@ -891,7 +840,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path,
                 total_card_count: 10,
@@ -951,7 +899,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path.clone(),
                 total_card_count: 20,
@@ -1035,7 +982,6 @@ mod tests {
             // All cards are already loaded
             cards: (1..=5).map(|i| create_test_card(i, i * 10)).collect(),
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path,
                 total_card_count: 5,
@@ -1057,7 +1003,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: std::path::PathBuf::from("/nonexistent/path/to/database.db"),
                 total_card_count: 100,
@@ -1102,7 +1047,6 @@ mod tests {
         let mut deck = Deck {
             cards: vec![],
             notes: HashMap::new(),
-            db_connection: None,
             cached_db_connection: Some(CachedDeckConnection {
                 db_path: temp_db_path,
                 total_card_count: 10,

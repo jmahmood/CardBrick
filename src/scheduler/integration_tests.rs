@@ -7,6 +7,7 @@ mod tests {
     use crate::scheduler::points::*;
     use crate::scheduler::bandit;
     use crate::config::DAILY_GOAL_POINTS;
+    use crate::storage::schema::*;
     use chrono::{NaiveDate, Duration, Datelike};
     use rusqlite::Connection;
     use tempfile::tempdir;
@@ -226,70 +227,7 @@ mod tests {
 
     /// Sets up test database with all required tables
     fn setup_test_database(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
-        // SRS log table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS srs_log (
-                card_id INTEGER PRIMARY KEY,
-                interval INTEGER,
-                ease_factor INTEGER,
-                reps INTEGER,
-                lapses INTEGER,
-                next_due_ts INTEGER
-            )",
-            [],
-        )?;
-        
-        // Daily ratings table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS daily_ratings (
-                card_id INTEGER,
-                rating TEXT,
-                timestamp INTEGER,
-                date TEXT
-            )",
-            [],
-        )?;
-        
-        // Bandit log table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS bandit_log (
-                date TEXT,
-                param_id TEXT,
-                arm INTEGER,
-                reward INTEGER,
-                PRIMARY KEY (date, param_id)
-            )",
-            [],
-        )?;
-        
-        // Bandit state table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS bandit_state (
-                param_id TEXT PRIMARY KEY,
-                arm INTEGER,
-                alpha REAL,
-                beta REAL,
-                total_pulls INTEGER,
-                round_robin_day INTEGER
-            )",
-            [],
-        )?;
-        
-        // Daily log table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS daily_log (
-                date TEXT PRIMARY KEY,
-                pack_sz INTEGER,
-                rev_coef REAL,
-                fail_k INTEGER,
-                cards_studied INTEGER,
-                points INTEGER,
-                reward_scaled REAL,
-                reward_bin INTEGER
-            )",
-            [],
-        )?;
-        
+        create_test_database_tables(conn)?;
         Ok(())
     }
 
@@ -304,8 +242,8 @@ mod tests {
         
         let card_id = 12345;
         let base_timestamp = 1640995200; // 2022-01-01 00:00:00 UTC
-        let mut intervals = Vec::new();
-        let mut ease_factors = Vec::new();
+        let mut intervals: Vec<i64> = Vec::new();
+        let mut ease_factors: Vec<f64> = Vec::new();
         
         // Simulate perfect recall sequence (all Good ratings)
         for i in 0..10 {
@@ -314,7 +252,7 @@ mod tests {
             
             // Read back the state
             let conn = Connection::open(&db_path).unwrap();
-            let (interval, ease_factor): (i64, i64) = conn.query_row(
+            let (interval, ease_factor): (i64, f64) = conn.query_row(
                 "SELECT interval, ease_factor FROM srs_log WHERE card_id = ?1",
                 [card_id],
                 |row| Ok((row.get(0)?, row.get(1)?))
@@ -327,7 +265,7 @@ mod tests {
         
         println!("📈 SM-2 Interval Progression (10 Good ratings):");
         for (i, (interval, ease)) in intervals.iter().zip(ease_factors.iter()).enumerate() {
-            println!("   Rating {}: interval={} days, ease={:.2}", i + 1, interval, *ease as f64 / 1000.0);
+            println!("   Rating {}: interval={} days, ease={:.2}", i + 1, interval, ease);
         }
         
         // Validate SM-2 behavior
@@ -335,7 +273,7 @@ mod tests {
         assert!(intervals[1] == 6, "Second interval should be 6 days (SM-2 standard)");
         assert!(intervals[2] > intervals[1], "Intervals should generally increase");
         assert!(intervals[9] > intervals[0], "Long-term intervals should be much larger");
-        assert!(ease_factors[0] == 2500, "Initial ease factor should be 2.5");
+        assert!((ease_factors[0] - 2.5).abs() < 0.001, "Initial ease factor should be 2.5");
         
         println!("✅ SM-2 algorithm behaves correctly over extended period");
     }
