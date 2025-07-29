@@ -158,3 +158,199 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
     // Send the final result (either the Deck or an Error) through the channel.
     tx.send(LoaderMessage::Complete(result.map_err(|e| e.to_string()))).unwrap();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+    use tempfile::tempdir;
+    use rusqlite::Connection;
+
+    fn create_test_anki_database(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let conn = Connection::open(db_path)?;
+        
+        // Create Anki-compatible cards table
+        conn.execute(
+            "CREATE TABLE cards (
+                id INTEGER PRIMARY KEY,
+                nid INTEGER NOT NULL,
+                due INTEGER NOT NULL,
+                ivl INTEGER NOT NULL,
+                factor INTEGER NOT NULL,
+                lapses INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        
+        // Create Anki-compatible notes table
+        conn.execute(
+            "CREATE TABLE notes (
+                id INTEGER PRIMARY KEY,
+                flds TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        // Insert test cards - some due today, some overdue, some future
+        let today = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() / 86400;
+            
+        // Due/overdue cards (should be selected first)
+        conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (1, 1, ?1, 1, 2500, 0)", [today - 1])?; // overdue
+        conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (2, 2, ?1, 0, 2500, 0)", [today])?; // due today
+        conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (3, 3, ?1, 2, 2500, 1)", [today])?; // due today
+        
+        // Future cards (for minimum card selection)
+        for i in 4..=15 {
+            conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (?1, ?1, ?2, 5, 2500, 0)", [i, today + 10])?;
+        }
+        
+        // Insert corresponding notes
+        for i in 1..=15 {
+            let fields = format!("Front {}\x1fBack {}", i, i); // Anki field separator
+            conn.execute("INSERT INTO notes (id, flds) VALUES (?1, ?2)", [i.to_string(), fields])?;
+        }
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_apkg_progress_reporting() {
+        let temp_dir = tempdir().unwrap();
+        let test_deck_path = temp_dir.path().join("test_deck");
+        std::fs::create_dir_all(&test_deck_path).unwrap();
+        
+        // Create mock cached database
+        let cached_db_path = test_deck_path.join("collection.anki2");
+        create_test_anki_database(&cached_db_path).unwrap();
+        
+        let (tx, rx) = mpsc::channel();
+        
+        // Spawn loader in background thread
+        let test_path = test_deck_path.clone();
+        thread::spawn(move || {
+            load_apkg(&test_path, tx);
+        });
+        
+        // Verify progress messages arrive in order
+        let mut progress_values = Vec::new();
+        let mut received_complete = false;
+        
+        while let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) {
+            match msg {
+                LoaderMessage::Progress(p) => {
+                    progress_values.push(p);
+                },
+                LoaderMessage::Complete(_) => {
+                    received_complete = true;
+                    break;
+                },
+                _ => {}
+            }
+        }
+        
+        // Verify progress reporting
+        assert!(progress_values.len() >= 5, "Should have multiple progress updates");
+        assert!(progress_values.iter().all(|&p| p >= 0.0 && p <= 1.0), "Progress should be 0.0-1.0");
+        assert!(progress_values.windows(2).all(|w| w[0] <= w[1]), "Progress should be non-decreasing");
+        assert!(received_complete, "Should receive completion message");
+    }
+
+    #[test]
+    fn test_load_apkg_minimum_card_selection() {
+        let temp_dir = tempdir().unwrap();
+        let test_deck_path = temp_dir.path().join("min_cards_test");
+        std::fs::create_dir_all(&test_deck_path).unwrap();
+        
+        // Create database with only 3 due cards but 15 total cards
+        let cached_db_path = test_deck_path.join("collection.anki2");
+        create_test_anki_database(&cached_db_path).unwrap();
+        
+        let (tx, rx) = mpsc::channel();
+        
+        // Load deck
+        let test_path = test_deck_path.clone();
+        thread::spawn(move || {
+            load_apkg(&test_path, tx);
+        });
+        
+        // Wait for completion
+        let mut deck_result = None;
+        while let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) {
+            if let LoaderMessage::Complete(result) = msg {
+                deck_result = Some(result);
+                break;
+            }
+        }
+        
+        // Verify minimum 10 cards were selected
+        let deck = deck_result.unwrap().unwrap();
+        assert!(deck.cards.len() >= 10, "Should have at least 10 cards, got {}", deck.cards.len());
+    }
+
+    #[test]
+    fn test_load_apkg_due_card_priority() {
+        let temp_dir = tempdir().unwrap();
+        let test_deck_path = temp_dir.path().join("due_priority_test");
+        std::fs::create_dir_all(&test_deck_path).unwrap();
+        
+        let cached_db_path = test_deck_path.join("collection.anki2");
+        create_test_anki_database(&cached_db_path).unwrap();
+        
+        let (tx, rx) = mpsc::channel();
+        
+        let test_path = test_deck_path.clone();
+        thread::spawn(move || {
+            load_apkg(&test_path, tx);
+        });
+        
+        // Get result
+        let mut deck_result = None;
+        while let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) {
+            if let LoaderMessage::Complete(result) = msg {
+                deck_result = Some(result);
+                break;
+            }
+        }
+        
+        let deck = deck_result.unwrap().unwrap();
+        
+        // Verify due/overdue cards appear first
+        // Cards 1, 2, 3 should be in the selection (they're due/overdue)
+        let card_ids: Vec<i64> = deck.cards.iter().map(|c| c.id).collect();
+        assert!(card_ids.contains(&1), "Should include overdue card 1");
+        assert!(card_ids.contains(&2), "Should include due card 2"); 
+        assert!(card_ids.contains(&3), "Should include due card 3");
+        
+        // First few cards should be the due ones
+        assert!(deck.cards[0].id <= 3, "First card should be due/overdue");
+    }
+
+    #[test]
+    fn test_load_apkg_error_handling() {
+        let temp_dir = tempdir().unwrap();
+        let nonexistent_path = temp_dir.path().join("nonexistent");
+        
+        let (tx, rx) = mpsc::channel();
+        
+        // Try to load nonexistent deck
+        thread::spawn(move || {
+            load_apkg(&nonexistent_path, tx);
+        });
+        
+        // Should receive error result
+        let mut received_error = false;
+        while let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) {
+            if let LoaderMessage::Complete(Err(_)) = msg {
+                received_error = true;
+                break;
+            }
+        }
+        
+        assert!(received_error, "Should receive error for nonexistent deck");
+    }
+}

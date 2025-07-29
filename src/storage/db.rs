@@ -16,10 +16,21 @@ pub struct DatabaseManager {
 
 impl DatabaseManager {
     /// Creates a new DatabaseManager and opens a connection to the database file.
+    /// If custom_path is provided, uses that instead of the default "anki/history" directory.
     pub fn new(deck_id: &str) -> Result<Self> {
-        let path = Path::new("anki/history");
-        fs::create_dir_all(path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
-        let db_path = path.join(format!("{}.db", deck_id));
+        Self::new_with_path(deck_id, None)
+    }
+
+    /// Creates a new DatabaseManager with an optional custom path.
+    /// If custom_path is None, uses the default "anki/history" directory.
+    pub fn new_with_path(deck_id: &str, custom_path: Option<&Path>) -> Result<Self> {
+        let db_path = if let Some(custom_path) = custom_path {
+            custom_path.to_path_buf()
+        } else {
+            let path = Path::new("anki/history");
+            fs::create_dir_all(path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
+            path.join(format!("{}.db", deck_id))
+        };
         
         let conn = Connection::open(db_path)?;
         let manager = DatabaseManager { conn };
@@ -291,4 +302,128 @@ pub fn init_progress_database() -> Result<()> {
     
     let conn = Connection::open(&path)?;
     create_progress_database_tables(&conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use chrono::{Utc, Duration};
+
+    fn create_test_database_manager(test_name: &str) -> (DatabaseManager, tempfile::TempDir) {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join(format!("{}.db", test_name));
+        let manager = DatabaseManager::new_with_path("test_deck", Some(&db_path)).unwrap();
+        (manager, temp_dir)
+    }
+
+    #[test]
+    fn test_record_and_retrieve_difficult_cards() {
+        let (manager, _temp_dir) = create_test_database_manager("difficult_cards");
+        
+        // Test recording failed cards
+        manager.record_difficult_card(123, "failed").unwrap();
+        manager.record_difficult_card(456, "hard").unwrap();
+        
+        // Test retrieval by type
+        let (failed, hard) = manager.get_todays_difficult_cards().unwrap();
+        assert_eq!(failed, vec![123]);
+        assert_eq!(hard, vec![456]);
+    }
+
+    #[test]
+    fn test_daily_rating_chronological_order() {
+        let (manager, _temp_dir) = create_test_database_manager("daily_rating_order");
+        
+        // Record ratings with specific order
+        manager.record_daily_rating(100, "Good").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10)); // Ensure different timestamps
+        manager.record_daily_rating(200, "Hard").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        manager.record_daily_rating(300, "Easy").unwrap();
+        
+        // Verify chronological order
+        let ratings = manager.get_todays_ratings().unwrap();
+        assert_eq!(ratings.len(), 3);
+        assert_eq!(ratings[0], (100, "Good".to_string()));
+        assert_eq!(ratings[1], (200, "Hard".to_string()));
+        assert_eq!(ratings[2], (300, "Easy".to_string()));
+    }
+
+    #[test]
+    fn test_study_event_points_calculation() {
+        let (manager, _temp_dir) = create_test_database_manager("study_events");
+        
+        let timestamp = Utc::now().timestamp();
+        
+        // Record multiple study events
+        manager.record_study_event(1, timestamp, 10, 2, 5, 3, 20).unwrap();
+        manager.record_study_event(2, timestamp + 1, 15, 3, 0, 2, 20).unwrap();
+        manager.record_study_event(3, timestamp + 2, 0, 1, 10, 0, 11).unwrap();
+        
+        // Verify points sum correctly (20 + 20 + 11 = 51)
+        let total_points = manager.get_todays_points().unwrap();
+        assert_eq!(total_points, 51);
+    }
+
+    #[test]
+    fn test_profile_score_updates() {
+        let (manager, _temp_dir) = create_test_database_manager("profile_scores");
+        
+        // Initial profile should have zero scores
+        let (total_score, level_score, streak, date) = manager.get_profile().unwrap();
+        assert_eq!(total_score, 0);
+        assert_eq!(level_score, 0);
+        assert_eq!(streak, 0);
+        assert_eq!(date, None);
+        
+        // Add points multiple times
+        manager.update_profile_scores(25).unwrap();
+        manager.update_profile_scores(15).unwrap();
+        
+        // Verify total_score increments properly
+        let (total_score, level_score, _, _) = manager.get_profile().unwrap();
+        assert_eq!(total_score, 40);
+        assert_eq!(level_score, 40);
+    }
+
+    #[test]
+    fn test_difficult_cards_date_isolation() {
+        let (manager, _temp_dir) = create_test_database_manager("date_isolation");
+        
+        // Record difficult cards
+        manager.record_difficult_card(111, "failed").unwrap();
+        manager.record_difficult_card(222, "hard").unwrap();
+        
+        // Get today's cards
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        let failed_today = manager.get_difficult_cards_for_date(&today, Some("failed")).unwrap();
+        let hard_today = manager.get_difficult_cards_for_date(&today, Some("hard")).unwrap();
+        
+        assert_eq!(failed_today, vec![111]);
+        assert_eq!(hard_today, vec![222]);
+        
+        // Test with different date - should be empty
+        let yesterday = (Utc::now().date_naive() - Duration::days(1)).format("%Y-%m-%d").to_string();
+        let failed_yesterday = manager.get_difficult_cards_for_date(&yesterday, Some("failed")).unwrap();
+        assert_eq!(failed_yesterday, Vec::<i64>::new());
+    }
+
+    #[test]
+    fn test_daily_streak_logic() {
+        let (manager, _temp_dir) = create_test_database_manager("daily_streak");
+        
+        // First study should set streak to 1
+        let streak1 = manager.update_daily_streak().unwrap();
+        assert_eq!(streak1, 1);
+        
+        // Same day study should not change streak
+        let streak2 = manager.update_daily_streak().unwrap();
+        assert_eq!(streak2, 1);
+        
+        // Verify profile was updated
+        let (_, _, streak, last_date) = manager.get_profile().unwrap();
+        assert_eq!(streak, 1);
+        assert!(last_date.is_some());
+    }
 }
