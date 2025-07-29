@@ -1,7 +1,7 @@
 // src/scheduler/queue.rs
 // Daily queue builder for Core Learning Loop
 
-use crate::config::{BACKLOG_CAP, PACK_SIZE_DEFAULT};
+use crate::config::BACKLOG_CAP;
 use crate::scheduler::bandit::BanditManager;
 use crate::storage::db::progress_path;
 use crate::deck::Deck;
@@ -58,7 +58,7 @@ pub fn ensure_today_with_deck(today: NaiveDate, deck: &Deck) -> Result<(), Box<d
 }
 
 /// Loads today's queue from disk (panics if missing)
-pub fn load_today(today: NaiveDate) -> Vec<CardId> {
+pub fn _load_today(today: NaiveDate) -> Vec<CardId> {
     let queue_path = get_queue_path(today);
     
     let queue_data: QueueData = serde_json::from_str(

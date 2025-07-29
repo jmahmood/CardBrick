@@ -49,12 +49,6 @@ sim = []
 name = "cardbrick"
 path = "src/main.rs"
 
-
-[[bin]]
-name = "demo_cardbrick"
-path = "src/demo_main.rs"
-
-
 [[bin]]
 name = "test_display"
 path = "src/test_display.rs"

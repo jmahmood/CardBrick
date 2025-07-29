@@ -25,8 +25,18 @@ pub fn load_apkg(path: &Path, tx: Sender<LoaderMessage>) {
         tx.send(LoaderMessage::Progress(0.10)).unwrap(); // 10% - Starting
         println!("⏱️  [{}ms] Extracted deck hash: {}", start_time.elapsed().as_millis(), deck_hash);
         
-        // Ensure cached deck exists and get database path
-        let db_path = scanner::ensure_cached_deck(deck_hash)?;
+        // Check if the provided path is a direct cached deck directory (for testing)
+        // or if we need to look it up in the cache
+        let db_path = if path.join("manifest.json").exists() {
+            // Direct path to cached deck directory
+            let manifest_path = path.join("manifest.json");
+            let manifest = scanner::load_manifest(&manifest_path)
+                .map_err(|e| format!("Failed to load manifest: {}", e))?;
+            path.join(&manifest.db_file)
+        } else {
+            // Look up in cache using deck hash
+            scanner::ensure_cached_deck(deck_hash)?
+        };
         println!("⏱️  [{}ms] Found cached database at: {:?}", start_time.elapsed().as_millis(), db_path);
         tx.send(LoaderMessage::Progress(0.20)).unwrap(); // 20% - Cache validated
         
@@ -165,68 +175,13 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
+    use crate::testing::setup_cached_deck_structure;
     use tempfile::tempdir;
-    use rusqlite::Connection;
-
-    fn create_test_anki_database(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-        let conn = Connection::open(db_path)?;
-        
-        // Create Anki-compatible cards table
-        conn.execute(
-            "CREATE TABLE cards (
-                id INTEGER PRIMARY KEY,
-                nid INTEGER NOT NULL,
-                due INTEGER NOT NULL,
-                ivl INTEGER NOT NULL,
-                factor INTEGER NOT NULL,
-                lapses INTEGER NOT NULL
-            )",
-            [],
-        )?;
-        
-        // Create Anki-compatible notes table
-        conn.execute(
-            "CREATE TABLE notes (
-                id INTEGER PRIMARY KEY,
-                flds TEXT NOT NULL
-            )",
-            [],
-        )?;
-        
-        // Insert test cards - some due today, some overdue, some future
-        let today = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() / 86400;
-            
-        // Due/overdue cards (should be selected first)
-        conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (1, 1, ?1, 1, 2500, 0)", [today - 1])?; // overdue
-        conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (2, 2, ?1, 0, 2500, 0)", [today])?; // due today
-        conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (3, 3, ?1, 2, 2500, 1)", [today])?; // due today
-        
-        // Future cards (for minimum card selection)
-        for i in 4..=15 {
-            conn.execute("INSERT INTO cards (id, nid, due, ivl, factor, lapses) VALUES (?1, ?1, ?2, 5, 2500, 0)", [i, today + 10])?;
-        }
-        
-        // Insert corresponding notes
-        for i in 1..=15 {
-            let fields = format!("Front {}\x1fBack {}", i, i); // Anki field separator
-            conn.execute("INSERT INTO notes (id, flds) VALUES (?1, ?2)", [i.to_string(), fields])?;
-        }
-        
-        Ok(())
-    }
 
     #[test]
     fn test_load_apkg_progress_reporting() {
-        let temp_dir = tempdir().unwrap();
-        let test_deck_path = temp_dir.path().join("test_deck");
-        std::fs::create_dir_all(&test_deck_path).unwrap();
-        
-        // Create mock cached database
-        let cached_db_path = test_deck_path.join("collection.anki2");
-        create_test_anki_database(&cached_db_path).unwrap();
+        // Create cached deck structure with proper manifest and database
+        let (_temp_dir, test_deck_path) = setup_cached_deck_structure("test_deck");
         
         let (tx, rx) = mpsc::channel();
         
@@ -262,13 +217,8 @@ mod tests {
 
     #[test]
     fn test_load_apkg_minimum_card_selection() {
-        let temp_dir = tempdir().unwrap();
-        let test_deck_path = temp_dir.path().join("min_cards_test");
-        std::fs::create_dir_all(&test_deck_path).unwrap();
-        
-        // Create database with only 3 due cards but 15 total cards
-        let cached_db_path = test_deck_path.join("collection.anki2");
-        create_test_anki_database(&cached_db_path).unwrap();
+        // Create cached deck structure with proper manifest and database
+        let (_temp_dir, test_deck_path) = setup_cached_deck_structure("min_cards_test");
         
         let (tx, rx) = mpsc::channel();
         
@@ -294,12 +244,8 @@ mod tests {
 
     #[test]
     fn test_load_apkg_due_card_priority() {
-        let temp_dir = tempdir().unwrap();
-        let test_deck_path = temp_dir.path().join("due_priority_test");
-        std::fs::create_dir_all(&test_deck_path).unwrap();
-        
-        let cached_db_path = test_deck_path.join("collection.anki2");
-        create_test_anki_database(&cached_db_path).unwrap();
+        // Create cached deck structure with proper manifest and database
+        let (_temp_dir, test_deck_path) = setup_cached_deck_structure("due_priority_test");
         
         let (tx, rx) = mpsc::channel();
         

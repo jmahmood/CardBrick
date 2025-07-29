@@ -1,6 +1,5 @@
 // CardBrick - Macroquad Version with Device Compatibility
 use crate::scenes::deck_selection::draw_deck_selection_scene;
-use std::path::PathBuf;
 use std::io::Write;
 
 use config::{assets, UiAssets};

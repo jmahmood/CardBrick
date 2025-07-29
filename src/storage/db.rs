@@ -130,11 +130,7 @@ impl DatabaseManager {
     pub fn get_todays_ratings(&self) -> Result<Vec<(i64, String)>> {
         let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
         
-        // Read from progress database, not per-deck database
-        let progress_db_path = progress_path();
-        let progress_conn = Connection::open(&progress_db_path)?;
-        
-        let mut stmt = progress_conn.prepare(
+        let mut stmt = self.conn.prepare(
             "SELECT card_id, rating FROM daily_ratings 
              WHERE date = ?1 
              ORDER BY timestamp ASC"
