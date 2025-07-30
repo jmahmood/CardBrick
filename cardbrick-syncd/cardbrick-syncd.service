@@ -1,0 +1,74 @@
+[Unit]
+Description=CardBrick Desktop Sync Daemon
+Documentation=https://github.com/CardBrick/CardBrick
+After=network.target avahi-daemon.service
+Wants=avahi-daemon.service
+Requires=network.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/cardbrick-syncd
+Restart=always
+RestartSec=10
+User=cardbrick-sync
+Group=cardbrick-sync
+
+# Security hardening
+DynamicUser=yes
+RuntimeDirectory=cardbrick-syncd
+StateDirectory=cardbrick
+ConfigurationDirectory=cardbrick
+LogsDirectory=cardbrick
+
+# Filesystem protections
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/cardbrick
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectClock=yes
+
+# Network restrictions
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow=link-local
+IPAddressAllow=multicast
+IPAddressAllow=169.254.0.0/16
+IPAddressAllow=224.0.0.0/4
+# Allow private networks
+IPAddressAllow=10.0.0.0/8
+IPAddressAllow=172.16.0.0/12
+IPAddressAllow=192.168.0.0/16
+
+# Capability restrictions
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+# System call restrictions
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @reboot @swap @raw-io @privileged
+
+# Resource limits
+LimitNOFILE=1024
+LimitNPROC=32
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RemoveIPC=yes
+
+# Environment
+Environment=PYTHONPATH=/usr/local/lib/python3/site-packages
+Environment=CARDBRICK_DATA_DIR=/var/lib/cardbrick
+Environment=CARDBRICK_HTTP_PORT=6429
+
+[Install]
+WantedBy=multi-user.target

@@ -526,6 +526,7 @@ impl CardBrickApp {
             GameState::DeckSelection(_) => scenes::deck_selection::input::handle_deck_selection_input(&mut self.app_state, input),
             GameState::Studying(_) => scenes::studying::input::handle_studying_input(&mut self.app_state, input),
             GameState::Progress(_) => scenes::progress::input::handle_progress_input(&mut self.app_state, input),
+            GameState::RestoreWizard(_) => scenes::restore_wizard::input::handle_restore_wizard_input(&mut self.app_state, input),
             _ => Ok(()),
         }
     }
@@ -628,6 +629,13 @@ impl CardBrickApp {
                     &self.app_state.font_manager,
                     &self.app_state.small_font_manager,
                     &self.app_state.canvas_manager,
+                )
+            },
+            GameState::RestoreWizard(restore_wizard_state) => {
+                crate::scenes::restore_wizard::draw_restore_wizard_scene(
+                    &self.app_state.font_manager,
+                    &self.app_state.canvas_manager,
+                    restore_wizard_state,
                 )
             },
             GameState::Error(e) => draw_error_scene(&self.app_state.font_manager, &self.app_state.canvas_manager, e),

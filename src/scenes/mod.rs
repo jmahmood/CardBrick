@@ -4,3 +4,4 @@ pub mod main_menu;
 pub mod studying;
 pub mod deck_selection;
 pub mod progress;
+pub mod restore_wizard;

@@ -1,8 +1,8 @@
 // src/scenes/studying/logic.rs
 
 use crate::deck::{html_parser, Card};
-use crate::debug::Tracer;
 use crate::ui::FontManager;
+use crate::debug::Tracer;
 use crate::scheduler::queue::{self};
 use crate::scheduler::bandit;
 use crate::scheduler::{points, Rating, sm2};

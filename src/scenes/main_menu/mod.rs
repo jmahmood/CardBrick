@@ -26,7 +26,7 @@ pub fn draw_main_menu_scene(
     canvas_manager: &CanvasManager,
     state: &MainMenuState,
 ) -> Result<(), String> {
-    let options = ["Study", "Progress", "Quit"];
+    let options = ["Study", "Progress", "Send Backup", "Quit"];
     
     // Draw background for logical canvas area
     let (logical_width, logical_height) = canvas_manager.logical_size();
@@ -38,6 +38,9 @@ pub fn draw_main_menu_scene(
     
     // Draw title
     font_manager.draw_single_line("CardBrick", 20, 50, canvas_manager)?;
+    
+    // Show sync status hint
+    font_manager.draw_single_line("Manual sync available", 20, 80, canvas_manager)?;
 
     let mut y_pos = 150;
     let font_size = 18.0;

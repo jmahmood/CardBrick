@@ -2,11 +2,11 @@
 // Thompson Sampling Multi-Armed Bandit for adaptive parameter tuning
 
 use crate::config::{ROUND_ROBIN_DAYS, BANDIT_DECAY_THRESHOLD};
-use crate::storage::db::{progress_path, DatabaseManager};
+use crate::storage::db::progress_path;
 use chrono::NaiveDate;
 use rand::{thread_rng, Rng};
 use rand_distr::{Beta, Distribution};
-use rusqlite::{Connection, Result as SqlResult, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone)]
 pub struct Arm {

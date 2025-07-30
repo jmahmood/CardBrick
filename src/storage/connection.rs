@@ -2,7 +2,7 @@
 // Centralized database connection management to eliminate duplication
 
 use rusqlite::{Connection, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
 use crate::storage::db::progress_path;
 use crate::storage::schema::*;

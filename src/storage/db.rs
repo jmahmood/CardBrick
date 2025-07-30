@@ -6,7 +6,6 @@ use std::fs;
 use std::path::Path;
 use chrono;
 
-use crate::deck::Card;
 use crate::storage::schema::*;
 use std::path::PathBuf;
 

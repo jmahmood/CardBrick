@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 use macroquad::prelude::*;
 use std::collections::VecDeque;
-use crate::debug::Tracer;
 use crate::deck::html_parser::TextSpan;
+use crate::debug::Tracer;
 
 /// Holds a pre-calculated text layout for efficient rendering and scrolling.
 pub struct TextLayout {

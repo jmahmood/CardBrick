@@ -141,8 +141,8 @@ pub fn draw_studying_scene(
     
     let margin: u32 = 30;
     let total = studying_state.scheduler.total_session_cards();
-    let (logical_width, logical_height) = canvas_manager.logical_size();
-    let scale = canvas_manager.scale_factor;
+    let (_logical_width, logical_height) = canvas_manager.logical_size();
+    let _scale = canvas_manager.scale_factor;
 
     // Simple approach: just calculate the content area bounds for later use
     let content_area_top = CONTENT_TOP + 40.0; // Start below score display
@@ -301,7 +301,7 @@ pub fn draw_studying_scene(
                 
                 // Set text alpha for fade-in effect
                 let old_alpha = WHITE.a;
-                let fade_color = Color::from_rgba(255, 255, 255, (old_alpha as f32 * alpha) as u8);
+                let _fade_color = Color::from_rgba(255, 255, 255, (old_alpha as f32 * alpha) as u8);
                 
                 font_manager.draw_layout(
                     layout,

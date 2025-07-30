@@ -2,7 +2,6 @@
 // Progress viewer showing daily parameter choices and performance
 
 use crate::storage::db::progress_path;
-use chrono::NaiveDate;
 use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone)]
