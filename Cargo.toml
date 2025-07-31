@@ -37,6 +37,12 @@ rand_distr = "0.4"
 dirs = "5.0"
 futures = "0.3"
 
+# Networking for sync (Sprint 4)
+reqwest = { version = "0.11", features = ["json"] }
+ring = "0.16"
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
+hex = "0.4"
+
 # Remove web server for embedded version
 # tiny_http = "0.12"
 
@@ -48,6 +54,10 @@ sim = []
 [[bin]]
 name = "cardbrick"
 path = "src/main.rs"
+
+[[bin]]
+name = "sync_ring"
+path = "src/bin/sync_ring.rs"
 
 [[bin]]
 name = "test_display"
