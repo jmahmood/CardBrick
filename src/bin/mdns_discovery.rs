@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr, Ipv4Addr};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::fmt;
 
 use anyhow::{Result, Context, bail};
@@ -106,55 +106,54 @@ impl MdnsDiscovery {
         
         // Step 1: Try mDNS discovery
         info!("Starting mDNS discovery for {}", CARDBRICK_SERVICE_TYPE);
-        match self.discover_via_mdns().await {
-            Ok(mdns_services) => {
-                info!("Found {} services via mDNS", mdns_services.len());
-                for service_info in mdns_services {
-                    let service = DiscoveredService::from(service_info);
-                    let addr_key = (service.host, service.port);
-                    if seen_addresses.insert(addr_key) {
-                        services.push(service);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("mDNS discovery failed: {}", e);
-            }
+        if let Ok(mdns_services) = self.discover_via_mdns().await {
+            info!("Found {} services via mDNS", mdns_services.len());
+            let discovered: Vec<DiscoveredService> = mdns_services.into_iter()
+                .map(DiscoveredService::from)
+                .collect();
+            self.add_unique_services(discovered, &mut services, &mut seen_addresses);
+        } else {
+            warn!("mDNS discovery failed");
         }
         
         // Step 2: UDP broadcast probe for legacy daemons
         if services.is_empty() {
             info!("No mDNS services found, trying UDP broadcast probe");
-            match self.discover_via_udp_broadcast().await {
-                Ok(udp_services) => {
-                    info!("Found {} services via UDP broadcast", udp_services.len());
-                    for service_info in udp_services {
-                        let service = DiscoveredService::from(service_info);
-                        let addr_key = (service.host, service.port);
-                        if seen_addresses.insert(addr_key) {
-                            services.push(service);
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("UDP broadcast discovery failed: {}", e);
-                }
+            if let Ok(udp_services) = self.discover_via_udp_broadcast().await {
+                info!("Found {} services via UDP broadcast", udp_services.len());
+                let discovered: Vec<DiscoveredService> = udp_services.into_iter()
+                    .map(DiscoveredService::from)
+                    .collect();
+                self.add_unique_services(discovered, &mut services, &mut seen_addresses);
+            } else {
+                warn!("UDP broadcast discovery failed");
             }
         }
         
         // Step 3: Fallback candidates (only if nothing else worked)
         if services.is_empty() {
             warn!("No services discovered via mDNS or UDP, using fallback candidates");
-            for service in self.get_fallback_candidates() {
-                let addr_key = (service.host, service.port);
-                if seen_addresses.insert(addr_key) {
-                    services.push(service);
-                }
-            }
+            let fallback_services = self.get_fallback_candidates();
+            self.add_unique_services(fallback_services, &mut services, &mut seen_addresses);
         }
         
         info!("Total unique services discovered: {}", services.len());
         Ok(services)
+    }
+    
+    /// Helper method to add unique services and handle deduplication
+    fn add_unique_services(
+        &self,
+        discovered: Vec<DiscoveredService>,
+        services: &mut Vec<DiscoveredService>,
+        seen: &mut HashSet<(IpAddr, u16)>,
+    ) {
+        for service in discovered {
+            let addr_key = (service.host, service.port);
+            if seen.insert(addr_key) {
+                services.push(service);
+            }
+        }
     }
     
     /// Discover services using proper mDNS queries
@@ -166,42 +165,11 @@ impl MdnsDiscovery {
             .listen();
         pin_mut!(stream);
         
-        // Use single deadline to prevent N × timeout_duration discovery
-        let std_deadline = Instant::now() + self.mdns_timeout;
-        
-        loop {
-            // Check if we've exceeded our deadline
-            if Instant::now() >= std_deadline {
-                debug!("mDNS discovery deadline reached");
-                break;
-            }
-            
-            // Calculate remaining time for tighter latency
-            let remaining = std_deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                debug!("mDNS discovery time remaining is zero");
-                break;
-            }
-            
-            match tokio::time::timeout(remaining, stream.next()).await {
-                Ok(Some(Ok(response))) => {
-                    debug!("mDNS response: {:?}", response);
-                    if let Some(service_info) = Self::parse_mdns_response(response).await {
-                        services.push(service_info);
-                    }
-                }
-                Ok(Some(Err(e))) => {
-                    debug!("mDNS stream error: {}", e);
-                    // Continue listening for more responses
-                }
-                Ok(None) => {
-                    debug!("mDNS stream ended");
-                    break;
-                }
-                Err(_) => {
-                    debug!("mDNS discovery timeout reached");
-                    break;
-                }
+        // The stream will naturally end when the mdns_timeout is reached
+        while let Some(Ok(response)) = stream.next().await {
+            debug!("mDNS response: {:?}", response);
+            if let Some(service_info) = Self::parse_mdns_response(response).await {
+                services.push(service_info);
             }
         }
         
