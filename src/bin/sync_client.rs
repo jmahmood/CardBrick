@@ -91,7 +91,7 @@ impl SyncClient {
             debug!("Validating service: {} ({}:{})", service.name, service.host, service.port);
             
             // Quick health check to ensure service is actually responding
-            match self.probe_host(&service.host, service.port).await {
+            match self.probe_host(&service.host_string(), service.port).await {
                 Ok(_) => {
                     info!("Validated CardBrick service: {} ({}:{})", 
                           service.name, service.host, service.port);
@@ -121,7 +121,7 @@ impl SyncClient {
             Ok(Ok(resp)) if resp.status().is_success() => {
                 Ok(DiscoveredService {
                     name: format!("CardBrick Sync on {}", host),
-                    host: host.to_string(),
+                    host: host.parse()?,
                     port,
                     txt_records: {
                         let mut map = HashMap::new();
@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
         info!("Found service: {} at {}:{}", service.name, service.host, service.port);
         
         // Create and send doorbell request
-        match client.create_doorbell_request(&service.host, 22).await {
+        match client.create_doorbell_request(&service.host_string(), 22).await {
             Ok(request) => {
                 match client.send_doorbell(service, request).await {
                     Ok(response) => {

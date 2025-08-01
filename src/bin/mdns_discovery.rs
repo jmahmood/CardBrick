@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr, Ipv4Addr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::fmt;
 
 use anyhow::{Result, Context, bail};
@@ -18,13 +18,20 @@ use mdns::RecordKind;
 use serde::{Serialize, Deserialize};
 use futures_util::{pin_mut, StreamExt};
 use tokio::net::UdpSocket;
+use socket2::{Domain, Protocol, Socket, Type};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredService {
     pub name: String,
-    pub host: String,
+    pub host: IpAddr,
     pub port: u16,
     pub txt_records: HashMap<String, String>,
+}
+
+impl DiscoveredService {
+    pub fn host_string(&self) -> String {
+        self.host.to_string()
+    }
 }
 
 const CARDBRICK_SERVICE_TYPE: &str = "_cardbrick._tcp.local";
@@ -32,12 +39,12 @@ const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const UDP_BROADCAST_PORT: u16 = 6430; // Different from HTTP port to avoid conflicts
 
 #[derive(Debug, Clone)]
-pub struct ServiceInfo {
-    pub address: IpAddr,
-    pub port: u16,
-    pub hostname: String,
-    pub txt_records: HashMap<String, String>,
-    pub discovered_via: DiscoveryMethod,
+pub(crate) struct ServiceInfo {
+    pub(crate) address: IpAddr,
+    pub(crate) port: u16,
+    pub(crate) hostname: String,
+    pub(crate) txt_records: HashMap<String, String>,
+    pub(crate) discovered_via: DiscoveryMethod,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,7 +101,7 @@ impl MdnsDiscovery {
                 info!("Found {} services via mDNS", mdns_services.len());
                 for service_info in mdns_services {
                     let service = DiscoveredService::from(service_info);
-                    let addr_key = (service.host.parse::<IpAddr>().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)), service.port);
+                    let addr_key = (service.host, service.port);
                     if seen_addresses.insert(addr_key) {
                         services.push(service);
                     }
@@ -113,7 +120,7 @@ impl MdnsDiscovery {
                     info!("Found {} services via UDP broadcast", udp_services.len());
                     for service_info in udp_services {
                         let service = DiscoveredService::from(service_info);
-                        let addr_key = (service.host.parse::<IpAddr>().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)), service.port);
+                        let addr_key = (service.host, service.port);
                         if seen_addresses.insert(addr_key) {
                             services.push(service);
                         }
@@ -129,7 +136,7 @@ impl MdnsDiscovery {
         if services.is_empty() {
             warn!("No services discovered via mDNS or UDP, using fallback candidates");
             for service in self.get_fallback_candidates() {
-                let addr_key = (service.host.parse::<IpAddr>().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)), service.port);
+                let addr_key = (service.host, service.port);
                 if seen_addresses.insert(addr_key) {
                     services.push(service);
                 }
@@ -149,25 +156,49 @@ impl MdnsDiscovery {
             .listen();
         pin_mut!(stream);
         
-        // Use moving timeout to avoid deadline issue
-        while let Ok(Some(Ok(response))) = 
-            tokio::time::timeout(self.mdns_timeout, stream.next()).await 
-        {
-            debug!("mDNS response: {:?}", response);
-            if let Some(service_info) = Self::parse_mdns_response(response) {
-                services.push(service_info);
+        // Use single deadline to prevent N × timeout_duration discovery
+        let deadline = Instant::now() + self.mdns_timeout;
+        
+        loop {
+            // Check if we've exceeded our deadline
+            if Instant::now() >= deadline {
+                debug!("mDNS discovery deadline reached");
+                break;
+            }
+            
+            match tokio::time::timeout_at(deadline.into(), stream.next()).await {
+                Ok(Some(Ok(response))) => {
+                    debug!("mDNS response: {:?}", response);
+                    if let Some(service_info) = Self::parse_mdns_response(response).await {
+                        services.push(service_info);
+                    }
+                }
+                Ok(Some(Err(e))) => {
+                    debug!("mDNS stream error: {}", e);
+                    // Continue listening for more responses
+                }
+                Ok(None) => {
+                    debug!("mDNS stream ended");
+                    break;
+                }
+                Err(_) => {
+                    debug!("mDNS discovery timeout reached");
+                    break;
+                }
             }
         }
         
         Ok(services)
     }
     
-    /// Parse mDNS response into ServiceInfo 
-    fn parse_mdns_response(response: mdns::Response) -> Option<ServiceInfo> {
+    /// Parse mDNS response into ServiceInfo with DNS lookup for SRV-only responses
+    async fn parse_mdns_response(response: mdns::Response) -> Option<ServiceInfo> {
         let mut address = None;
         let mut port = None;
         let mut hostname = None;
+        let mut srv_target = None;
         let mut txt_records = HashMap::new();
+        const MAX_TXT_RECORDS: usize = 32;
         
         for record in response.records() {
             match &record.kind {
@@ -187,17 +218,24 @@ impl MdnsDiscovery {
                 }
                 RecordKind::SRV { port: srv_port, target, .. } => {
                     port = Some(*srv_port);
+                    srv_target = Some(target.clone());
                     if hostname.is_none() {
                         hostname = Some(target.clone());
                     }
                 }
                 RecordKind::TXT(txt_data) => {
-                    // Parse TXT records (key=value pairs) with safety guards
+                    // Parse TXT records with safety guards
                     for txt_entry in txt_data {
                         // Guard against oversized TXT records
                         if txt_entry.len() > 255 {
                             warn!("Oversized TXT record ignored: {} bytes", txt_entry.len());
                             continue;
+                        }
+                        
+                        // Guard against too many TXT records
+                        if txt_records.len() >= MAX_TXT_RECORDS {
+                            warn!("TXT record limit reached, ignoring additional records");
+                            break;
                         }
                         
                         if let Some((key, value)) = txt_entry.split_once('=') {
@@ -209,8 +247,26 @@ impl MdnsDiscovery {
             }
         }
         
+        // If we have SRV but no A/AAAA, try DNS lookup
+        if address.is_none() && srv_target.is_some() {
+            if let Some(target) = srv_target {
+                debug!("No A/AAAA record found, attempting DNS lookup for SRV target: {}", target);
+                match tokio::net::lookup_host(format!("{}:0", target)).await {
+                    Ok(mut addrs) => {
+                        if let Some(socket_addr) = addrs.next() {
+                            address = Some(socket_addr.ip());
+                            debug!("Resolved SRV target {} to {}", target, socket_addr.ip());
+                        }
+                    }
+                    Err(e) => {
+                        debug!("DNS lookup failed for SRV target {}: {}", target, e);
+                    }
+                }
+            }
+        }
+        
         // Validate we have required fields
-        let result = match (address, port, hostname.clone()) {
+        match (address, port, hostname.clone()) {
             (Some(addr), Some(p), Some(host)) => Some(ServiceInfo {
                 address: addr,
                 port: p,
@@ -223,20 +279,27 @@ impl MdnsDiscovery {
                       address, port, hostname);
                 None
             }
-        };
-        
-        result
+        }
     }
     
     /// UDP broadcast probe for legacy daemons
     async fn discover_via_udp_broadcast(&self) -> Result<Vec<ServiceInfo>> {
         let mut services = Vec::new();
         
-        // Create async UDP socket for broadcast  
-        let socket = UdpSocket::bind("0.0.0.0:0").await
-            .context("Failed to create UDP socket for broadcast")?;
-        socket.set_broadcast(true)
-            .context("Failed to enable broadcast on UDP socket")?;
+        // Create UDP socket with reuse_addr for broadcast
+        let socket2 = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+            .context("Failed to create socket2 UDP socket")?;
+        socket2.set_reuse_address(true)
+            .context("Failed to set SO_REUSEADDR")?;
+        socket2.set_broadcast(true)
+            .context("Failed to set SO_BROADCAST")?;
+        socket2.bind(&"0.0.0.0:0".parse::<SocketAddr>().unwrap().into())
+            .context("Failed to bind UDP socket")?;
+        socket2.set_nonblocking(true)
+            .context("Failed to set non-blocking mode")?;
+        
+        let socket = UdpSocket::from_std(socket2.into())
+            .context("Failed to convert to tokio UDP socket")?;
             
         // Get dynamic broadcast addresses from interfaces
         let broadcast_addrs = self.get_broadcast_addresses();
@@ -255,6 +318,8 @@ impl MdnsDiscovery {
         // Listen for responses with timeout
         let mut buffer = vec![0u8; 1024]; // Reuse buffer allocation
         let timeout_duration = Duration::from_secs(3);
+        let mut parse_error_count = 0;
+        const MAX_PARSE_ERRORS: usize = 10;
         
         loop {
             match tokio::time::timeout(timeout_duration, socket.recv_from(&mut buffer)).await {
@@ -262,9 +327,30 @@ impl MdnsDiscovery {
                     debug!("Received UDP response from {}: {} bytes", sender, size);
                     
                     // Parse response (expect JSON with service info)
-                    if let Ok(response_str) = std::str::from_utf8(&buffer[..size]) {
-                        if let Ok(service_info) = self.parse_udp_response(response_str, sender.ip()) {
-                            services.push(service_info);
+                    match std::str::from_utf8(&buffer[..size]) {
+                        Ok(response_str) => {
+                            match self.parse_udp_response(response_str, sender.ip()) {
+                                Ok(service_info) => {
+                                    services.push(service_info);
+                                    parse_error_count = 0; // Reset counter on success
+                                }
+                                Err(e) => {
+                                    debug!("Failed to parse UDP response from {}: {}", sender, e);
+                                    parse_error_count += 1;
+                                    if parse_error_count >= MAX_PARSE_ERRORS {
+                                        warn!("Too many UDP parse errors, stopping discovery");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Invalid UTF-8 in UDP response from {}: {}", sender, e);
+                            parse_error_count += 1;
+                            if parse_error_count >= MAX_PARSE_ERRORS {
+                                warn!("Too many UDP parse errors, stopping discovery");
+                                break;
+                            }
                         }
                     }
                     // Continue listening for more responses
@@ -291,6 +377,10 @@ impl MdnsDiscovery {
         // Add global broadcast
         broadcast_addrs.push(IpAddr::V4(Ipv4Addr::BROADCAST));
         
+        // Add IPv6 multicast addresses
+        broadcast_addrs.push(IpAddr::V6("ff02::1".parse().unwrap())); // All nodes
+        broadcast_addrs.push(IpAddr::V6("ff02::fb".parse().unwrap())); // mDNS multicast
+        
         // Get interface-specific broadcast addresses
         match if_addrs::get_if_addrs() {
             Ok(interfaces) => {
@@ -309,7 +399,7 @@ impl MdnsDiscovery {
                                 debug!("Added interface broadcast: {} for {}", broadcast, ip);
                             }
                             if_addrs::IfAddr::V6(_) => {
-                                // Skip IPv6 for now - could add IPv6 multicast later
+                                // IPv6 multicast already added above
                             }
                         }
                     }
@@ -387,19 +477,24 @@ impl MdnsDiscovery {
             ("192.168.1.100", 6429),
             ("192.168.0.100", 6429),
             ("10.0.0.100", 6429),
-            ("localhost", 6429),
+            ("127.0.0.1", 6429), // localhost as IP
         ];
         
-        candidates.iter().map(|(host, port)| {
-            let mut txt_records = HashMap::new();
-            txt_records.insert("proto".to_string(), "fallback".to_string());
-            txt_records.insert("ver".to_string(), "unknown".to_string());
-            
-            DiscoveredService {
-                name: format!("CardBrick Fallback ({})", host),
-                host: host.to_string(),
-                port: *port,
-                txt_records,
+        candidates.iter().filter_map(|(host_str, port)| {
+            if let Ok(host_ip) = host_str.parse::<IpAddr>() {
+                let mut txt_records = HashMap::new();
+                txt_records.insert("proto".to_string(), "fallback".to_string());
+                txt_records.insert("ver".to_string(), "unknown".to_string());
+                
+                Some(DiscoveredService {
+                    name: format!("CardBrick Fallback ({})", host_str),
+                    host: host_ip,
+                    port: *port,
+                    txt_records,
+                })
+            } else {
+                warn!("Invalid fallback candidate IP: {}", host_str);
+                None
             }
         }).collect()
     }
@@ -412,7 +507,7 @@ impl From<ServiceInfo> for DiscoveredService {
         
         DiscoveredService {
             name,
-            host: info.address.to_string(),
+            host: info.address,
             port: info.port,
             txt_records: info.txt_records,
         }
@@ -441,7 +536,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_service_deduplication() {
-        let discovery = MdnsDiscovery::new().with_timeout(Duration::from_millis(10));
+        let _discovery = MdnsDiscovery::new().with_timeout(Duration::from_millis(10));
         
         // Create duplicate services with same address:port
         let service1 = ServiceInfo {
@@ -466,7 +561,7 @@ mod tests {
         
         for service_info in vec![service1, service2] {
             let service = DiscoveredService::from(service_info);
-            let addr_key = (service.host.parse::<IpAddr>().unwrap(), service.port);
+            let addr_key = (service.host, service.port);
             if seen_addresses.insert(addr_key) {
                 services.push(service);
             }
@@ -474,7 +569,7 @@ mod tests {
         
         // Should only have one service due to deduplication
         assert_eq!(services.len(), 1);
-        assert_eq!(services[0].host, "192.168.1.100");
+        assert_eq!(services[0].host, "192.168.1.100".parse::<IpAddr>().unwrap());
         assert_eq!(services[0].port, 6429);
     }
     
@@ -531,8 +626,52 @@ mod tests {
         let discovered_service = DiscoveredService::from(service_info);
         
         assert_eq!(discovered_service.name, "CardBrick Sync (test-host via mDNS)");
-        assert_eq!(discovered_service.host, "192.168.1.100");
+        assert_eq!(discovered_service.host, "192.168.1.100".parse::<IpAddr>().unwrap());
         assert_eq!(discovered_service.port, 6429);
         assert_eq!(discovered_service.txt_records.get("version"), Some(&"1".to_string()));
+    }
+    
+    #[test]
+    #[cfg(not(ci))]
+    fn test_mdns_discovery_fast() {
+        // This test only runs outside CI to keep pipeline fast
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let discovery = MdnsDiscovery::new().with_timeout(Duration::from_millis(50));
+            let start = Instant::now();
+            let result = discovery.discover_services().await;
+            let elapsed = start.elapsed();
+            
+            assert!(elapsed < Duration::from_secs(1));
+            assert!(result.is_ok());
+        });
+    }
+    
+    #[test]
+    fn test_random_udp_responses() {
+        // Fuzz test for UDP response parsing robustness
+        let discovery = MdnsDiscovery::new();
+        let sender_ip = "127.0.0.1".parse().unwrap();
+        
+        let huge_response = "x".repeat(10000);
+        let invalid_responses = vec![
+            "", // Empty
+            "{", // Invalid JSON
+            r#"{"service":"wrong"}"#, // Wrong service
+            r#"{"service":"cardbrick"}"#, // Missing fields
+            r#"{"service":"cardbrick","port":"not_a_number"}"#, // Invalid port
+            &huge_response, // Huge response
+        ];
+        
+        for response in invalid_responses {
+            // Should not panic, just return error
+            let result = discovery.parse_udp_response(response, sender_ip);
+            assert!(result.is_err(), "Expected error for response: {}", response);
+        }
+        
+        // Valid response should work
+        let valid_response = r#"{"service":"cardbrick","version":"1","port":6429,"hostname":"test"}"#;
+        let result = discovery.parse_udp_response(valid_response, sender_ip);
+        assert!(result.is_ok());
     }
 }

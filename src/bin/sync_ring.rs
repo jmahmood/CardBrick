@@ -137,7 +137,7 @@ async fn attempt_sync(
 ) -> Result<DoorbellResponse> {
     // Create doorbell request
     let mut request = client.create_doorbell_request(
-        &service.host,
+        &service.host_string(),
         22, // Default SSH port - could be configurable
     ).await?;
     
