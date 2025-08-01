@@ -53,6 +53,11 @@ pub struct StudyingState<'a> {
     pub card_flip_time: Option<f32>,   // time when card was flipped (for speed bonus)
     pub session_has_again: bool,       // track if any "Again" was pressed (for perfect session bonus)
     pub cards_completed_today: i32,    // total cards completed in today's session
+    
+    // Battery optimization fields
+    pub animation_frame_counter: u32,  // for throttling animations to reduce battery usage
+    pub cached_daily_ratings: Option<Vec<(i64, String)>>, // cached database query results
+    pub ratings_cache_frame: u32,      // frame when cache was last updated
 }
 
 impl<'a> StudyingState<'a> {
@@ -93,7 +98,16 @@ impl<'a> StudyingState<'a> {
             card_flip_time: None,
             session_has_again: false,
             cards_completed_today: 0,
+            animation_frame_counter: 0,
+            cached_daily_ratings: None,
+            ratings_cache_frame: 0,
         }
+    }
+    
+    /// Invalidate the daily ratings cache when new ratings are added (battery optimization)
+    pub fn invalidate_ratings_cache(&mut self) {
+        self.cached_daily_ratings = None;
+        self.ratings_cache_frame = 0;
     }
 }
 
@@ -135,6 +149,9 @@ pub fn draw_studying_scene(
     sprite: &mut Sprite,
     canvas_manager: &CanvasManager,
 ) -> Result<(), String> {
+    // Increment frame counter for battery-optimized animations
+    studying_state.animation_frame_counter = studying_state.animation_frame_counter.wrapping_add(1);
+    
     // Layout constants
     const BAR_HEIGHT: f32 = 25.0;
     const CONTENT_TOP: f32 = BAR_HEIGHT + 15.0;
@@ -329,6 +346,7 @@ pub fn draw_studying_scene(
                 // Calculate centered position for banner text
                 let x_center = (512 - 380) / 2;  // Center based on layout width used in logic.rs
                 let y_center = (logical_height - layout.total_height as f32) / 2.0;
+                let layout_height = layout.total_height as f32; // Extract height to avoid borrow issues
                 
                 font_manager.draw_layout(
                     layout,
@@ -338,11 +356,9 @@ pub fn draw_studying_scene(
                     canvas_manager,
                 )?;
 
-                // Draw colored progress boxes for SessionComplete mode
+                // Draw colored progress boxes for SessionComplete mode (after layout borrow ends)
                 if studying_state.mode == StudyingScreenMode::SessionComplete {
-                    println!("DEBUG: About to call draw_session_progress_boxes");
-                    draw_session_progress_boxes(studying_state, canvas_manager, y_center + layout.total_height as f32 + 10.0)?;
-                    println!("DEBUG: draw_session_progress_boxes completed");
+                    draw_session_progress_boxes(studying_state, canvas_manager, y_center + layout_height + 10.0)?;
                 }
 
                 // Draw flashing prompt below banner/progress
@@ -352,14 +368,16 @@ pub fn draw_studying_scene(
                     _ => "",
                 };
                 
-                // Flash the prompt every 0.5 seconds
-                if (get_time() * 2.0).floor() as i32 % 2 == 0 {
+                // Flash the prompt every 30 frames (~0.5s at 60fps) - battery optimized
+                // Only evaluate flashing state once per 30 frames instead of every frame
+                let flash_visible = (studying_state.animation_frame_counter / 30) % 2 == 0;
+                if flash_visible {
                     let (prompt_w, _) = hint_font_manager.size_of_text(prompt_text)?;
                     let prompt_x = (512 - prompt_w) / 2;
                     let prompt_y = if studying_state.mode == StudyingScreenMode::SessionComplete {
-                        y_center + layout.total_height as f32 + 50.0  // Extra space for progress boxes
+                        y_center + layout_height + 50.0  // Extra space for progress boxes
                     } else {
-                        y_center + layout.total_height as f32 + 24.0
+                        y_center + layout_height + 24.0
                     };
                     let hint_ascent = hint_font_manager.metrics().0;
                     
@@ -383,26 +401,44 @@ pub fn draw_studying_scene(
 }
 
 /// Draw colored progress boxes showing today's performance (persistent across sessions)
-fn draw_session_progress_boxes(studying_state: &StudyingState, canvas_manager: &CanvasManager, y_position: f32) -> Result<(), String> {
+fn draw_session_progress_boxes(studying_state: &mut StudyingState, canvas_manager: &CanvasManager, y_position: f32) -> Result<(), String> {
     
-    // Get daily ratings from database instead of session-only ratings
-    let daily_ratings = match studying_state.db_manager.get_todays_ratings() {
-        Ok(ratings) => ratings,
-        Err(e) => {
-            println!("DEBUG: Failed to get daily ratings: {}", e);
-            return Ok(()); // No ratings to display
+    // Cache database query to avoid per-frame database hits (battery optimization)
+    let cache_expiry_frames = 300; // Refresh cache every 5 seconds (300 frames at 60fps)
+    let daily_ratings = if let Some(ref cached) = studying_state.cached_daily_ratings {
+        // Use cache if it's still fresh
+        if studying_state.animation_frame_counter - studying_state.ratings_cache_frame < cache_expiry_frames {
+            cached.clone()
+        } else {
+            // Cache expired, refresh
+            match studying_state.db_manager.get_todays_ratings() {
+                Ok(ratings) => {
+                    studying_state.cached_daily_ratings = Some(ratings.clone());
+                    studying_state.ratings_cache_frame = studying_state.animation_frame_counter;
+                    ratings
+                },
+                Err(_e) => {
+                    return Ok(()); // No ratings to display
+                }
+            }
+        }
+    } else {
+        // No cache yet, load initial data
+        match studying_state.db_manager.get_todays_ratings() {
+            Ok(ratings) => {
+                studying_state.cached_daily_ratings = Some(ratings.clone());
+                studying_state.ratings_cache_frame = studying_state.animation_frame_counter;
+                ratings
+            },
+            Err(_e) => {
+                return Ok(()); // No ratings to display
+            }
         }
     };
     
     let total_cards = daily_ratings.len();
     
-    println!("DEBUG: Daily ratings count: {}", total_cards);
-    for (i, (card_id, rating_str)) in daily_ratings.iter().enumerate() {
-        println!("DEBUG: Card {}: ID={}, Rating={}", i, card_id, rating_str);
-    }
-    
     if total_cards == 0 {
-        println!("DEBUG: No daily ratings found, not drawing progress bar");
         return Ok(()); // No ratings to display
     }
     

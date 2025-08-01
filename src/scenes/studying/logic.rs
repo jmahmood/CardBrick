@@ -290,7 +290,16 @@ pub fn handle_card_rating(
         }
         
         // Record rating in database for progress tracking
-        record_daily_rating(card_id, rating, timestamp)?;
+        let rating_str = match rating {
+            Rating::Again => "Again",
+            Rating::Hard => "Hard", 
+            Rating::Good => "Good",
+            Rating::Easy => "Easy",
+        };
+        state.db_manager.record_daily_rating(card_id, rating_str)?;
+        
+        // Invalidate the daily ratings cache since we just added a new rating (battery optimization)
+        state.invalidate_ratings_cache();
         
         // Auto-save progress (S3-7 requirement)
         flush_database()?;
@@ -324,30 +333,6 @@ fn trigger_goal_splash(state: &mut StudyingState, font: &mut FontManager) -> Res
     Ok(())
 }
 
-/// Records a daily rating in the database for progress tracking
-fn record_daily_rating(card_id: i64, rating: Rating, timestamp: i64) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::storage::db::progress_path;
-    use rusqlite::Connection;
-    
-    let db_path = progress_path();
-    let conn = Connection::open(&db_path)?;
-    
-    let date = chrono::Utc::now().date_naive();
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let rating_str = match rating {
-        Rating::Again => "Again",
-        Rating::Hard => "Hard", 
-        Rating::Good => "Good",
-        Rating::Easy => "Easy",
-    };
-    
-    conn.execute(
-        "INSERT INTO daily_ratings (card_id, rating, timestamp, date) VALUES (?1, ?2, ?3, ?4)",
-        [card_id.to_string(), rating_str.to_string(), timestamp.to_string(), date_str],
-    )?;
-    
-    Ok(())
-}
 
 /// Flushes database changes to disk for auto-save protection
 fn flush_database() -> Result<(), Box<dyn std::error::Error>> {
@@ -358,7 +343,10 @@ fn flush_database() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(&db_path)?;
     
     // Force WAL checkpoint to ensure data is written to disk
-    conn.execute("PRAGMA wal_checkpoint(FULL)", [])?;
+    // Note: wal_checkpoint returns results, so we use query_row to handle them properly
+    let _: (i32, i32, i32) = conn.query_row("PRAGMA wal_checkpoint(FULL)", [], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
     
     Ok(())
 }

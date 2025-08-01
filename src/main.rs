@@ -17,6 +17,7 @@ mod storage;
 mod debug;
 mod scenes;
 mod state;
+mod perf;
 
 #[cfg(test)]
 mod testing;
@@ -164,6 +165,9 @@ impl CardBrickApp {
         // Step 7: Finalize setup
         Self::show_loading_step(loading_canvas, loading_steps, 7).await;
 
+        // Set initial performance monitoring scene
+        perf::set_perf_scene("main_menu");
+        
         let app_state = AppState {
             game_state: GameState::MainMenu(MainMenuState::new()),
             available_decks,
@@ -560,6 +564,9 @@ impl CardBrickApp {
                             scenes::studying::logic::load_next_card(&mut studying_state, &mut self.app_state.font_manager, &mut self.app_state.small_font_manager);
                             println!("🎯 [{}ms] TOTAL POST-LOAD TIME - Study mode ready", start_time.elapsed().as_millis());
                             
+                            // Set performance monitoring scene
+                            perf::set_perf_scene("studying");
+                            
                             GameState::Studying(studying_state)
                         }
                         LoaderMessage::Complete(Err(e)) => GameState::Error(e),
@@ -570,6 +577,9 @@ impl CardBrickApp {
                 }
             }
             GameState::GoToDeckSelection => {
+                // Set performance monitoring scene
+                perf::set_perf_scene("deck_selection");
+                
                 let new_state = DeckSelectionState::new(
                     self.app_state.available_decks.clone(),
                 )?;
@@ -756,6 +766,9 @@ async fn main() {
 
     info!("Starting CardBrick application");
     
+    // Initialize performance monitoring
+    perf::init_perf_monitor();
+    
     // Show loading screen while initializing
     info!("Initializing application...");
     
@@ -821,15 +834,29 @@ async fn main() {
         
         if frame_count % 60 == 0 {
             info!("FPS {}", macroquad::time::get_fps());
+            // Take performance sample every second (60 frames)
+            perf::perf_sample();
         }
 
         let frame_start = macroquad::time::get_time();
         
+        // Save performance data periodically (every 5 minutes = 18000 frames)
+        if frame_count % 18000 == 0 {
+            let filename = format!("perf_dump_{}.json", frame_count / 18000);
+            if let Err(e) = perf::save_perf_results(&filename) {
+                warn!("Failed to save performance data: {}", e);
+            } else {
+                info!("Performance data saved to {}", filename);
+            }
+        }
+
         // Add error handling around update and draw
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Err(e) = app.update() {
                 error!("Update error: {}", e);
                 if e.contains("quit") {
+                    // Save performance data before exiting
+                    let _ = perf::save_perf_results("perf_final.json");
                     std::process::exit(0);
                 }
             }
