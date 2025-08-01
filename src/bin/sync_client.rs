@@ -16,15 +16,9 @@ use serde::{Serialize, Deserialize};
 use reqwest::Client;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use ring::rand::SystemRandom;
-// Note: mDNS implementation simplified for initial version
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveredService {
-    pub name: String,
-    pub host: String,
-    pub port: u16,
-    pub txt_records: HashMap<String, String>,
-}
+pub mod mdns_discovery;
+use mdns_discovery::{MdnsDiscovery, DiscoveredService};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DoorbellRequest {
@@ -47,6 +41,7 @@ pub struct SyncClient {
     http_client: Client,
     key_pair: Ed25519KeyPair,
     device_ip: String,
+    mdns_discovery: MdnsDiscovery,
 }
 
 impl SyncClient {
@@ -66,37 +61,51 @@ impl SyncClient {
         let device_ip = get_local_ip()
             .context("Failed to determine device IP address")?;
             
+        // Initialize mDNS discovery
+        let mdns_discovery = MdnsDiscovery::new();
+            
         Ok(Self {
             http_client,
             key_pair,
             device_ip,
+            mdns_discovery,
         })
     }
     
     pub async fn discover_services(&mut self) -> Vec<DiscoveredService> {
-        info!("Starting service discovery for CardBrick sync daemons");
+        info!("Starting mDNS-based service discovery for CardBrick sync daemons");
         
-        // For initial implementation, try common IP ranges and broadcast addresses
-        // A full mDNS implementation would be added later
+        // Use proper mDNS discovery with UDP broadcast fallback
+        let services = match self.mdns_discovery.discover_services().await {
+            Ok(services) => services,
+            Err(e) => {
+                warn!("Service discovery failed: {}", e);
+                return Vec::new(); // Return empty vec on discovery failure
+            }
+        };
         
-        let mut discovered = Vec::new();
+        // Validate discovered services with health checks
+        let mut validated_services = Vec::new();
         
-        // Common desktop IP addresses to try
-        let candidate_hosts = vec![
-            "192.168.1.100", "192.168.1.101", "192.168.1.102",
-            "192.168.0.100", "192.168.0.101", "192.168.0.102",
-            "10.0.0.100", "10.0.0.101", "10.0.0.102",
-            "localhost", "cardbrick-desktop"
-        ];
-        
-        for host in candidate_hosts {
-            if let Ok(service) = self.probe_host(host, 6429).await {
-                info!("Found CardBrick service at {}:{}", host, 6429);
-                discovered.push(service);
+        for service in services {
+            debug!("Validating service: {} ({}:{})", service.name, service.host, service.port);
+            
+            // Quick health check to ensure service is actually responding
+            match self.probe_host(&service.host, service.port).await {
+                Ok(_) => {
+                    info!("Validated CardBrick service: {} ({}:{})", 
+                          service.name, service.host, service.port);
+                    validated_services.push(service);
+                }
+                Err(e) => {
+                    warn!("Service validation failed for {} ({}:{}): {}", 
+                          service.name, service.host, service.port, e);
+                }
             }
         }
         
-        discovered
+        info!("Discovered and validated {} CardBrick sync services", validated_services.len());
+        validated_services
     }
     
     async fn probe_host(&self, host: &str, port: u16) -> Result<DiscoveredService> {

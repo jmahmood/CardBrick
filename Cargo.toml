@@ -43,6 +43,12 @@ ring = "0.16"
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
 hex = "0.4"
 
+# mDNS service discovery
+mdns = "3.0"
+socket2 = "0.5"
+futures-util = "0.3"
+if-addrs = "0.12"
+
 # Remove web server for embedded version
 # tiny_http = "0.12"
 
@@ -54,6 +60,10 @@ sim = []
 [[bin]]
 name = "cardbrick"
 path = "src/main.rs"
+
+[[bin]]
+name = "sync_client"
+path = "src/bin/sync_client.rs"
 
 [[bin]]
 name = "sync_ring"

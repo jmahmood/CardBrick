@@ -18,8 +18,10 @@ use log::{info, warn, error};
 use serde::{Serialize, Deserialize};
 use tokio::time::timeout;
 
+#[path = "sync_client.rs"]
 mod sync_client;
-use sync_client::{SyncClient, DiscoveredService, DoorbellResponse};
+use sync_client::{SyncClient, DoorbellResponse};
+use sync_client::mdns_discovery::DiscoveredService;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SyncState {
