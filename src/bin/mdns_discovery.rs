@@ -32,6 +32,16 @@ impl DiscoveredService {
     pub fn host_string(&self) -> String {
         self.host.to_string()
     }
+    
+    pub fn as_socket_addr(&self, port_override: Option<u16>) -> SocketAddr {
+        SocketAddr::new(self.host, port_override.unwrap_or(self.port))
+    }
+}
+
+impl fmt::Display for DiscoveredService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({}:{})", self.name, self.host, self.port)
+    }
 }
 
 const CARDBRICK_SERVICE_TYPE: &str = "_cardbrick._tcp.local";
@@ -157,16 +167,23 @@ impl MdnsDiscovery {
         pin_mut!(stream);
         
         // Use single deadline to prevent N × timeout_duration discovery
-        let deadline = Instant::now() + self.mdns_timeout;
+        let std_deadline = Instant::now() + self.mdns_timeout;
         
         loop {
             // Check if we've exceeded our deadline
-            if Instant::now() >= deadline {
+            if Instant::now() >= std_deadline {
                 debug!("mDNS discovery deadline reached");
                 break;
             }
             
-            match tokio::time::timeout_at(deadline.into(), stream.next()).await {
+            // Calculate remaining time for tighter latency
+            let remaining = std_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                debug!("mDNS discovery time remaining is zero");
+                break;
+            }
+            
+            match tokio::time::timeout(remaining, stream.next()).await {
                 Ok(Some(Ok(response))) => {
                     debug!("mDNS response: {:?}", response);
                     if let Some(service_info) = Self::parse_mdns_response(response).await {
@@ -228,7 +245,12 @@ impl MdnsDiscovery {
                     for txt_entry in txt_data {
                         // Guard against oversized TXT records
                         if txt_entry.len() > 255 {
-                            warn!("Oversized TXT record ignored: {} bytes", txt_entry.len());
+                            let preview = if txt_entry.len() > 32 {
+                                format!("{}...", &txt_entry[..32])
+                            } else {
+                                txt_entry.clone()
+                            };
+                            warn!("Oversized TXT record ignored: {} bytes, content: {:?}", txt_entry.len(), preview);
                             continue;
                         }
                         
@@ -295,8 +317,7 @@ impl MdnsDiscovery {
             .context("Failed to set SO_BROADCAST")?;
         socket2.bind(&"0.0.0.0:0".parse::<SocketAddr>().unwrap().into())
             .context("Failed to bind UDP socket")?;
-        socket2.set_nonblocking(true)
-            .context("Failed to set non-blocking mode")?;
+        // Note: set_nonblocking is redundant after UdpSocket::from_std() but harmless
         
         let socket = UdpSocket::from_std(socket2.into())
             .context("Failed to convert to tokio UDP socket")?;
@@ -307,11 +328,23 @@ impl MdnsDiscovery {
         // Broadcast probe message
         let probe_message = b"CARDBRICK_DISCOVER_V1";
         
+        // Send IPv4 broadcasts with existing socket
         for addr in &broadcast_addrs {
-            let target = SocketAddr::new(*addr, UDP_BROADCAST_PORT);
-            debug!("Sending UDP broadcast to {}", target);
-            if let Err(e) = socket.send_to(probe_message, target).await {
-                debug!("Failed to send to {}: {}", target, e);
+            if addr.is_ipv4() {
+                let target = SocketAddr::new(*addr, UDP_BROADCAST_PORT);
+                debug!("Sending UDP broadcast to {}", target);
+                if let Err(e) = socket.send_to(probe_message, target).await {
+                    debug!("Failed to send to {}: {}", target, e);
+                }
+            } else {
+                debug!("Skipping IPv6 address {} (IPv4 socket)", addr);
+            }
+        }
+        
+        // Try IPv6 multicast with separate socket (if enabled)
+        if std::env::var("CARDBRICK_ENABLE_IPV6").is_ok() {
+            if let Err(e) = self.send_ipv6_multicast(probe_message).await {
+                debug!("IPv6 multicast failed: {}", e);
             }
         }
         
@@ -370,16 +403,49 @@ impl MdnsDiscovery {
         Ok(services)
     }
     
+    /// Send IPv6 multicast with separate socket
+    async fn send_ipv6_multicast(&self, message: &[u8]) -> Result<()> {
+        // Create IPv6 socket for multicast
+        let socket6 = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))
+            .context("Failed to create IPv6 UDP socket")?;
+        socket6.set_reuse_address(true)
+            .context("Failed to set SO_REUSEADDR on IPv6 socket")?;
+        socket6.bind(&"[::]:0".parse::<SocketAddr>().unwrap().into())
+            .context("Failed to bind IPv6 socket")?;
+        // Note: set_nonblocking is redundant after UdpSocket::from_std() but harmless
+        
+        let socket6 = UdpSocket::from_std(socket6.into())
+            .context("Failed to convert IPv6 socket to tokio")?;
+        
+        // IPv6 multicast addresses
+        let ipv6_targets = [
+            "[ff02::1]", // All nodes (link-local)
+            "[ff02::fb]", // mDNS multicast (link-local)
+        ];
+        
+        for target_str in &ipv6_targets {
+            match format!("{}:{}", target_str, UDP_BROADCAST_PORT).parse::<SocketAddr>() {
+                Ok(target) => {
+                    debug!("Sending IPv6 multicast to {}", target);
+                    if let Err(e) = socket6.send_to(message, target).await {
+                        debug!("Failed to send IPv6 multicast to {}: {}", target, e);
+                    }
+                }
+                Err(e) => {
+                    warn!("Invalid IPv6 multicast address {}: {}", target_str, e);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
     /// Get broadcast addresses from network interfaces
     fn get_broadcast_addresses(&self) -> Vec<IpAddr> {
         let mut broadcast_addrs = Vec::new();
         
-        // Add global broadcast
+        // Add global IPv4 broadcast
         broadcast_addrs.push(IpAddr::V4(Ipv4Addr::BROADCAST));
-        
-        // Add IPv6 multicast addresses
-        broadcast_addrs.push(IpAddr::V6("ff02::1".parse().unwrap())); // All nodes
-        broadcast_addrs.push(IpAddr::V6("ff02::fb".parse().unwrap())); // mDNS multicast
         
         // Get interface-specific broadcast addresses
         match if_addrs::get_if_addrs() {
@@ -399,7 +465,7 @@ impl MdnsDiscovery {
                                 debug!("Added interface broadcast: {} for {}", broadcast, ip);
                             }
                             if_addrs::IfAddr::V6(_) => {
-                                // IPv6 multicast already added above
+                                // IPv6 handled separately with dedicated socket
                             }
                         }
                     }
@@ -650,7 +716,6 @@ mod tests {
     #[test]
     fn test_random_udp_responses() {
         // Fuzz test for UDP response parsing robustness
-        let discovery = MdnsDiscovery::new();
         let sender_ip = "127.0.0.1".parse().unwrap();
         
         let huge_response = "x".repeat(10000);
@@ -664,14 +729,41 @@ mod tests {
         ];
         
         for response in invalid_responses {
+            // Create fresh discovery instance per test to avoid state contamination
+            let discovery = MdnsDiscovery::new();
+            
             // Should not panic, just return error
             let result = discovery.parse_udp_response(response, sender_ip);
             assert!(result.is_err(), "Expected error for response: {}", response);
         }
         
         // Valid response should work
+        let discovery = MdnsDiscovery::new();
         let valid_response = r#"{"service":"cardbrick","version":"1","port":6429,"hostname":"test"}"#;
         let result = discovery.parse_udp_response(valid_response, sender_ip);
         assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_discovered_service_helpers() {
+        let service = DiscoveredService {
+            name: "Test Service".to_string(),
+            host: "192.168.1.100".parse().unwrap(),
+            port: 6429,
+            txt_records: HashMap::new(),
+        };
+        
+        // Test Display trait
+        assert_eq!(service.to_string(), "Test Service (192.168.1.100:6429)");
+        
+        // Test as_socket_addr helper
+        let socket_addr = service.as_socket_addr(None);
+        assert_eq!(socket_addr.ip().to_string(), "192.168.1.100");
+        assert_eq!(socket_addr.port(), 6429);
+        
+        // Test as_socket_addr with port override
+        let socket_addr_override = service.as_socket_addr(Some(8080));
+        assert_eq!(socket_addr_override.port(), 8080);
+        assert_eq!(socket_addr_override.ip().to_string(), "192.168.1.100");
     }
 }
