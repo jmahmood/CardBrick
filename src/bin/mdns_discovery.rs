@@ -548,6 +548,18 @@ impl From<ServiceInfo> for DiscoveredService {
     }
 }
 
+/// Minimal CLI entry so this binary compiles and can be used for diagnostics.
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
+    let discovery = MdnsDiscovery::new();
+    let services = discovery.discover_services().await?;
+    for svc in services {
+        println!("{} {}:{}", svc.name, svc.host, svc.port);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

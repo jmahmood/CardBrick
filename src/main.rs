@@ -544,6 +544,8 @@ impl CardBrickApp {
     }
 
     fn handle_input(&mut self, input: BrickInput) -> Result<(), String> {
+        // Any input implies a visible change soon; mark for redraw.
+        self.needs_redraw = true;
         match input {
             BrickInput::ButtonDown(BrickButton::Guide) => return Err("User quit".into()),
             _ => {}
@@ -622,6 +624,8 @@ impl CardBrickApp {
             }
             other_state => other_state,
         };
+        // State changes typically require a redraw
+        self.needs_redraw = true;
         Ok(())
     }
 
@@ -881,7 +885,7 @@ async fn main() {
             }
         }
 
-        // Add error handling around update and draw
+        // Add error handling around update and conditional draw
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Err(e) = app.update() {
                 error!("Update error: {}", e);
@@ -891,11 +895,13 @@ async fn main() {
                     std::process::exit(0);
                 }
             }
-            if let Err(e) = app.draw() {
-                error!("Draw error: {}", e);
-            } else {
-                // A full frame was drawn; we can reset the redraw flag
-                app.needs_redraw = false;
+            if app.needs_redraw {
+                if let Err(e) = app.draw() {
+                    error!("Draw error: {}", e);
+                } else {
+                    // A full frame was drawn; we can reset the redraw flag
+                    app.needs_redraw = false;
+                }
             }
         })) {
             Ok(()) => {
@@ -907,8 +913,13 @@ async fn main() {
             }
         }
         
-        // Present the frame
+        // Present the frame / pump events
         next_frame().await;
+
+        // When nothing needs redraw, yield extra time to the OS to save power.
+        if !app.needs_redraw {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
 
         // Manual FPS cap on desktop to avoid 100% CPU when vsync is off
         if cfg!(target_arch = "x86_64") || std::env::var("CARDBRICK_FORCE_FPS_CAP").is_ok() {
