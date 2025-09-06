@@ -11,6 +11,11 @@ use rand::thread_rng;
 use chrono::Utc;
 use rusqlite::Connection;
 
+// Reasonable safety caps to avoid pathological values from DB corruption
+const MAX_INTERVAL_DAYS: u32 = 36500; // ~100 years
+const MIN_EASE: f32 = 1.3;
+const MAX_EASE: f32 = 2.5;
+
 
 /// Represents the user's rating for a card.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,12 +43,32 @@ pub fn apply_rating_with_path(card_id: i64, quality: Rating, timestamp: i64, db_
     )?;
     
     let (mut interval, mut ease_factor, mut reps, mut lapses): (u32, f32, u32, u32) = match stmt.query_row([card_id], |row| {
-        Ok((
-            row.get::<_, Option<i64>>(0)?.unwrap_or(0) as u32,
-            row.get::<_, Option<f64>>(1)?.unwrap_or(2.5) as f32,
-            row.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
-            row.get::<_, Option<i64>>(3)?.unwrap_or(0) as u32,
-        ))
+        // Pull raw optional values
+        let raw_interval: Option<i64> = row.get(0)?;
+        let raw_ease: Option<f64> = row.get(1)?;
+        let raw_reps: Option<i64> = row.get(2)?;
+        let raw_lapses: Option<i64> = row.get(3)?;
+
+        // Sanitize each field
+        let interval = match raw_interval {
+            Some(v) if v > 0 => (v as u64).min(MAX_INTERVAL_DAYS as u64) as u32,
+            _ => 0,
+        };
+        let ease_factor = match raw_ease {
+            Some(v) => v as f32,
+            None => 2.5,
+        }
+        .clamp(MIN_EASE, MAX_EASE);
+        let reps = match raw_reps {
+            Some(v) if v > 0 => v as u32,
+            _ => 0,
+        };
+        let lapses = match raw_lapses {
+            Some(v) if v > 0 => v as u32,
+            _ => 0,
+        };
+
+        Ok((interval, ease_factor, reps, lapses))
     }) {
         Ok(values) => values,
         Err(_) => (0, 2.5, 0, 0), // New card defaults
@@ -53,12 +78,12 @@ pub fn apply_rating_with_path(card_id: i64, quality: Rating, timestamp: i64, db_
     match quality {
         Rating::Again => {
             lapses += 1;
-            ease_factor = (ease_factor - 0.2).max(1.3); // Clamp minimum ease to 1.3
+            ease_factor = (ease_factor - 0.2).max(MIN_EASE); // Clamp minimum ease
             interval = 1; // Reset interval to 1 day
             reps = 0; // Reset repetition count
         }
         Rating::Hard => {
-            ease_factor = (ease_factor - 0.15).max(1.3); // Clamp minimum ease to 1.3
+            ease_factor = (ease_factor - 0.15).max(MIN_EASE); // Clamp minimum ease
             reps += 1;
             interval = if interval == 0 {
                 1
@@ -77,7 +102,7 @@ pub fn apply_rating_with_path(card_id: i64, quality: Rating, timestamp: i64, db_
             };
         }
         Rating::Easy => {
-            ease_factor = (ease_factor + 0.15).min(2.5); // Clamp maximum ease to 2.5
+            ease_factor = (ease_factor + 0.15).min(MAX_EASE); // Clamp maximum ease
             reps += 1;
             interval = if interval == 0 {
                 4 // Easy first rating gets 4 days
@@ -87,9 +112,17 @@ pub fn apply_rating_with_path(card_id: i64, quality: Rating, timestamp: i64, db_
             };
         }
     }
+
+    // Final clamping to avoid pathological values
+    if !ease_factor.is_finite() {
+        ease_factor = 2.0; // reasonable default if NaN/Inf
+    }
+    ease_factor = ease_factor.clamp(MIN_EASE, MAX_EASE);
+    interval = interval.min(MAX_INTERVAL_DAYS);
     
-    // Calculate next due timestamp (today + interval days)
-    let next_due_ts = timestamp + (interval as i64 * 24 * 60 * 60);
+    // Calculate next due timestamp (today + interval days) with saturating math
+    let interval_secs = (interval as i64).saturating_mul(24 * 60 * 60);
+    let next_due_ts = timestamp.saturating_add(interval_secs);
     
     // Update or insert srs_log entry
     conn.execute(

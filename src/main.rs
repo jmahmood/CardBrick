@@ -390,6 +390,8 @@ impl CardBrickApp {
                             //     16
                             // );
                             self.app_state.japanese_font_ready = true;
+                            // Ensure we redraw to reflect the new font
+                            self.needs_redraw = true;
                             should_remove_receiver = true;
                         },
                         Err(e) => {
@@ -509,11 +511,33 @@ impl CardBrickApp {
 
         // Update game state
         self.update_state()?;
-        self.app_state.sprite.update();
+        if self.app_state.sprite.update() {
+            self.needs_redraw = true;
+        }
 
-        // Update deck selection animation if in deck selection state
+        // Update deck selection animation and request redraw only when frame changes
         if let GameState::DeckSelection(deck_selection_state) = &mut self.app_state.game_state {
-            deck_selection_state.update(get_frame_time());
+            if deck_selection_state.update(get_frame_time()) {
+                self.needs_redraw = true;
+            }
+        }
+
+        // Minimal redraw cadence for animated studying screens
+        if let GameState::Studying(studying_state) = &mut self.app_state.game_state {
+            use crate::scenes::studying::StudyingScreenMode;
+            match studying_state.mode {
+                StudyingScreenMode::GoalSplash => {
+                    // Fade-in and timer-driven transition need continuous redraw
+                    self.needs_redraw = true;
+                }
+                StudyingScreenMode::SessionComplete => {
+                    // Flash prompt ~2Hz; redraw on boundary to save power
+                    if studying_state.animation_frame_counter % 30 == 0 {
+                        self.needs_redraw = true;
+                    }
+                }
+                _ => {}
+            }
         }
 
         Ok(())
@@ -761,8 +785,6 @@ fn window_conf() -> Conf {
 async fn main() {
     // Initialize logging
     env_logger::init();
-    const TARGET_FPS: f64 = 60.0;
-    const TARGET_DT: f64 = 1.0 / TARGET_FPS;
 
     info!("Starting CardBrick application");
     
@@ -833,12 +855,12 @@ async fn main() {
         frame_count += 1;
         
         if frame_count % 60 == 0 {
-            info!("FPS {}", macroquad::time::get_fps());
+            if cfg!(debug_assertions) {
+                info!("FPS {}", macroquad::time::get_fps());
+            }
             // Take performance sample every second (60 frames)
             perf::perf_sample();
         }
-
-        let frame_start = macroquad::time::get_time();
         
         // Save performance data periodically (every 5 minutes = 18000 frames)
         if frame_count % 18000 == 0 {
@@ -862,6 +884,9 @@ async fn main() {
             }
             if let Err(e) = app.draw() {
                 error!("Draw error: {}", e);
+            } else {
+                // A full frame was drawn; we can reset the redraw flag
+                app.needs_redraw = false;
             }
         })) {
             Ok(()) => {
@@ -873,16 +898,7 @@ async fn main() {
             }
         }
         
-        // Limit to 60 FPS
+        // Advance to the next frame; Macroquad will handle pacing
         next_frame().await;
-
-        if cfg!(target_arch = "x86_64") {
-            let dt = macroquad::time::get_time() - frame_start;
-            if dt < TARGET_DT {
-                std::thread::sleep(
-                    std::time::Duration::from_secs_f64(TARGET_DT - dt)
-                );
-            }
-        }
     }
 }

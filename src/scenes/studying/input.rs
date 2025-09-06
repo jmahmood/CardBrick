@@ -10,7 +10,19 @@ use super::{StudyingState, StudyingScreenMode};
 pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<(), String> {
     if let GameState::Studying(studying_state) = &mut state.game_state {
         // Update goal splash auto-transition
+        let was_goal_splash = studying_state.mode == StudyingScreenMode::GoalSplash;
         update_goal_splash(studying_state);
+
+        // If the splash just ended, advance to the next card (or session complete)
+        if was_goal_splash && studying_state.mode == StudyingScreenMode::InProgress {
+            load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
+        }
+
+        // If we just exited the splash or otherwise have no active card while in progress,
+        // attempt to load the next card (this also transitions to SessionComplete when deck is done).
+        if studying_state.mode == StudyingScreenMode::InProgress && studying_state.current_card.is_none() {
+            load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
+        }
         match input {
             // DPad Down: Reveal answer, scroll down, or scroll detail view
             BrickInput::ButtonDown(BrickButton::DPadDown) => {
@@ -74,9 +86,10 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                         }
                     },
                     StudyingScreenMode::GoalSplash => {
-                        // Skip goal splash and return to studying
+                        // Skip goal splash and return to studying; also advance to next card or session complete
                         studying_state.mode = StudyingScreenMode::InProgress;
                         studying_state.goal_splash_started = None;
+                        load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
                     },
                     StudyingScreenMode::SessionComplete => {
                         // User wants to continue studying beyond daily goal
@@ -100,9 +113,10 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                         }
                     },
                     StudyingScreenMode::GoalSplash => {
-                        // Skip goal splash and return to studying  
+                        // Skip goal splash and return to studying; also advance to next card or session complete
                         studying_state.mode = StudyingScreenMode::InProgress;
                         studying_state.goal_splash_started = None;
+                        load_next_card(studying_state, &mut state.font_manager, &mut state.small_font_manager);
                     },
                     StudyingScreenMode::SessionComplete | StudyingScreenMode::ExhaustedDeck => {
                         // User wants to return to deck selection

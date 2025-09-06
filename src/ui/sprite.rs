@@ -28,12 +28,15 @@ impl Sprite {
     }
 
     /// Updates the sprite's animation state. Should be called once per frame.
-    pub fn update(&mut self) {
+    /// Returns true if the visual state changed this frame (requires redraw).
+    pub fn update(&mut self) -> bool {
         // For idle, we'll make the sprite blink every so often.
         if self.last_frame_time.elapsed().as_millis() > 500 {
             self.is_blinking = !self.is_blinking;
             self.last_frame_time = Instant::now();
+            return true;
         }
+        false
     }
 
     /// Draws the sprite to the canvas.

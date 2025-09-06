@@ -38,8 +38,9 @@ impl DeckSelectionState {
         })
     }
 
-    /// Updates the character animation state
-    pub fn update(&mut self, delta_time: f32) {
+    /// Updates the character animation state. Returns true when the
+    /// current frame advances (i.e., a visible change that needs redraw).
+    pub fn update(&mut self, delta_time: f32) -> bool {
         const FRAME_DURATION: f32 = 0.1; // Faster animation for jumping
         const NUM_FRAMES: usize = 10; // Upward Jump sprite has 10 frames
         
@@ -47,7 +48,9 @@ impl DeckSelectionState {
         if self.character_anim_timer >= FRAME_DURATION {
             self.character_current_frame = (self.character_current_frame + 1) % NUM_FRAMES;
             self.character_anim_timer -= FRAME_DURATION;
+            return true;
         }
+        false
     }
 
     pub fn index_changes(&mut self, delta: isize, total: usize) -> bool {
