@@ -10,15 +10,12 @@ pub mod input;
 /// Contains the state specific to the main menu screen.
 pub struct MainMenuState {
     pub selected_index: usize,
-    // Offscreen cache for static background + static labels
-    bg_rt: Option<RenderTarget>,
-    bg_dirty: bool,
 }
 
 impl MainMenuState {
     /// Creates a new MainMenuState with a default selection.
     pub fn new() -> Self {
-        Self { selected_index: 0, bg_rt: None, bg_dirty: true }
+        Self { selected_index: 0 }
     }
 }
 
@@ -26,64 +23,56 @@ impl MainMenuState {
 /// This function was moved from main.rs.
 pub fn draw_main_menu_scene(
     font_manager: &FontManager,
+    small_font_manager: &FontManager,
     canvas_manager: &CanvasManager,
     state: &mut MainMenuState,
 ) -> Result<(), String> {
     let options = ["Study", "Progress", "Send Backup", "Quit"];
     
-    // Offscreen cache background + static texts
-    let (logical_width, logical_height) = canvas_manager.logical_size();
+    // Draw everything directly in screen space so it lines up with text
+    let (logical_width, _logical_height) = canvas_manager.logical_size();
     let (screen_x, screen_y) = canvas_manager.logical_to_screen(0.0, 0.0);
-    let screen_w = logical_width * canvas_manager.get_scale_factor();
-    let screen_h = logical_height * canvas_manager.get_scale_factor();
+    let scale = canvas_manager.get_scale_factor();
+    let screen_w = logical_width * scale;
+    let screen_h = 384.0 * scale;
 
-    if state.bg_rt.is_none() || state.bg_dirty {
-        let rt = render_target(512, 384);
-        rt.texture.set_filter(FilterMode::Nearest);
+    // Background base
+    draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 41, 46, 255));
 
-        set_camera(&Camera2D {
-            zoom: vec2(1.0 / 512.0, 1.0 / 384.0),
-            target: vec2(256.0, 192.0),
-            render_target: Some(rt.clone()),
-            ..Default::default()
-        });
+    // Header banner and accents
+    let header_h = 64.0;
+    draw_rectangle(screen_x, screen_y, 512.0 * scale, header_h * scale, Color::from_rgba(35, 43, 68, 255));
+    draw_rectangle(screen_x, screen_y + (header_h - 2.0) * scale, 512.0 * scale, 2.0 * scale, Color::from_rgba(100, 180, 255, 180));
+    draw_rectangle(screen_x, screen_y + header_h * scale, 4.0 * scale, 16.0 * scale, Color::from_rgba(100, 180, 255, 140));
+    draw_rectangle(screen_x + (512.0 - 4.0) * scale, screen_y + header_h * scale, 4.0 * scale, 16.0 * scale, Color::from_rgba(100, 180, 255, 140));
 
-        clear_background(Color::from_rgba(40, 40, 45, 255));
+    // Title with drop shadow (smaller font)
+    let title_x = 24;
+    let title_y = 18;
+    small_font_manager.draw_single_line("CardBrick", title_x + 1, title_y + 1, canvas_manager)?;
+    small_font_manager.draw_single_line("CardBrick", title_x, title_y, canvas_manager)?;
+    small_font_manager.draw_single_line("Manual sync available", 24, 42, canvas_manager)?;
 
-        // Use unit canvas to draw at logical coordinates without scaling
-        let unit_canvas = CanvasManager::new_with_screen_size(512.0, 384.0)
-            .map_err(|e| format!("Canvas init failed for RT: {}", e))?;
-        font_manager.draw_single_line("CardBrick", 20, 50, &unit_canvas)?;
-        font_manager.draw_single_line("Manual sync available", 20, 80, &unit_canvas)?;
-
-        set_default_camera();
-
-        state.bg_rt = Some(rt);
-        state.bg_dirty = false;
-    }
-
-    if let Some(rt) = &state.bg_rt {
-        draw_texture_ex(
-            &rt.texture,
-            screen_x,
-            screen_y,
-            WHITE,
-            DrawTextureParams { dest_size: Some(Vec2::new(screen_w, screen_h)), ..Default::default() },
-        );
-    }
-
-    let mut y_pos = 150;
-    let font_size = 18.0;
+    let mut y_pos = 140;
+    let padding_x = 16.0;
+    let padding_y = 8.0;
     for (i, option) in options.iter().enumerate() {
+        let (text_w, text_h) = font_manager.size_of_text(option)?;
+        let text_left = 24.0;
         if i == state.selected_index {
-            let (text_w, text_h) = font_manager.size_of_text(option)?;
-            let (highlight_x, highlight_y) = canvas_manager.logical_to_screen(font_size, y_pos as f32);
-            let highlight_w = (text_w + 4) as f32 * canvas_manager.get_scale_factor();
-            let highlight_h = text_h as f32 * canvas_manager.get_scale_factor();
-            
-            draw_rectangle(highlight_x, highlight_y - (text_h as f32), highlight_w, highlight_h, Color::from_rgba(80, 80, 80, 255));
+            // Highlight block aligned to text baseline using ascent, plus slight downward offset
+            let ascent = font_manager.metrics().0; // logical px
+            let y_top = (y_pos as f32 - ascent) - padding_y; // push 6px down
+            let (hx, hy) = canvas_manager.logical_to_screen(text_left - padding_x, y_top);
+            let hw = (text_w as f32 + padding_x * 2.0) * canvas_manager.get_scale_factor();
+            let hh = (text_h as f32 + padding_y * 2.0) * canvas_manager.get_scale_factor();
+            draw_rectangle(hx, hy, hw, hh, Color::from_rgba(57, 85, 165, 220));
+
+            // Left accent bar
+            let (ax, ay) = canvas_manager.logical_to_screen(text_left - padding_x, y_top);
+            draw_rectangle(ax, ay, 4.0 * canvas_manager.get_scale_factor(), hh, Color::from_rgba(100, 180, 255, 255));
         }
-        font_manager.draw_single_line(option, 20, y_pos, canvas_manager)?;
+        font_manager.draw_single_line(option, text_left as i32, y_pos, canvas_manager)?;
         y_pos += 40;
     }
     Ok(())

@@ -197,13 +197,24 @@ pub fn build_today_with_deck_and_path(today: NaiveDate, deck: &Deck, db_path: &s
     let review_cap = ((rev_coef * pack_sz as f64).round() as usize).min(deck_due_cards.len());
     let reviews_today: Vec<CardId> = deck_due_cards.into_iter().take(review_cap).collect();
     
-    // Get new cards and filter to only include cards from this deck
+    // Get new cards derived from the deck itself (no global `cards` table).
+    // A "new" card is any deck card not present in `srs_log`.
     let n_new = pack_sz / 3;
-    let new_cards_all = next_new_cards(n_new * 2, &tx)?; // Get more to account for filtering
-    let new_cards: Vec<CardId> = new_cards_all.into_iter()
-        .filter(|card_id| deck_card_ids.contains(card_id))
-        .take(n_new) // Take only what we need after filtering
-        .collect();
+    let mut studied_ids: std::collections::HashSet<CardId> = {
+        let mut set = std::collections::HashSet::new();
+        let mut stmt = tx.prepare("SELECT card_id FROM srs_log")?;
+        let rows = stmt.query_map([], |row| Ok(row.get::<_, i64>(0)?))?;
+        for r in rows { set.insert(r?); }
+        set
+    };
+
+    let mut new_cards: Vec<CardId> = Vec::new();
+    for &cid in deck_card_ids.iter() {
+        if !studied_ids.contains(&cid) {
+            new_cards.push(cid);
+            if new_cards.len() >= n_new { break; }
+        }
+    }
     
     // Interleave review and new cards with new card first
     let cards = interleave_one_new_first(&reviews_today, &new_cards);

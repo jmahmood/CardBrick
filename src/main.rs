@@ -569,12 +569,12 @@ impl CardBrickApp {
                             let start_time = std::time::Instant::now();
                             println!("🎯 Starting post-load initialization...");
                             
-                            let scheduler = Box::new(Sm2Scheduler::new(deck));
-                            println!("🎯 [{}ms] Scheduler created", start_time.elapsed().as_millis());
-                            
-                            // Initialize progress database with all required tables
+                            // Initialize progress database with all required tables BEFORE using queue system
                             crate::storage::db::init_progress_database().map_err(|e| e.to_string())?;
                             println!("🎯 [{}ms] Progress database initialized", start_time.elapsed().as_millis());
+
+                            let scheduler = Box::new(Sm2Scheduler::new(deck));
+                            println!("🎯 [{}ms] Scheduler created", start_time.elapsed().as_millis());
                             
                             let db_manager = DatabaseManager::new(&deck_id_to_load).map_err(|e| e.to_string())?;
                             println!("🎯 [{}ms] DatabaseManager created", start_time.elapsed().as_millis());
@@ -632,6 +632,7 @@ impl CardBrickApp {
             GameState::MainMenu(main_menu_state) => {
                 scenes::main_menu::draw_main_menu_scene(
                     &self.app_state.font_manager, 
+                    &self.app_state.small_font_manager,
                     &self.app_state.canvas_manager, 
                     main_menu_state
                 )

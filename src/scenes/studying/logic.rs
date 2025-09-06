@@ -22,10 +22,9 @@ pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_f
         eprintln!("Warning: Failed to handle calendar rollover: {}", e);
     }
     
-    // For Sprint 0: Try to ensure today's queue exists first
-    if let Err(e) = queue::ensure_today(now) {
-        eprintln!("Warning: Failed to ensure today's queue: {}", e);
-    }
+    // Queue creation is handled by the scheduler using the active deck.
+    // Avoid calling the generic ensure_today() which expects a global
+    // `cards` table in the progress DB and can log spurious errors.
     
     state.current_card = state.scheduler.next_card();
     if let Some(card) = state.current_card.clone() {
@@ -160,8 +159,8 @@ pub fn check_calendar_rollover(today: NaiveDate) -> Result<(), Box<dyn std::erro
                 println!("📅 Calendar rollover detected: {} -> {} (prev day points: {}, reward: {})", 
                          prev_day, today, daily_points, reward);
                 
-                // Ensure today's queue exists
-                queue::ensure_today(today)?;
+                // Deck-specific queues are created when starting a session.
+                // No generic queue creation here to avoid DB schema mismatches.
             }
         }
         
