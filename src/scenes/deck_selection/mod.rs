@@ -21,6 +21,10 @@ pub struct DeckSelectionState {
     pub character_current_frame: usize,
     display_names: Vec<String>, // Pre-computed display names for performance
     name_layouts: Option<Vec<TextLayout>>, // Cached layouts for deck names
+    // Offscreen cache for background + title
+    bg_rt: Option<RenderTarget>,
+    bg_dirty: bool,
+    bg_used_assets: bool,
 }
 
 impl DeckSelectionState {
@@ -39,6 +43,9 @@ impl DeckSelectionState {
             character_current_frame: 0,
             display_names,
             name_layouts: None,
+            bg_rt: None,
+            bg_dirty: true,
+            bg_used_assets: false,
         })
     }
 
@@ -108,21 +115,58 @@ pub fn draw_deck_selection_scene(
     let screen_w = 512.0 * scale;
     let screen_h = 384.0 * scale;
     
-    // 1. Draw Background (solid color fallback if assets not loaded)
-    if let Some(assets) = ui_assets {
+    // 1. Draw Background + Title via offscreen cache
+    let want_assets = ui_assets.is_some();
+    let need_rebuild = state.bg_rt.is_none() || state.bg_dirty || (state.bg_used_assets != want_assets);
+    if need_rebuild {
+        let rt = render_target(512, 384);
+        rt.texture.set_filter(FilterMode::Nearest);
+
+        set_camera(&Camera2D {
+            zoom: vec2(1.0 / 512.0, 1.0 / 384.0),
+            target: vec2(256.0, 192.0),
+            render_target: Some(rt.clone()),
+            ..Default::default()
+        });
+
+        // Clear background (fallback color)
+        clear_background(Color::from_rgba(45, 50, 65, 255));
+
+        // Draw background texture if available
+        if let Some(assets) = ui_assets {
+            draw_texture_ex(
+                &assets.deck_selection_bg,
+                0.0,
+                0.0,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(Vec2::new(512.0, 384.0)),
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Draw title using a unit canvas manager
+        let unit_canvas = CanvasManager::new_with_screen_size(512.0, 384.0)
+            .map_err(|e| format!("Canvas init failed for RT: {}", e))?;
+        small_font_manager.draw_line_top_left("Select a Deck", TITLE_POS.0, TITLE_POS.1, &unit_canvas)?;
+
+        set_default_camera();
+
+        state.bg_rt = Some(rt);
+        state.bg_dirty = false;
+        state.bg_used_assets = want_assets;
+    }
+
+    // Blit offscreen background to screen
+    if let Some(rt) = &state.bg_rt {
         draw_texture_ex(
-            &assets.deck_selection_bg, 
-            screen_x, 
-            screen_y, 
+            &rt.texture,
+            screen_x,
+            screen_y,
             WHITE,
-            DrawTextureParams {
-                dest_size: Some(Vec2::new(screen_w, screen_h)),
-                ..Default::default()
-            }
+            DrawTextureParams { dest_size: Some(Vec2::new(screen_w, screen_h)), ..Default::default() },
         );
-    } else {
-        // Fallback: solid color background
-        draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(45, 50, 65, 255));
     }
 
     // 2. Draw Animated Character (if assets are loaded)
@@ -158,8 +202,7 @@ pub fn draw_deck_selection_scene(
         );
     }
 
-    // 3. Draw Title
-    small_font_manager.draw_line_top_left("Select a Deck", TITLE_POS.0, TITLE_POS.1, canvas_manager)?;
+    // Title is part of offscreen background
 
     // 4. Draw Dynamic Footer (selected deck name if decks exist)
     if !state.decks.is_empty() {
