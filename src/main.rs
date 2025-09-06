@@ -850,9 +850,17 @@ async fn main() {
     };
     info!("Application initialized, entering main loop");
 
+    // Desktop FPS cap (env CARDBRICK_TARGET_FPS; default 60)
+    let target_fps: f64 = std::env::var("CARDBRICK_TARGET_FPS")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(60.0);
+    let target_dt = 1.0 / target_fps.max(1.0);
+
     let mut frame_count = 0;
     loop {
         frame_count += 1;
+        let frame_start = std::time::Instant::now();
         
         if frame_count % 60 == 0 {
             if cfg!(debug_assertions) {
@@ -898,7 +906,15 @@ async fn main() {
             }
         }
         
-        // Advance to the next frame; Macroquad will handle pacing
+        // Present the frame
         next_frame().await;
+
+        // Manual FPS cap on desktop to avoid 100% CPU when vsync is off
+        if cfg!(target_arch = "x86_64") || std::env::var("CARDBRICK_FORCE_FPS_CAP").is_ok() {
+            let elapsed = frame_start.elapsed().as_secs_f64();
+            if elapsed < target_dt {
+                std::thread::sleep(std::time::Duration::from_secs_f64(target_dt - elapsed));
+            }
+        }
     }
 }

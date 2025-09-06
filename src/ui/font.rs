@@ -8,10 +8,19 @@ use std::collections::VecDeque;
 use crate::deck::html_parser::TextSpan;
 use crate::debug::Tracer;
 
+// A render-ready span with precomputed width to avoid per-frame measurement
+#[derive(Clone, Debug)]
+pub struct LayoutSpan {
+    pub text: String,
+    pub is_bold: bool,
+    pub is_italic: bool,
+    pub width: u32,
+}
+
 /// Holds a pre-calculated text layout for efficient rendering and scrolling.
 pub struct TextLayout {
-    // Each inner Vec<TextSpan> represents a single line of text with its styled segments.
-    pub lines: Vec<Vec<TextSpan>>,
+    // Each inner Vec<LayoutSpan> represents a single line of text with its styled segments.
+    pub lines: Vec<Vec<LayoutSpan>>,
     pub total_height: i32,
     pub scroll_offset: i32,
 }
@@ -146,8 +155,8 @@ impl FontManager {
         }
 
         // --- STAGE 2: Corrected Layout Engine ---
-        let mut lines: Vec<Vec<TextSpan>> = Vec::new();
-        let mut current_line_spans: Vec<TextSpan> = Vec::new();
+        let mut lines: Vec<Vec<LayoutSpan>> = Vec::new();
+        let mut current_line_spans: Vec<LayoutSpan> = Vec::new();
         let mut current_line_width = 0;
         let line_height = self.font_size as i32;
 
@@ -164,7 +173,12 @@ impl FontManager {
             let (span_width, _) = self.size_of_text_with_style(text_for_layout, span.is_bold, span.is_italic)?;
 
             if span_width <= space_left {
-                current_line_spans.push(span);
+                current_line_spans.push(LayoutSpan {
+                    text: text_for_layout.to_string(),
+                    is_bold: span.is_bold,
+                    is_italic: span.is_italic,
+                    width: span_width,
+                });
                 current_line_width += span_width;
             } else {
                 let split_byte_index = self.find_split_index(&span, space_left, use_ruby)?;
@@ -187,7 +201,15 @@ impl FontManager {
                         remaining_span.text = remaining.to_string();
                     }
                     
-                    current_line_spans.push(fit_span);
+                    // Measure and push the fitting part as a render-ready LayoutSpan
+                    let text_to_draw = if use_ruby { fit_span.ruby_text.as_deref().unwrap_or("") } else { &fit_span.text };
+                    let (fit_w, _) = self.size_of_text_with_style(text_to_draw, fit_span.is_bold, fit_span.is_italic)?;
+                    current_line_spans.push(LayoutSpan {
+                        text: text_to_draw.to_string(),
+                        is_bold: fit_span.is_bold,
+                        is_italic: fit_span.is_italic,
+                        width: fit_w,
+                    });
                     processed_spans.push_front(remaining_span);
 
                 } else {
@@ -217,7 +239,14 @@ impl FontManager {
                                 remaining_span.text = remaining.to_string();
                             }
 
-                            current_line_spans.push(fit_span);
+                            let text_to_draw = if use_ruby { fit_span.ruby_text.as_deref().unwrap_or("") } else { &fit_span.text };
+                            let (fit_w, _) = self.size_of_text_with_style(text_to_draw, fit_span.is_bold, fit_span.is_italic)?;
+                            current_line_spans.push(LayoutSpan {
+                                text: text_to_draw.to_string(),
+                                is_bold: fit_span.is_bold,
+                                is_italic: fit_span.is_italic,
+                                width: fit_w,
+                            });
                             if !remaining.is_empty() {
                                 processed_spans.push_front(remaining_span);
                             }
@@ -245,7 +274,7 @@ impl FontManager {
     }
 
     /// Renders a pre-calculated TextLayout to the screen.
-    pub fn draw_layout(&self, layout: &TextLayout, x: i32, y: i32, show_ruby: bool, canvas_manager: &crate::ui::CanvasManager) -> Result<(), String> {
+    pub fn draw_layout(&self, layout: &TextLayout, x: i32, y: i32, _show_ruby: bool, canvas_manager: &crate::ui::CanvasManager) -> Result<(), String> {
         let line_height = self.font_size as i32;
         let mut current_y = y - layout.scroll_offset;
 
@@ -254,9 +283,20 @@ impl FontManager {
             if current_y > -line_height && current_y < canvas_manager.logical_size().1 as i32 {
                 let mut current_x = x;
                 for span in line_spans {
-                    let text_to_draw = span.text_to_use(show_ruby);
-                    let (text_w, _) = self.draw_text_span_segment(text_to_draw, current_x, current_y, span.is_bold, span.is_italic, canvas_manager)?;
-                    current_x += text_w as i32;
+                    // Draw span text without measuring during draw
+                    let (screen_x, screen_y) = canvas_manager.logical_to_screen(current_x as f32, current_y as f32);
+                    let scaled_font_size = self.font_size * canvas_manager.get_scale_factor();
+
+                    let font_to_use = self.font.as_ref().or(self.fallback_font.as_ref());
+                    let text_params = TextParams {
+                        font: font_to_use,
+                        font_size: scaled_font_size as u16,
+                        color: WHITE,
+                        ..Default::default()
+                    };
+
+                    draw_text_ex(&span.text, screen_x, screen_y, text_params);
+                    current_x += span.width as i32;
                 }
             }
             current_y += line_height;
@@ -584,15 +624,7 @@ mod tests {
     fn test_text_layout_creation() {
         let layout = TextLayout {
             lines: vec![
-                vec![TextSpan {
-                    text: "Line 1".to_string(),
-                    ruby_text: None,
-                    is_bold: false,
-                    is_italic: false,
-                    is_ruby_base: false,
-                    new_text_block: false,
-                    is_newline: false,
-                }]
+                vec![LayoutSpan { text: "Line 1".to_string(), is_bold: false, is_italic: false, width: 42 }]
             ],
             total_height: 20,
             scroll_offset: 0,

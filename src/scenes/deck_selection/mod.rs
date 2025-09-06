@@ -4,6 +4,8 @@ use macroquad::prelude::*;
 
 use crate::DeckMetadata;
 use crate::ui::{CanvasManager, FontManager};
+use crate::ui::font::TextLayout;
+use crate::deck::html_parser;
 use crate::config::UiAssets;
 
 pub mod input;
@@ -18,6 +20,7 @@ pub struct DeckSelectionState {
     pub character_anim_timer: f32,
     pub character_current_frame: usize,
     display_names: Vec<String>, // Pre-computed display names for performance
+    name_layouts: Option<Vec<TextLayout>>, // Cached layouts for deck names
 }
 
 impl DeckSelectionState {
@@ -35,6 +38,7 @@ impl DeckSelectionState {
             character_anim_timer: 0.0,
             character_current_frame: 0,
             display_names,
+            name_layouts: None,
         })
     }
 
@@ -84,7 +88,7 @@ pub fn draw_deck_selection_scene(
     _font_manager: &FontManager,
     small_font_manager: &FontManager,
     canvas_manager: &CanvasManager,
-    state: &DeckSelectionState,
+    state: &mut DeckSelectionState,
     ui_assets: &Option<UiAssets>,
 ) -> Result<(), String> {
     // Layout constants for 512x384 pixel-art design
@@ -163,6 +167,18 @@ pub fn draw_deck_selection_scene(
         small_font_manager.draw_line_top_left(display_name, FOOTER_POS.0, FOOTER_POS.1, canvas_manager)?;
     }
 
+    // Prepare cached layouts for deck names (one-time or when decks change)
+    if state.name_layouts.as_ref().map_or(true, |v| v.len() != state.display_names.len()) {
+        let mut layouts = Vec::with_capacity(state.display_names.len());
+        for name in &state.display_names {
+            let spans = html_parser::parse_html_to_spans(name);
+            // Fixed reasonable width to avoid per-frame measurement
+            let layout = small_font_manager.layout_text_binary(&spans, 300, false).unwrap_or(TextLayout { lines: vec![], total_height: 0, scroll_offset: 0 });
+            layouts.push(layout);
+        }
+        state.name_layouts = Some(layouts);
+    }
+
     // 5. Draw Deck List
     if state.decks.is_empty() {
         // Empty list message
@@ -175,13 +191,14 @@ pub fn draw_deck_selection_scene(
     let available_height = LOGICAL_HEIGHT - LIST_START_POS.1 as f32 - FOOTER_AREA_HEIGHT;
     let visible_items = (available_height / LIST_ITEM_HEIGHT).floor() as usize;
 
+    let (hint_ascent, _, _) = small_font_manager.metrics();
     for row in 0..visible_items {
         let idx = state.first_visible + row;
         if idx >= state.decks.len() {
             break;
         }
-
-        let display_title = &state.display_names[idx]; // Use pre-computed display name
+        // Use precomputed layout for name
+        let layout_opt = state.name_layouts.as_ref().and_then(|v| v.get(idx));
         let item_top = LIST_START_POS.1 as f32 + (row as f32 * LIST_ITEM_HEIGHT);
 
         // Selection Highlight with new blue color (fixed width for performance)
@@ -204,8 +221,13 @@ pub fn draw_deck_selection_scene(
             );
         }
 
-        // Draw deck name text
-        small_font_manager.draw_line_top_left(display_title, LIST_START_POS.0, item_top as i32, canvas_manager)?;
+        // Draw deck name text using cached layout
+        if let Some(layout) = layout_opt {
+            small_font_manager.draw_layout(layout, LIST_START_POS.0, item_top as i32 + hint_ascent as i32, false, canvas_manager)?;
+        } else {
+            // Fallback
+            small_font_manager.draw_line_top_left(&state.display_names[idx], LIST_START_POS.0, item_top as i32, canvas_manager)?;
+        }
     }
 
     Ok(())

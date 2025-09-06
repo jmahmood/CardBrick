@@ -58,6 +58,15 @@ pub struct StudyingState<'a> {
     pub animation_frame_counter: u32,  // for throttling animations to reduce battery usage
     pub cached_daily_ratings: Option<Vec<(i64, String)>>, // cached database query results
     pub ratings_cache_frame: u32,      // frame when cache was last updated
+
+    // Cached UI strings to reduce per-frame allocations/measurements
+    pub last_points_today: i32,
+    pub cached_score_text: String,
+    pub cached_score_size: (u32, u32),
+    pub last_completed: usize,
+    pub last_total: usize,
+    pub cached_progress_text: String,
+    pub cached_progress_size: (u32, u32),
 }
 
 impl<'a> StudyingState<'a> {
@@ -101,6 +110,14 @@ impl<'a> StudyingState<'a> {
             animation_frame_counter: 0,
             cached_daily_ratings: None,
             ratings_cache_frame: 0,
+
+            last_points_today: points_today,
+            cached_score_text: String::new(),
+            cached_score_size: (0, 0),
+            last_completed: 0,
+            last_total: 0,
+            cached_progress_text: String::new(),
+            cached_progress_size: (0, 0),
         }
     }
     
@@ -169,7 +186,15 @@ pub fn draw_studying_scene(
     // Draw progress bar
     if total > 0 {
         let completed = studying_state.scheduler.reviews_complete();
-        
+
+        // Update cached progress string if values changed
+        if completed != studying_state.last_completed || total != studying_state.last_total {
+            studying_state.cached_progress_text = format!("{}/{}", completed, total);
+            studying_state.cached_progress_size = hint_font_manager.size_of_text(&studying_state.cached_progress_text)?;
+            studying_state.last_completed = completed;
+            studying_state.last_total = total;
+        }
+
         // Draw progress bar background
         let (bg_x, bg_y) = canvas_manager.logical_to_screen(0.0, 0.0);
         let bg_w = 512.0 * canvas_manager.get_scale_factor();
@@ -184,14 +209,12 @@ pub fn draw_studying_scene(
         let g = (255.0 * progress) as u8;
         draw_rectangle(bg_x, bg_y, fg_w, bg_h, Color::from_rgba(r, g, 80, 255));
         
-        // Draw progress text with proper top-left positioning
-        let progress_text = format!("{}/{}", completed, total);
-        let (tw, th) = hint_font_manager.size_of_text(&progress_text)?;
-        
+        // Draw progress text with proper top-left positioning (cached)
+        let (tw, th) = studying_state.cached_progress_size;
         // Centre the bounding box in the bar
         let text_x = 512.0 - tw as f32 - 10.0;
         let text_y = (BAR_HEIGHT - th as f32) / 2.0;
-        hint_font_manager.draw_line_top_left(&progress_text, text_x as i32, text_y as i32, canvas_manager)?;
+        hint_font_manager.draw_line_top_left(&studying_state.cached_progress_text, text_x as i32, text_y as i32, canvas_manager)?;
     }
     
     // Draw animated sprite
@@ -199,8 +222,13 @@ pub fn draw_studying_scene(
     
     // Draw on-screen score overlay (top-left corner)
     if studying_state.mode == StudyingScreenMode::InProgress {
-        let score_text = format!("Score: {}/{}", studying_state.points_today, crate::config::DAILY_GOAL_POINTS);
-        let (score_w, score_h) = hint_font_manager.size_of_text(&score_text)?;
+        // Update cached score if points changed
+        if studying_state.points_today != studying_state.last_points_today || studying_state.cached_score_text.is_empty() {
+            studying_state.cached_score_text = format!("Score: {}/{}", studying_state.points_today, crate::config::DAILY_GOAL_POINTS);
+            studying_state.cached_score_size = hint_font_manager.size_of_text(&studying_state.cached_score_text)?;
+            studying_state.last_points_today = studying_state.points_today;
+        }
+        let (score_w, score_h) = studying_state.cached_score_size;
         
         // Draw semi-transparent background for score
         let (bg_x, bg_y) = canvas_manager.logical_to_screen(10.0, BAR_HEIGHT + 10.0);
@@ -213,7 +241,7 @@ pub fn draw_studying_scene(
         let text_y = BAR_HEIGHT + 13.0;
         let hint_ascent = hint_font_manager.metrics().0;
         hint_font_manager.draw_line_top_left(
-            &score_text,
+            &studying_state.cached_score_text,
             text_x as i32,
             text_y as i32 + hint_ascent as i32,
             canvas_manager,
