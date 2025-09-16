@@ -3,7 +3,7 @@
 use crate::state::{BrickInput, BrickButton, AppState, GameState};
 use crate::deck::html_parser;
 use crate::scheduler::Rating;
-use super::logic::{load_card_layouts, load_next_card, continue_studying, handle_card_rating, update_goal_splash};
+use super::logic::{load_card_layouts, load_next_card, continue_studying, handle_card_rating, update_goal_splash, update_rating_toast};
 use super::{StudyingState, StudyingScreenMode};
 
 /// Handles input events for the studying scene - ported from SDL2 to pure evdev
@@ -12,6 +12,9 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
         // Update goal splash auto-transition
         let was_goal_splash = studying_state.mode == StudyingScreenMode::GoalSplash;
         update_goal_splash(studying_state);
+
+        // Update rating toast auto-cleanup
+        update_rating_toast(studying_state);
 
         // If the splash just ended, advance to the next card (or session complete)
         if was_goal_splash && studying_state.mode == StudyingScreenMode::InProgress {
@@ -147,6 +150,10 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
             // Left Shoulder: Rewind last answer (important for spaced repetition)
             BrickInput::ButtonDown(BrickButton::LeftShoulder) => {
                 if studying_state.mode == StudyingScreenMode::InProgress {
+                    // Clear toast when undoing
+                    studying_state.last_rating_toast = None;
+                    studying_state.toast_layout = None;
+
                     if let Some(card) = &studying_state.current_card {
                         studying_state.scheduler.add_card_to_front(card.id);
                     }
@@ -214,7 +221,10 @@ fn rate_card_and_continue(
     if let Err(e) = handle_card_rating(studying_state, card_id, rating, font_manager) {
         eprintln!("Warning: Failed to handle card rating: {}", e);
     }
-    
+
+    // Trigger rating toast notification
+    trigger_rating_toast(studying_state, rating, small_font_manager)?;
+
     // Record difficult cards for prioritization
     match rating {
         crate::scheduler::Rating::Again => {
@@ -494,4 +504,31 @@ mod tests {
         
         assert_eq!(scroll_offset, 30);
     }
+}
+
+/// Trigger a toast notification showing the user's rating
+fn trigger_rating_toast(
+    studying_state: &mut StudyingState,
+    rating: Rating,
+    small_font_manager: &mut crate::ui::FontManager,
+) -> Result<(), String> {
+    use crate::deck::html_parser;
+    use macroquad::time::get_time;
+
+    // Create toast text with icon
+    let toast_text = match rating {
+        Rating::Again => "Again ↻",
+        Rating::Hard => "Hard ⚠",
+        Rating::Good => "Good ✓",
+        Rating::Easy => "Easy ⚡",
+    };
+
+    // Create text layout for toast
+    let spans = html_parser::parse_html_to_spans(toast_text);
+    studying_state.toast_layout = small_font_manager.layout_text_binary(&spans, 100, false).ok();
+
+    // Set toast timer
+    studying_state.last_rating_toast = Some((rating, get_time() as f32));
+
+    Ok(())
 }

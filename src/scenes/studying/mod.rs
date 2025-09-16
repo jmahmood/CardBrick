@@ -62,6 +62,10 @@ pub struct StudyingState<'a> {
     pub cached_daily_ratings: Option<Vec<(i64, String)>>, // cached database query results
     pub ratings_cache_frame: u32,      // frame when cache was last updated
 
+    // Toast notification for recent ratings
+    pub last_rating_toast: Option<(crate::scheduler::Rating, f32)>, // (rating, start_time)
+    pub toast_layout: Option<TextLayout>, // cached layout for toast text
+
     // Cached UI strings to reduce per-frame allocations/measurements
     pub last_points_today: i32,
     pub cached_score_text: String,
@@ -120,6 +124,9 @@ impl<'a> StudyingState<'a> {
             animation_frame_counter: 0,
             cached_daily_ratings: None,
             ratings_cache_frame: 0,
+
+            last_rating_toast: None,
+            toast_layout: None,
 
             last_points_today: points_today,
             cached_score_text: String::new(),
@@ -369,6 +376,9 @@ pub fn draw_studying_scene(
                     hint_font_manager.draw_layout(hint_layout, margin as i32, hint_y as i32 + hint_ascent as i32, studying_state.show_ruby_text, canvas_manager)?;
                 }
             }
+
+            // Draw rating toast if active
+            draw_rating_toast(studying_state, hint_font_manager, canvas_manager)?;
         },
         
         StudyingScreenMode::GoalSplash => {
@@ -616,6 +626,77 @@ fn draw_session_details(studying_state: &StudyingState, font_manager: &FontManag
         prompt_y + font_ascent as i32,
         canvas_manager,
     )?;
-    
+
+    Ok(())
+}
+
+/// Draw rating toast notification in top-right corner
+fn draw_rating_toast(
+    studying_state: &StudyingState,
+    hint_font_manager: &FontManager,
+    canvas_manager: &CanvasManager,
+) -> Result<(), String> {
+    use macroquad::time::get_time;
+    use macroquad::prelude::*;
+
+    // Check if toast is active and not expired
+    if let Some((rating, start_time)) = studying_state.last_rating_toast {
+        let elapsed = get_time() as f32 - start_time;
+        let toast_duration = 2.0; // 2 seconds
+
+        if elapsed < toast_duration {
+            if let Some(toast_layout) = &studying_state.toast_layout {
+                // Calculate fade-out alpha based on elapsed time
+                let alpha = if elapsed > 1.5 {
+                    // Fade out in last 0.5 seconds
+                    ((toast_duration - elapsed) / 0.5).max(0.0)
+                } else {
+                    1.0 // Fully visible for first 1.5 seconds
+                };
+
+                // Position in top-right corner
+                let toast_width = 100.0;
+                let toast_height = toast_layout.total_height as f32 + 8.0; // padding
+                let toast_x = 512.0 - toast_width - 10.0; // 10px from right edge
+                let toast_y = 30.0; // Below progress bar
+
+                // Draw semi-transparent background
+                let (bg_x, bg_y) = canvas_manager.logical_to_screen(toast_x, toast_y);
+                let bg_w = toast_width * canvas_manager.get_scale_factor();
+                let bg_h = toast_height * canvas_manager.get_scale_factor();
+
+                let bg_alpha = (150.0 * alpha) as u8;
+                draw_rectangle(bg_x, bg_y, bg_w, bg_h, Color::from_rgba(0, 0, 0, bg_alpha));
+
+                // Draw border
+                let border_alpha = (255.0 * alpha) as u8;
+                draw_rectangle_lines(
+                    bg_x, bg_y, bg_w, bg_h,
+                    1.0 * canvas_manager.get_scale_factor(),
+                    Color::from_rgba(255, 255, 255, border_alpha)
+                );
+
+                // Draw toast text
+                let text_x = toast_x + 5.0; // 5px padding from left
+                let text_y = toast_y + 4.0; // 4px padding from top
+                let hint_ascent = hint_font_manager.metrics().0;
+
+                let toast_text = match rating {
+                    crate::scheduler::Rating::Again => "Again ↻",
+                    crate::scheduler::Rating::Hard => "Hard ⚠",
+                    crate::scheduler::Rating::Good => "Good ✓",
+                    crate::scheduler::Rating::Easy => "Easy ⚡",
+                };
+
+                hint_font_manager.draw_line_top_left(
+                    toast_text,
+                    text_x as i32,
+                    text_y as i32 + hint_ascent as i32,
+                    canvas_manager,
+                )?;
+            }
+        }
+    }
+
     Ok(())
 }

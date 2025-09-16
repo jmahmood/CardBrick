@@ -456,6 +456,20 @@ pub fn update_goal_splash(state: &mut StudyingState) {
     }
 }
 
+/// Updates the rating toast state and handles auto-cleanup
+pub fn update_rating_toast(state: &mut StudyingState) {
+    if let Some((_, start_time)) = state.last_rating_toast {
+        let elapsed = get_time() as f32 - start_time;
+        let toast_duration = 2.0; // 2 seconds
+
+        // Clear toast after duration expires
+        if elapsed > toast_duration {
+            state.last_rating_toast = None;
+            state.toast_layout = None;
+        }
+    }
+}
+
 /// Finalizes the study session by updating daily_log and applying bandit rewards
 pub fn finalize_study_session(state: &mut StudyingState) -> Result<(), Box<dyn std::error::Error>> {
     let today = chrono::Utc::now().date_naive();
