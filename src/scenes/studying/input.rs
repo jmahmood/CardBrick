@@ -223,7 +223,7 @@ fn rate_card_and_continue(
     }
 
     // Trigger rating toast notification
-    trigger_rating_toast(studying_state, rating, small_font_manager)?;
+    trigger_rating_toast(studying_state, rating, font_manager)?;
 
     // Record difficult cards for prioritization
     match rating {
@@ -510,7 +510,7 @@ mod tests {
 fn trigger_rating_toast(
     studying_state: &mut StudyingState,
     rating: Rating,
-    small_font_manager: &mut crate::ui::FontManager,
+    font_manager: &mut crate::ui::FontManager,
 ) -> Result<(), String> {
     use crate::deck::html_parser;
     use macroquad::time::get_time;
@@ -523,9 +523,9 @@ fn trigger_rating_toast(
         Rating::Easy => "Easy ⚡",
     };
 
-    // Create text layout for toast
+    // Create text layout for toast (using larger font)
     let spans = html_parser::parse_html_to_spans(toast_text);
-    studying_state.toast_layout = small_font_manager.layout_text_binary(&spans, 100, false).ok();
+    studying_state.toast_layout = font_manager.layout_text_binary(&spans, 150, false).ok();
 
     // Set toast timer
     studying_state.last_rating_toast = Some((rating, get_time() as f32));

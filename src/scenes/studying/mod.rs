@@ -377,8 +377,6 @@ pub fn draw_studying_scene(
                 }
             }
 
-            // Draw rating toast if active
-            draw_rating_toast(studying_state, hint_font_manager, canvas_manager)?;
         },
         
         StudyingScreenMode::GoalSplash => {
@@ -486,7 +484,10 @@ pub fn draw_studying_scene(
             draw_session_details(studying_state, small_font_manager, canvas_manager)?;
         }
     }
-    
+
+    // Draw rating toast if active - draw on top of all content
+    draw_rating_toast(studying_state, font_manager, canvas_manager)?;
+
     Ok(())
 }
 
@@ -633,7 +634,7 @@ fn draw_session_details(studying_state: &StudyingState, font_manager: &FontManag
 /// Draw rating toast notification in top-right corner
 fn draw_rating_toast(
     studying_state: &StudyingState,
-    hint_font_manager: &FontManager,
+    font_manager: &FontManager,
     canvas_manager: &CanvasManager,
 ) -> Result<(), String> {
     use macroquad::time::get_time;
@@ -654,9 +655,9 @@ fn draw_rating_toast(
                     1.0 // Fully visible for first 1.5 seconds
                 };
 
-                // Position in top-right corner
-                let toast_width = 100.0;
-                let toast_height = toast_layout.total_height as f32 + 8.0; // padding
+                // Position in top-right corner (larger dimensions for bigger text)
+                let toast_width = 150.0;
+                let toast_height = toast_layout.total_height as f32 + 12.0; // more padding
                 let toast_x = 512.0 - toast_width - 10.0; // 10px from right edge
                 let toast_y = 30.0; // Below progress bar
 
@@ -676,10 +677,10 @@ fn draw_rating_toast(
                     Color::from_rgba(255, 255, 255, border_alpha)
                 );
 
-                // Draw toast text
-                let text_x = toast_x + 5.0; // 5px padding from left
-                let text_y = toast_y + 4.0; // 4px padding from top
-                let hint_ascent = hint_font_manager.metrics().0;
+                // Draw toast text (using larger font)
+                let text_x = toast_x + 8.0; // more padding from left
+                let text_y = toast_y + 6.0; // more padding from top
+                let font_ascent = font_manager.metrics().0;
 
                 let toast_text = match rating {
                     crate::scheduler::Rating::Again => "Again ↻",
@@ -688,10 +689,10 @@ fn draw_rating_toast(
                     crate::scheduler::Rating::Easy => "Easy ⚡",
                 };
 
-                hint_font_manager.draw_line_top_left(
+                font_manager.draw_line_top_left(
                     toast_text,
                     text_x as i32,
-                    text_y as i32 + hint_ascent as i32,
+                    text_y as i32 + font_ascent as i32,
                     canvas_manager,
                 )?;
             }
