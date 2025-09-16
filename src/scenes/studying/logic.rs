@@ -373,6 +373,33 @@ pub fn handle_card_rating(
         
         // Invalidate the daily ratings cache since we just added a new rating (battery optimization)
         state.invalidate_ratings_cache();
+
+        // Keep daily_log up to date for Progress Viewer after each rating (live update)
+        // This ensures cards/points/goal are not blank mid-session
+        {
+            use crate::storage::db::progress_path;
+            use rusqlite::Connection;
+            let db_path = progress_path();
+            let conn = Connection::open(&db_path)?;
+            let date_str = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+            // Count ratings for today as cards_studied proxy
+            let cards_count: i64 = conn
+                .prepare("SELECT COUNT(*) FROM daily_ratings WHERE date = ?1")?
+                .query_row([&date_str], |row| Ok(row.get::<_, i64>(0)?))?;
+            let points_today = state.points_today as i64;
+            let reward_bin_i64 = if points_today >= DAILY_GOAL_POINTS as i64 { 1 } else { 0 };
+            let reward_scaled = (points_today as f64 / DAILY_GOAL_POINTS as f64).min(1.0);
+            conn.execute(
+                "INSERT INTO daily_log (date, cards_studied, points, reward_scaled, reward_bin)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(date) DO UPDATE SET
+                   cards_studied = excluded.cards_studied,
+                   points = excluded.points,
+                   reward_scaled = excluded.reward_scaled,
+                   reward_bin = excluded.reward_bin",
+                rusqlite::params![&date_str, cards_count, points_today, reward_scaled, reward_bin_i64],
+            )?;
+        }
         
         // Auto-save progress (S3-7 requirement)
         flush_database()?;
@@ -513,27 +540,21 @@ pub fn finalize_study_session(state: &mut StudyingState) -> Result<(), Box<dyn s
     let db_path = progress_path();
     let conn = Connection::open(&db_path)?;
     
-    // Update daily_log with session completion data
+    // Upsert daily_log with session completion data
     conn.execute(
-        "UPDATE daily_log SET cards_studied = ?1, points = ?2, reward_scaled = ?3, reward_bin = ?4 WHERE date = ?5",
-        [cards_studied as i64, points_earned as i64, reward_scaled as i64, reward_bin as i64, 0], // Note: will be converted to strings in the actual call
-    )?;
-    
-    // Alternative approach using string parameters to match existing schema
-    conn.execute(
-        "INSERT OR REPLACE INTO daily_log (date, cards_studied, points, reward_scaled, reward_bin) 
+        "INSERT INTO daily_log (date, cards_studied, points, reward_scaled, reward_bin) 
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(date) DO UPDATE SET 
            cards_studied = excluded.cards_studied,
            points = excluded.points,
            reward_scaled = excluded.reward_scaled,
            reward_bin = excluded.reward_bin",
-        [
+        rusqlite::params![
             &date_str,
-            &cards_studied.to_string(),
-            &points_earned.to_string(), 
-            &reward_scaled.to_string(),
-            &reward_bin.to_string()
+            cards_studied as i64,
+            points_earned as i64,
+            reward_scaled as f64,
+            reward_bin as i64
         ],
     )?;
     
