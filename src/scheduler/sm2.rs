@@ -225,8 +225,7 @@ impl Scheduler for Sm2Scheduler {
     }
 
     fn next_card(&mut self) -> Option<Card> {
-        // For Core Learning Loop: stick to the daily queue, no additional loading
-        // Get next card from queue
+        // For Core Learning Loop: fetch from queue; if empty and explore mode enabled, auto-refill
         if let Some(card_id) = self.review_queue.pop() {
             // Find card in our deck, load more if needed
             if let Some(card) = self.deck.cards.iter().find(|c| c.id == card_id).cloned() {
@@ -246,6 +245,20 @@ impl Scheduler for Sm2Scheduler {
             // Card not found, skip and try next
             self.next_card()
         } else {
+            // Auto-refill once per exhaustion if explore mode is enabled
+            if crate::config::ENABLE_EXPLORE_MODE {
+                if let Ok(new_cards) = self.deck.load_more_cards(crate::config::EXPLORE_BATCH_SIZE) {
+                    if !new_cards.is_empty() {
+                        // Add them to both deck cache and queue
+                        for card in &new_cards {
+                            self.review_queue.push(card.id);
+                        }
+                        self.session_total += new_cards.len();
+                        // Recurse to serve next card now that queue is refilled
+                        return self.next_card();
+                    }
+                }
+            }
             None
         }
     }

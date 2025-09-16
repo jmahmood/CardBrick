@@ -197,6 +197,26 @@ pub fn create_deck_database_tables(conn: &Connection) -> Result<()> {
     create_daily_ratings_table(conn)?;
     create_study_events_table(conn)?;
     create_profile_table(conn)?;
+
+    // Explore mode support tables (deck-scoped)
+    // Tracks first_seen/adopted timestamps for cards in this deck
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS card_state (
+            card_id INTEGER PRIMARY KEY,
+            first_seen_ts INTEGER,
+            adopted_ts INTEGER
+        )",
+        [],
+    )?;
+
+    // Daily counters for this deck (adoptions per study day)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS deck_daily_stats (
+            study_day TEXT PRIMARY KEY,
+            adopted_count INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )?;
     
     // Set database version for deck databases
     conn.execute("PRAGMA user_version = 3", [])?;

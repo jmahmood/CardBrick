@@ -8,6 +8,13 @@ use macroquad::prelude::*;
 pub const BACKLOG_CAP: usize = 200;  // For future use.
 pub const PACK_SIZE_DEFAULT: usize = 12;
 
+// Explore mode defaults (overridable in future settings)
+pub const ENABLE_EXPLORE_MODE: bool = true;
+pub const EXPLORE_DETECTION_UNSTUDIED_RATIO: f32 = 0.80; // heuristic only (we use due==0 primarily)
+pub const EXPLORE_DETECTION_REVIEWS_DUE_MAX: usize = 0;
+pub const EXPLORE_BATCH_SIZE: usize = 30; // refill batch size
+pub const ADOPT_LIMIT_PER_DAY: usize = 15; // safeguard: new adoptions per day
+
 // Bandit constants for adaptive parameter tuning
 pub const ROUND_ROBIN_DAYS: u8 = 6;
 pub const BANDIT_DECAY_THRESHOLD: u32 = 200;

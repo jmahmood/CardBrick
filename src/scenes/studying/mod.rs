@@ -305,6 +305,28 @@ pub fn draw_studying_scene(
             text_y as i32 + hint_ascent as i32,
             canvas_manager,
         )?;
+
+        // Explore mode banner: show adopted today status
+        if crate::config::ENABLE_EXPLORE_MODE {
+            if let Ok(adopted) = studying_state.db_manager.adopted_today() {
+                let limit = crate::config::ADOPT_LIMIT_PER_DAY as i64;
+                let adopt_text = format!("Adopted {}/{}", adopted, limit);
+                let (aw, ah) = hint_font_manager.size_of_text(&adopt_text)?;
+                let (bg2_x, bg2_y) = canvas_manager.logical_to_screen(10.0, BAR_HEIGHT + 10.0 + (score_h as f32) + 10.0);
+                let bg2_w = (aw + 10) as f32 * canvas_manager.get_scale_factor();
+                let bg2_h = (ah + 6) as f32 * canvas_manager.get_scale_factor();
+                draw_rectangle(bg2_x, bg2_y, bg2_w, bg2_h, Color::from_rgba(0, 0, 0, 150));
+
+                let text2_x = 15.0;
+                let text2_y = BAR_HEIGHT + 13.0 + (score_h as f32) + 10.0;
+                hint_font_manager.draw_line_top_left(
+                    &adopt_text,
+                    text2_x as i32,
+                    text2_y as i32 + hint_ascent as i32,
+                    canvas_manager,
+                )?;
+            }
+        }
     }
     
     // Set clipping rectangle for scrollable content area - start after progress bar

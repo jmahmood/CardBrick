@@ -276,6 +276,51 @@ impl DatabaseManager {
 
         Ok(new_streak)
     }
+
+    // ===== Explore mode: adoption bookkeeping (deck-scoped DB) =====
+
+    /// Get number of cards adopted today for this deck
+    pub fn adopted_today(&self) -> Result<i64> {
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        let count: i64 = self.conn
+            .prepare("SELECT adopted_count FROM deck_daily_stats WHERE study_day = ?1")?
+            .query_row([&today], |row| Ok(row.get::<_, i64>(0)?))
+            .unwrap_or(0);
+        Ok(count)
+    }
+
+    /// Increment today's adopted count and return the new total
+    pub fn increment_adopted_today(&self) -> Result<i64> {
+        let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        // Upsert row and increment
+        self.conn.execute(
+            "INSERT INTO deck_daily_stats (study_day, adopted_count) VALUES (?1, 1)
+             ON CONFLICT(study_day) DO UPDATE SET adopted_count = adopted_count + 1",
+            [&today],
+        )?;
+        // Read back value
+        self.adopted_today()
+    }
+
+    /// Mark first_seen timestamp if missing
+    pub fn mark_first_seen_if_missing(&self, card_id: i64, ts: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO card_state (card_id, first_seen_ts) VALUES (?1, ?2)
+             ON CONFLICT(card_id) DO UPDATE SET first_seen_ts = COALESCE(first_seen_ts, excluded.first_seen_ts)",
+            (card_id, ts),
+        )?;
+        Ok(())
+    }
+
+    /// Mark adopted timestamp (only set once)
+    pub fn mark_adopted(&self, card_id: i64, ts: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO card_state (card_id, adopted_ts) VALUES (?1, ?2)
+             ON CONFLICT(card_id) DO UPDATE SET adopted_ts = COALESCE(adopted_ts, excluded.adopted_ts)",
+            (card_id, ts),
+        )?;
+        Ok(())
+    }
 }
 
 /// Get the path to the progress database file
@@ -284,6 +329,16 @@ pub fn progress_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".cardbrick")
         .join("progress.db")
+}
+
+/// Check if a card has been adopted into SRS (exists in progress srs_log)
+pub fn is_card_adopted_in_progress(card_id: i64) -> Result<bool> {
+    let path = progress_path();
+    let conn = Connection::open(&path)?;
+    let exists: i64 = conn
+        .prepare("SELECT COUNT(1) FROM srs_log WHERE card_id = ?1")?
+        .query_row([card_id], |row| Ok(row.get::<_, i64>(0)?))?;
+    Ok(exists > 0)
 }
 
 /// Initialize the progress database with all required tables

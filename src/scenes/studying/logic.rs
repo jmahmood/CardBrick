@@ -6,6 +6,8 @@ use crate::debug::Tracer;
 use crate::scheduler::queue::{self};
 use crate::scheduler::bandit;
 use crate::scheduler::{points, Rating, sm2};
+use crate::storage::db::is_card_adopted_in_progress;
+use crate::config::{ADOPT_LIMIT_PER_DAY};
 use crate::config::{PACK_SIZE_DEFAULT, DAILY_GOAL_POINTS};
 use super::{StudyingState, StudyingScreenMode, haptics};
 use chrono::{Utc, NaiveDate};
@@ -267,8 +269,26 @@ pub fn handle_card_rating(
         2500 // Default ease factor if no current card
     };
     
-    // Apply SM-2 rating to database (updates srs_log table)
-    sm2::apply_rating(card_id, rating, timestamp)?;
+    // Explore Mode adoption guard: Only adopt into SRS if under daily cap or already adopted
+    let already_adopted = is_card_adopted_in_progress(card_id).unwrap_or(false);
+    if already_adopted {
+        // Normal path: card is in SRS; update scheduling
+        sm2::apply_rating(card_id, rating, timestamp)?;
+    } else {
+        // New/unadopted card: enforce daily adoption cap
+        let adopted_today = state.db_manager.adopted_today().unwrap_or(0) as usize;
+        if adopted_today < ADOPT_LIMIT_PER_DAY {
+            // Adopt now: schedule first time and increment deck counter
+            sm2::apply_rating(card_id, rating, timestamp)?;
+            let _ = state.db_manager.mark_adopted(card_id, timestamp);
+            let _ = state.db_manager.increment_adopted_today();
+        } else {
+            // Preview-only: record first_seen but DO NOT schedule in SRS
+            let _ = state.db_manager.mark_first_seen_if_missing(card_id, timestamp);
+            // No call to sm2::apply_rating here (prevents adoption)
+            println!("🔎 Preview only: adoption limit reached ({} per day)", ADOPT_LIMIT_PER_DAY);
+        }
+    }
     
     // Apply rating to scheduler (updates in-memory card)
     if let Some(_updated_card) = state.scheduler.answer_card(card_id, rating) {

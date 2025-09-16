@@ -199,7 +199,9 @@ pub fn build_today_with_deck_and_path(today: NaiveDate, deck: &Deck, db_path: &s
     
     // Get new cards derived from the deck itself (no global `cards` table).
     // A "new" card is any deck card not present in `srs_log`.
-    let n_new = pack_sz / 3;
+    // Explore detection: if no reviews due for this deck, show larger first batch.
+    let explore_mode = reviews_today.is_empty() && crate::config::ENABLE_EXPLORE_MODE;
+    let n_new = if explore_mode { crate::config::EXPLORE_BATCH_SIZE } else { pack_sz / 3 };
     let mut studied_ids: std::collections::HashSet<CardId> = {
         let mut set = std::collections::HashSet::new();
         let mut stmt = tx.prepare("SELECT card_id FROM srs_log")?;
