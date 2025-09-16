@@ -52,7 +52,9 @@ impl DeckSelectionState {
     /// Updates the character animation state. Returns true when the
     /// current frame advances (i.e., a visible change that needs redraw).
     pub fn update(&mut self, delta_time: f32) -> bool {
-        const FRAME_DURATION: f32 = 0.1; // Faster animation for jumping
+        // Slow the idle animation to reduce CPU when sitting on this screen.
+        // 0.3s per frame (~3 FPS) is sufficient for a subtle effect.
+        const FRAME_DURATION: f32 = 0.3;
         const NUM_FRAMES: usize = 10; // Upward Jump sprite has 10 frames
         
         self.character_anim_timer += delta_time;

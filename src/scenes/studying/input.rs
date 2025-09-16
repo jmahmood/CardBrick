@@ -136,7 +136,7 @@ pub fn handle_studying_input(state: &mut AppState, input: BrickInput) -> Result<
                     rate_card_and_continue(studying_state, Rating::Easy, &mut state.font_manager, &mut state.small_font_manager)?;
                 }
             },
-            
+
             // Y Button: Rate card as "Hard"
             BrickInput::ButtonDown(BrickButton::Y) => {
                 if studying_state.mode == StudyingScreenMode::InProgress && studying_state.is_answer_revealed {

@@ -15,7 +15,17 @@ pub const SMALL_FONT: &str = "PixelMplus10-Regular.ttf";
 pub const EMOJI_FONT: &str = "PixelMplus10-Regular.ttf";
 
 // Sprint 3 constants for study session and points
-pub const DAILY_GOAL_POINTS: i32 = 10;
+
+// Session goals (one complete queue)
+pub const SESSION_GOAL_POINTS: i32 = 120;  // ~12 cards × 10 avg points per card (realistic)
+
+// Daily goals (multiple sessions)
+pub const DAILY_GOAL_POINTS: i32 = 300;   // 2.5 sessions worth for language learning
+
+// Math mode goals (harder problems, fewer per session)
+pub const MATH_MODE_SESSION_POINTS: i32 = 100;  // ~10 problems × 10 avg points
+pub const MATH_MODE_DAILY_POINTS: i32 = 100;    // 1 session per day for math
+
 pub const GOAL_CHIME_WAV: &str = "assets/audio/goal_chime.wav";
 
 

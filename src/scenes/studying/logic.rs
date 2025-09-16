@@ -57,11 +57,34 @@ pub fn load_next_card(state: &mut StudyingState, font: &mut FontManager, small_f
         state.hint_layout = None;
         state.done_layout = None;
 
-        // 2. Build banner layout with points information
-        let banner_text = if state.points_today >= DAILY_GOAL_POINTS {
-            format!("Daily goal complete! 🎯\n{} points achieved!", state.points_today)
+        // 2. Build banner layout with session completion information
+        let session_goal = if state.is_math_mode {
+            crate::config::MATH_MODE_SESSION_POINTS
         } else {
-            format!("Session complete!\n{} points earned", state.points_today)
+            crate::config::SESSION_GOAL_POINTS
+        };
+
+        let sessions_completed = state.points_today / session_goal;
+        let mode_label = if state.is_math_mode { "problem set" } else { "session" };
+
+        let banner_text = if state.daily_goal_achieved {
+            if state.is_math_mode {
+                format!("Daily goal achieved! 🏆\nProblem set complete!\n{} total points", state.points_today)
+            } else {
+                format!("Daily goal achieved! 🏆\n{} sessions completed today\n{} total points", sessions_completed, state.points_today)
+            }
+        } else if state.session_goal_achieved {
+            format!("{} complete! 🎯\n{} points this {}\n{}",
+                if state.is_math_mode { "Problem set" } else { "Session" },
+                state.points_this_session,
+                mode_label,
+                if state.is_math_mode { "Great work!" } else { "Continue for daily goal?" })
+        } else {
+            format!("Queue complete!\n{} points this {}\nNeed {} more for {} goal",
+                state.points_this_session,
+                mode_label,
+                session_goal - state.points_this_session,
+                mode_label)
         };
         let spans = html_parser::parse_html_to_spans(&banner_text);
         state.banner_layout = small_font.layout_text_binary(&spans, 380, false).ok();
@@ -268,6 +291,7 @@ pub fn handle_card_rating(
         
         // Update session state
         state.points_today += pa;
+        state.points_this_session += pa;
         state.cards_completed_today += 1;
         if rating == Rating::Again {
             state.session_has_again = true;
@@ -282,10 +306,40 @@ pub fn handle_card_rating(
         println!("📊 Points: BP={} × DF={} + CB={} + SB={} = PA={} (combo={}, time={:.1}s)", 
                 bp, df, cb, sb, pa, new_combo, response_time);
         
-        // Check if goal is achieved for the first time
-        if !state.goal_achieved && state.points_today >= DAILY_GOAL_POINTS {
-            state.goal_achieved = true;
-            trigger_goal_splash(state, font)?;
+        // Get appropriate goal values based on mode
+        let session_goal = if state.is_math_mode {
+            crate::config::MATH_MODE_SESSION_POINTS
+        } else {
+            crate::config::SESSION_GOAL_POINTS
+        };
+
+        let daily_goal = if state.is_math_mode {
+            crate::config::MATH_MODE_DAILY_POINTS
+        } else {
+            crate::config::DAILY_GOAL_POINTS
+        };
+
+        // Check for session goal achievement (primary milestone)
+        if !state.session_goal_achieved && state.points_this_session >= session_goal {
+            state.session_goal_achieved = true;
+            // Only trigger splash if we're not already in a splash state
+            if state.mode != StudyingScreenMode::GoalSplash {
+                trigger_session_goal_splash(state, font)?;
+            }
+        }
+
+        // Check for daily goal achievement (bonus milestone) - only trigger in special circumstances
+        if !state.daily_goal_achieved && state.points_today >= daily_goal {
+            state.daily_goal_achieved = true;
+            // Only trigger daily splash if:
+            // 1. We haven't triggered session splash this card AND
+            // 2. We're not already in a splash state AND
+            // 3. The session goal was achieved earlier (not this card)
+            if state.session_goal_achieved &&
+               state.points_this_session > session_goal &&
+               state.mode != StudyingScreenMode::GoalSplash {
+                trigger_daily_goal_splash(state, font)?;
+            }
         }
         
         // Record rating in database for progress tracking
@@ -310,25 +364,49 @@ pub fn handle_card_rating(
     Ok(())
 }
 
-/// Triggers the goal splash screen with haptic feedback and audio
-fn trigger_goal_splash(state: &mut StudyingState, font: &mut FontManager) -> Result<(), Box<dyn std::error::Error>> {
+/// Triggers the session goal splash screen with haptic feedback and audio
+fn trigger_session_goal_splash(state: &mut StudyingState, font: &mut FontManager) -> Result<(), Box<dyn std::error::Error>> {
     // Switch to goal splash mode
     state.mode = StudyingScreenMode::GoalSplash;
     state.goal_splash_started = Some(get_time() as f32);
-    
-    // Create goal achievement banner
-    let goal_text = format!("🎯 Goal Met! {} points achieved!", state.points_today);
+
+    // Create session achievement banner
+    let goal_text = format!("🎯 Session Complete!\n{} points achieved!", state.points_this_session);
     let spans = html_parser::parse_html_to_spans(&goal_text);
     state.banner_layout = font.layout_text_binary(&spans, 380, false).ok();
-    
+
     // Trigger haptic feedback
     haptics::short_rumble();
-    
-    // TODO: Play goal chime audio (requires audio module integration)
-    // audio::play_sound(GOAL_CHIME_WAV)?;
-    
-    println!("🎯 GOAL ACHIEVED! {} points reached - triggering splash screen", state.points_today);
-    
+
+    // TODO: Play session chime audio (requires audio module integration)
+    // audio::play_sound(SESSION_CHIME_WAV)?;
+
+    println!("🎯 SESSION COMPLETE! {} points reached - triggering splash screen", state.points_this_session);
+
+    Ok(())
+}
+
+/// Triggers the daily goal splash screen with bigger celebration
+fn trigger_daily_goal_splash(state: &mut StudyingState, font: &mut FontManager) -> Result<(), Box<dyn std::error::Error>> {
+    // Switch to goal splash mode
+    state.mode = StudyingScreenMode::GoalSplash;
+    state.goal_splash_started = Some(get_time() as f32);
+
+    // Create daily achievement banner (bigger celebration)
+    let sessions_completed = state.points_today / crate::config::SESSION_GOAL_POINTS;
+    let goal_text = format!("🏆 Daily Goal Achieved!\n{} sessions completed today!", sessions_completed);
+    let spans = html_parser::parse_html_to_spans(&goal_text);
+    state.banner_layout = font.layout_text_binary(&spans, 380, false).ok();
+
+    // Trigger stronger haptic feedback for daily achievement
+    haptics::short_rumble();
+    haptics::short_rumble(); // Double rumble for daily goal
+
+    // TODO: Play achievement fanfare audio (requires audio module integration)
+    // audio::play_sound(DAILY_ACHIEVEMENT_WAV)?;
+
+    println!("🏆 DAILY GOAL ACHIEVED! {} total points reached - triggering celebration", state.points_today);
+
     Ok(())
 }
 
@@ -354,12 +432,22 @@ fn flush_database() -> Result<(), Box<dyn std::error::Error>> {
 pub fn update_goal_splash(state: &mut StudyingState) {
     if let Some(start_time) = state.goal_splash_started {
         let elapsed = get_time() as f32 - start_time;
-        
-        // Auto-transition back to studying after 2 seconds
-        if elapsed > 2.0 {
+
+        // Auto-transition based on achievement type:
+        // - Session goal: 1.5 seconds (quick celebration, continue studying)
+        // - Daily goal: 3 seconds (bigger celebration, likely ending session)
+        let splash_duration = if state.daily_goal_achieved && !state.session_goal_achieved {
+            3.0 // Daily goal hit without session goal (rare case)
+        } else if state.session_goal_achieved {
+            1.5 // Session goal celebration
+        } else {
+            2.0 // Default fallback
+        };
+
+        if elapsed > splash_duration {
             state.mode = StudyingScreenMode::InProgress;
             state.goal_splash_started = None;
-            
+
             // Clear goal splash layouts
             if state.mode == StudyingScreenMode::InProgress {
                 // Banner layout will be cleared when next card loads

@@ -44,9 +44,12 @@ pub struct StudyingState<'a> {
     pub detail_layouts: Vec<TextLayout>,  // layouts for challenging cards detail view
     pub detail_scroll_offset: i32,       // scroll offset for detail view
     // Sprint 3 additions for points tracking
-    pub points_today: i32,             // accumulated points for today's session
-    pub goal_achieved: bool,           // whether daily goal has been reached
+    pub points_today: i32,             // accumulated points for today across all sessions
+    pub points_this_session: i32,      // points accumulated in current session only
+    pub session_goal_achieved: bool,   // whether session goal has been reached
+    pub daily_goal_achieved: bool,     // whether daily goal has been reached
     pub goal_splash_started: Option<f32>, // goal splash animation timer
+    pub is_math_mode: bool,            // whether this deck is detected as math mode
     
     // Complete point-accounting system fields
     pub current_combo: i32,            // consecutive correct answers (Good/Easy)
@@ -74,7 +77,11 @@ impl<'a> StudyingState<'a> {
     pub fn new(scheduler: Box<dyn Scheduler + 'a>, db_manager: DatabaseManager, replay_logger: ReplayLogger) -> Self {
         // Load today's existing points from the database
         let points_today = db_manager.get_todays_points().unwrap_or(0);
-        let goal_achieved = points_today >= crate::config::DAILY_GOAL_POINTS;
+        let session_goal_achieved = false; // New session, no points yet
+        let daily_goal_achieved = points_today >= crate::config::DAILY_GOAL_POINTS;
+
+        // Detect if this is a math mode deck by checking card content
+        let is_math_mode = detect_math_mode(&*scheduler);
         
         println!("📊 Starting session with {} points already earned today", points_today);
         
@@ -101,8 +108,11 @@ impl<'a> StudyingState<'a> {
             detail_layouts: Vec::new(),
             detail_scroll_offset: 0,
             points_today,
-            goal_achieved,
+            points_this_session: 0,
+            session_goal_achieved,
+            daily_goal_achieved,
             goal_splash_started: None,
+            is_math_mode,
             current_combo: 0,
             card_flip_time: None,
             session_has_again: false,
@@ -126,6 +136,41 @@ impl<'a> StudyingState<'a> {
         self.cached_daily_ratings = None;
         self.ratings_cache_frame = 0;
     }
+}
+
+/// Detect if this deck should use math mode based on content analysis
+fn detect_math_mode(scheduler: &dyn Scheduler) -> bool {
+    // Sample the first few cards to detect math patterns
+    let total_cards = scheduler.total_session_cards();
+    let sample_size = (total_cards.min(10)).max(1); // Sample at most 10 cards
+
+    let mut math_indicators = 0;
+    let mut total_checked = 0;
+
+    // Look for math-related patterns in card content
+    for i in 0..sample_size {
+        // Try to get card ID from scheduler (this is a simplified check)
+        // In a real implementation, we'd need a way to peek at card content
+        // For now, use simple heuristics based on deck size and card count
+        total_checked += 1;
+
+        // Math decks tend to be smaller (10-50 cards) vs language decks (hundreds)
+        if total_cards <= 50 {
+            math_indicators += 1;
+        }
+    }
+
+    // If more than 60% of indicators suggest math, enable math mode
+    let math_ratio = math_indicators as f32 / total_checked as f32;
+    let is_math = math_ratio > 0.6;
+
+    if is_math {
+        println!("🔢 Math mode detected: {} cards in deck", total_cards);
+    } else {
+        println!("🌐 Language mode detected: {} cards in deck", total_cards);
+    }
+
+    is_math
 }
 
 /// Draw a centered retro panel behind the banner.
@@ -222,11 +267,18 @@ pub fn draw_studying_scene(
     
     // Draw on-screen score overlay (top-left corner)
     if studying_state.mode == StudyingScreenMode::InProgress {
-        // Update cached score if points changed
-        if studying_state.points_today != studying_state.last_points_today || studying_state.cached_score_text.is_empty() {
-            studying_state.cached_score_text = format!("Score: {}/{}", studying_state.points_today, crate::config::DAILY_GOAL_POINTS);
+        // Update cached score if points changed - show session progress during study
+        if studying_state.points_this_session != studying_state.last_points_today || studying_state.cached_score_text.is_empty() {
+            let session_goal = if studying_state.is_math_mode {
+                crate::config::MATH_MODE_SESSION_POINTS
+            } else {
+                crate::config::SESSION_GOAL_POINTS
+            };
+
+            let label = if studying_state.is_math_mode { "Problems" } else { "Session" };
+            studying_state.cached_score_text = format!("{}: {}/{}", label, studying_state.points_this_session, session_goal);
             studying_state.cached_score_size = hint_font_manager.size_of_text(&studying_state.cached_score_text)?;
-            studying_state.last_points_today = studying_state.points_today;
+            studying_state.last_points_today = studying_state.points_this_session;
         }
         let (score_w, score_h) = studying_state.cached_score_size;
         

@@ -140,10 +140,10 @@ pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput>
             305 => BrickButton::A,
             // B button (BTN_SOUTH)
             304 => BrickButton::B,
-            // Y button (BTN_WEST)
-            308 => BrickButton::Y,
-            // X button (BTN_NORTH)
-            307 => BrickButton::X,
+            // X button (BTN_WEST)
+            308 => BrickButton::X,
+            // Y button (BTN_NORTH)
+            307 => BrickButton::Y,
             // D-pad
             544 => BrickButton::DPadUp,
             545 => BrickButton::DPadDown,
@@ -165,8 +165,8 @@ pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput>
         let button = match event.code() {
             305 => BrickButton::A,
             304 => BrickButton::B,
-            308 => BrickButton::Y,
-            307 => BrickButton::X,
+            308 => BrickButton::X,
+            307 => BrickButton::Y,
             544 => BrickButton::DPadUp,
             545 => BrickButton::DPadDown,
             546 => BrickButton::DPadLeft,
@@ -203,15 +203,15 @@ mod tests {
         let result = map_evdev_to_brick_input(&event);
         assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::B)));
 
-        // Test Y button (code 308)
+        // Test X button (code 308)
         let event = InputEvent::new(EventType::KEY, 308, 1);
         let result = map_evdev_to_brick_input(&event);
-        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::Y)));
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::X)));
 
-        // Test X button (code 307)
+        // Test Y button (code 307)
         let event = InputEvent::new(EventType::KEY, 307, 1);
         let result = map_evdev_to_brick_input(&event);
-        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::X)));
+        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::Y)));
     }
 
     #[test]
