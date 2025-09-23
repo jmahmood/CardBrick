@@ -49,6 +49,7 @@ pub fn handle_deck_selection_input(state: &mut AppState, input: BrickInput) -> R
                 }
             },
             BrickInput::ButtonDown(BrickButton::Back) => state.game_state = GameState::MainMenu(MainMenuState::new()),
+            BrickInput::ButtonDown(BrickButton::B) => state.game_state = GameState::MainMenu(MainMenuState::new()),
             _ => {}
         }
     }

@@ -5,6 +5,7 @@ use std::io::Write;
 use config::{assets, UiAssets};
 
 use macroquad::prelude::*;
+use macroquad::miniquad;
 use log::{info, warn, error, debug};
 use evdev::Device as EvdevDevice;
 use std::os::fd::AsRawFd;
@@ -515,12 +516,6 @@ impl CardBrickApp {
             self.needs_redraw = true;
         }
 
-        // Update deck selection animation and request redraw only when frame changes
-        if let GameState::DeckSelection(deck_selection_state) = &mut self.app_state.game_state {
-            if deck_selection_state.update(get_frame_time()) {
-                self.needs_redraw = true;
-            }
-        }
 
         // Minimal redraw cadence for animated studying screens
         if let GameState::Studying(studying_state) = &mut self.app_state.game_state {
@@ -780,8 +775,13 @@ fn window_conf() -> Conf {
         window_width: config.display_width as i32,
         window_height: config.display_height as i32,
         fullscreen,
+        platform: miniquad::conf::Platform {
+            linux_backend: miniquad::conf::LinuxBackend::WaylandWithX11Fallback, // or WaylandWithX11Fallback
+            ..Default::default()
+            },
         sample_count: 1,
         window_resizable: false,
+        icon: None,
         ..Default::default()
     }
 }

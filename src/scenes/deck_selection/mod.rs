@@ -17,8 +17,6 @@ pub struct DeckSelectionState {
     pub decks: Vec<DeckMetadata>,
     pub selected_index: usize,
     first_visible: usize,
-    pub character_anim_timer: f32,
-    pub character_current_frame: usize,
     display_names: Vec<String>, // Pre-computed display names for performance
     name_layouts: Option<Vec<TextLayout>>, // Cached layouts for deck names
     // Offscreen cache for background + title
@@ -39,8 +37,6 @@ impl DeckSelectionState {
             decks,
             selected_index: 0,
             first_visible: 0,
-            character_anim_timer: 0.0,
-            character_current_frame: 0,
             display_names,
             name_layouts: None,
             bg_rt: None,
@@ -49,22 +45,6 @@ impl DeckSelectionState {
         })
     }
 
-    /// Updates the character animation state. Returns true when the
-    /// current frame advances (i.e., a visible change that needs redraw).
-    pub fn update(&mut self, delta_time: f32) -> bool {
-        // Slow the idle animation to reduce CPU when sitting on this screen.
-        // 0.3s per frame (~3 FPS) is sufficient for a subtle effect.
-        const FRAME_DURATION: f32 = 0.3;
-        const NUM_FRAMES: usize = 10; // Upward Jump sprite has 10 frames
-        
-        self.character_anim_timer += delta_time;
-        if self.character_anim_timer >= FRAME_DURATION {
-            self.character_current_frame = (self.character_current_frame + 1) % NUM_FRAMES;
-            self.character_anim_timer -= FRAME_DURATION;
-            return true;
-        }
-        false
-    }
 
     pub fn index_changes(&mut self, delta: isize, total: usize) -> bool {
 
@@ -105,11 +85,8 @@ pub fn draw_deck_selection_scene(
     const TITLE_POS: (i32, i32) = (51, 38);
     const LIST_START_POS: (i32, i32) = (51, 90);
     const LIST_ITEM_HEIGHT: f32 = 26.0;
-    const CHARACTER_POS: (f32, f32) = (312.0, 120.0);
     const FOOTER_POS: (i32, i32) = (51, 346);
     const FOOTER_AREA_HEIGHT: f32 = 40.0;
-    const FRAME_WIDTH: f32 = 64.0;
-    const FRAME_HEIGHT: f32 = 64.0;
 
     // Calculate screen coordinates once
     let (screen_x, screen_y) = canvas_manager.logical_to_screen(0.0, 0.0);
@@ -153,38 +130,6 @@ pub fn draw_deck_selection_scene(
     small_font_manager.draw_line_top_left("Select a Deck", TITLE_POS.0, TITLE_POS.1, canvas_manager)?;
     small_font_manager.draw_line_top_left("A: Select    B: Back", 44, 360, canvas_manager)?;
 
-    // 2. Draw Animated Character (if assets are loaded)
-    if let Some(assets) = ui_assets {
-        // Calculate frame dimensions from the loaded texture
-        let texture_height = assets.character_sprite.height();
-        
-        // Use integer frame width to avoid alignment issues
-        // 1408 pixels ÷ 10 frames = 140.8, so use 140 pixels per frame
-        let frame_width = 140.0; // Fixed frame width based on sprite sheet
-        let frame_height = texture_height; // Single row (128 pixels)
-        
-        let source_rect = Rect::new(
-            state.character_current_frame as f32 * frame_width,
-            0.0,
-            frame_width,
-            frame_height,
-        );
-        
-        let (char_screen_x, char_screen_y) = canvas_manager.logical_to_screen(CHARACTER_POS.0, CHARACTER_POS.1);
-        let char_dest_size = Vec2::new(FRAME_WIDTH * scale, FRAME_HEIGHT * scale);
-        
-        draw_texture_ex(
-            &assets.character_sprite,
-            char_screen_x,
-            char_screen_y,
-            WHITE,
-            DrawTextureParams {
-                source: Some(source_rect),
-                dest_size: Some(char_dest_size),
-                ..Default::default()
-            }
-        );
-    }
 
     // Title is part of offscreen background
 
