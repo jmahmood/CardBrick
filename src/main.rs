@@ -30,22 +30,11 @@ use deck::html_parser;
 use storage::{DatabaseManager, ReplayLogger};
 use scenes::main_menu::MainMenuState;
 use scenes::deck_selection::DeckSelectionState;
-use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, AudioManager, map_evdev_to_brick_input};
+use state::{LoaderMessage, DeckMetadata, AppState, GameState, BrickInput, BrickButton, AudioManager, map_evdev_to_brick_input, BackgroundFontMessage};
 use ui::{CanvasManager, FontManager, Sprite};
 
 #[derive(Debug, Clone)]
 enum DeviceType { Desktop, TrimUIBrick, RG35XXPlus }
-
-/// Messages sent from background font loading thread
-pub enum BackgroundFontMessage {
-    Progress {
-        font_type: String,
-        progress: f32,
-        message: String,
-        size_info: String,
-    },
-    ReadyToLoadFont,
-}
 
 #[derive(Clone)]
 struct DeviceConfig {

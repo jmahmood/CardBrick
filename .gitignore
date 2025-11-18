@@ -10,3 +10,5 @@ coverage-report/
 .claude/
 test_cache/
 CLAUDE.md
+venv-syncd
+workspace

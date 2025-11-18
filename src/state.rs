@@ -31,6 +31,17 @@ pub enum LoaderMessage {
     Complete(Result<Deck, String>),
 }
 
+/// Messages sent from background font loading thread
+pub enum BackgroundFontMessage {
+    Progress {
+        font_type: String,
+        progress: f32,
+        message: String,
+        size_info: String,
+    },
+    ReadyToLoadFont,
+}
+
 /// Represents the current screen or state of the application.
 pub enum GameState {
     MainMenu(MainMenuState),
@@ -82,7 +93,7 @@ pub struct AppState {
     pub config: Config,
     pub gamepad: Option<EvdevDevice>,
     pub audio: AudioManager,
-    pub background_font_receiver: Option<std::sync::mpsc::Receiver<crate::BackgroundFontMessage>>,
+    pub background_font_receiver: Option<std::sync::mpsc::Receiver<BackgroundFontMessage>>,
     pub japanese_font_ready: bool,
     pub ui_assets: Option<UiAssets>,
 }

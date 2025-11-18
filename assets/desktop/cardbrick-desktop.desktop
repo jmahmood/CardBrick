@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=CardBrick Desktop
+Comment=Spaced repetition flashcard study application
+Exec=cardbrick-desktop --deck %f
+Icon=cardbrick
+Terminal=false
+Categories=Education;Languages;
+MimeType=application/json;
+Keywords=flashcards;study;spaced-repetition;srs;anki;
+StartupNotify=true

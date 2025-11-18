@@ -9,6 +9,10 @@ description = "An Anki-compatible flash-card app for the TrimUI Brick"
 # Pure Rust graphics and windowing
 macroquad = "0.4"
 
+# Desktop UI (egui)
+eframe = { version = "0.30", default-features = true }
+egui = "0.30"
+
 # Input handling
 evdev = "0.12"
 nix = { version = "0.29", features = ["fs"] }
@@ -37,6 +41,10 @@ rand_distr = "0.4"
 dirs = "5.0"
 futures = "0.3"
 
+# CLI dependencies
+clap = { version = "4.0", features = ["derive"] }
+uuid = { version = "1.0", features = ["v4"] }
+
 # Networking for sync (Sprint 4)
 reqwest = { version = "0.11", features = ["json"] }
 ring = "0.16"
@@ -52,6 +60,10 @@ if-addrs = "0.12"
 # Remove web server for embedded version
 # tiny_http = "0.12"
 
+
+[lib]
+name = "cardbrick"
+path = "src/lib.rs"
 
 [features]
 default = []
@@ -77,4 +89,31 @@ path = "src/test_display.rs"
 [[bin]]
 name = "test_db"
 path = "src/test_db.rs"
+
+[[bin]]
+name = "cardbrick-cli"
+path = "src/bin/cardbrick_cli.rs"
+
+[[bin]]
+name = "cardbrick-desktop"
+path = "src/bin/cardbrick_desktop.rs"
+
+[package.metadata.deb]
+name = "cardbrick-desktop"
+maintainer = "CardBrick Team <cardbrick@example.com>"
+copyright = "2025, CardBrick Team <cardbrick@example.com>"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+CardBrick Desktop is a spaced repetition flashcard study application \
+for desktop Linux systems. It uses the proven SM-2 algorithm to help \
+you learn vocabulary, concepts, and other material efficiently through \
+intelligent scheduling of review sessions."""
+depends = "$auto"
+section = "education"
+priority = "optional"
+assets = [
+    ["target/release/cardbrick-desktop", "usr/bin/", "755"],
+    ["assets/desktop/cardbrick-desktop.desktop", "usr/share/applications/", "644"],
+    ["README.md", "usr/share/doc/cardbrick-desktop/", "644"],
+]
 
