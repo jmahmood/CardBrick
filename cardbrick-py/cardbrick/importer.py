@@ -22,6 +22,7 @@ import sqlite3
 import tempfile
 import zipfile
 
+from .scheduler import iso, now_utc
 from .textutil import clean_html, extract_audio
 
 AUDIO_EXTENSIONS = {".mp3", ".ogg", ".wav", ".flac", ".m4a", ".opus"}
@@ -36,16 +37,31 @@ class ApkgError(Exception):
 class ImportStats:
     def __init__(self):
         self.decks = set()
+        self.tags = set()
         self.cards = 0
         self.notes = 0
         self.media_files = 0
-        self.skipped_cards = 0
+        self.skipped = []  # (card_id, reason) for auditing
+
+    @property
+    def skipped_cards(self):
+        return len(self.skipped)
+
+    def skip(self, card_id, reason):
+        self.skipped.append((card_id, reason))
 
     def summary(self):
-        return (f"Imported {self.cards} cards from {self.notes} notes "
+        text = (f"Imported {self.cards} cards from {self.notes} notes "
                 f"into {len(self.decks)} deck(s); "
                 f"{self.media_files} media files copied; "
                 f"{self.skipped_cards} unsupported cards skipped.")
+        if self.skipped:
+            reasons = {}
+            for _cid, reason in self.skipped:
+                reasons[reason] = reasons.get(reason, 0) + 1
+            details = ", ".join(f"{n}x {r}" for r, n in sorted(reasons.items()))
+            text += f"\nSkipped: {details}"
+        return text
 
 
 def import_apkg(apkg_path, storage, scheduler, media_dir):
@@ -92,18 +108,18 @@ def _import_collection(col_path, storage, scheduler, stats):
         for card in conn.execute("SELECT id, nid, did, ord FROM cards"):
             note = notes.get(card["nid"])
             if note is None:
-                stats.skipped_cards += 1
+                stats.skip(card["id"], "orphan card (missing note)")
                 continue
             model = models.get(str(note["mid"])) or models.get(note["mid"])
             if model and model.get("type") == CLOZE_MODEL_TYPE:
-                stats.skipped_cards += 1
+                stats.skip(card["id"], "cloze note type")
                 continue
 
             fields = note["flds"].split("\x1f")
             if len(fields) < 2 or card["ord"] > 1:
                 # Only front/back pairs from the first two fields are
                 # supported (Basic and Basic (and reversed card)).
-                stats.skipped_cards += 1
+                stats.skip(card["id"], "unsupported template/fields")
                 continue
             front_raw, back_raw = fields[0], fields[1]
             if card["ord"] == 1:
@@ -114,7 +130,7 @@ def _import_collection(col_path, storage, scheduler, stats):
             front = clean_html(front_raw)
             back = clean_html(back_raw)
             if not front and not back:
-                stats.skipped_cards += 1
+                stats.skip(card["id"], "empty after HTML stripping")
                 continue
 
             audio_filename, audio_side = None, None
@@ -125,14 +141,17 @@ def _import_collection(col_path, storage, scheduler, stats):
 
             deck = decks.get(str(card["did"]),
                              decks.get(card["did"], "Default"))
+            tags = note["tags"].strip()
             storage.upsert_card(
                 card_id=card["id"], note_id=note["id"], deck=deck,
-                front=front, back=back, tags=note["tags"].strip(),
-                audio_filename=audio_filename, audio_side=audio_side)
+                front=front, back=back, tags=tags,
+                audio_filename=audio_filename, audio_side=audio_side,
+                now_iso=iso(now_utc()))
             storage.init_review_state(scheduler.initial_state(card["id"]))
 
             stats.cards += 1
             stats.decks.add(deck)
+            stats.tags.update(tags.split())
             notes_seen = getattr(stats, "_notes_seen", set())
             if note["id"] not in notes_seen:
                 notes_seen.add(note["id"])
