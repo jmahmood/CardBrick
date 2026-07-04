@@ -1,0 +1,4 @@
+data/
+sample.apkg
+__pycache__/
+*.pyc
