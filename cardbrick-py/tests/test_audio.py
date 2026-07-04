@@ -53,6 +53,12 @@ def test_command_backend_ffplay_handles_anything():
     assert "/m/hola.opus" in backend.command_for("/m/hola.opus")
 
 
+def test_afplay_covers_macos_dev_boxes():
+    backend, _ = make_backend({"afplay"})
+    assert backend.command_for("/m/hola.mp3")[0] == "afplay"
+    assert backend.command_for("/m/hola.wav")[0] == "afplay"
+
+
 def test_custom_command_wins_and_gets_file_substituted():
     backend, launched = make_backend({"mycustomplayer"},
                                      custom_cmd="mycustomplayer -x {file}")

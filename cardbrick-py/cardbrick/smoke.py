@@ -10,6 +10,7 @@ don't fail the run — they are normal on a desktop dev box.
 
 import logging
 import os
+import sys
 
 log = logging.getLogger(__name__)
 
@@ -128,14 +129,31 @@ def run_smoke_test(paths):
     else:
         result.add(FAIL, "media directory", "missing " + paths.media_dir)
 
-    # -- pygame / display / font / joystick / audio -----------------------------------------
+    # -- pygame / display / font / joystick / audio -------------------------------------
+    # Each sub-check is isolated: a broken optional module (font, mixer)
+    # must be reported as ITS OWN failure and never mask the checks
+    # after it.
+    pygame_ok = False
     try:
         import pygame
         pygame.init()
-        result.add(PASS, "pygame init",
-                    f"{'pygame-ce' if getattr(pygame, 'IS_CE', False) else 'pygame'} "
-                    f"{pygame.version.ver}")
+        flavour = "pygame-ce" if getattr(pygame, "IS_CE", False) \
+            else "pygame"
+        detail = f"{flavour} {pygame.version.ver} on Python " \
+                 f"{sys.version.split()[0]}"
+        if flavour == "pygame" and sys.version_info >= (3, 13):
+            detail += (" — classic pygame has no prebuilt wheels for "
+                       "this Python and a source build may lack "
+                       "SDL_ttf/SDL_mixer; prefer pygame-ce or "
+                       "Python 3.11/3.12")
+            result.add(WARN, "pygame init", detail)
+        else:
+            result.add(PASS, "pygame init", detail)
+        pygame_ok = True
+    except Exception as exc:  # noqa: BLE001
+        result.add(FAIL, "pygame init", str(exc))
 
+    if pygame_ok:
         try:
             pygame.display.set_mode((64, 48))
             result.add(PASS, "display init",
@@ -144,19 +162,26 @@ def run_smoke_test(paths):
             result.add(FAIL, "display init",
                         f"{exc} (try SDL_VIDEODRIVER=dummy for headless)")
 
-        from .app import _load_font, resolve_font_path
-        font_path = resolve_font_path()
-        font = _load_font(24)
-        spanish = "áéíóúñü¿¡"
-        width = font.size(spanish)[0]
-        if font_path and width > 0:
-            result.add(PASS, "font (Spanish glyphs)", font_path)
-        elif width > 0:
-            result.add(WARN, "font (Spanish glyphs)",
-                        "builtin fallback font — bundle assets/fonts")
-        else:
-            result.add(FAIL, "font (Spanish glyphs)",
-                        "cannot render Spanish characters")
+        try:
+            from .app import (FontSupportError, _load_font,
+                              ensure_font_support, resolve_font_path)
+            ensure_font_support()
+            font_path = resolve_font_path()
+            font = _load_font(24)
+            spanish = "áéíóúñü¿¡"
+            width = font.size(spanish)[0]
+            if font_path and width > 0:
+                result.add(PASS, "font (Spanish glyphs)", font_path)
+            elif width > 0:
+                result.add(WARN, "font (Spanish glyphs)",
+                            "builtin fallback font — bundle assets/fonts")
+            else:
+                result.add(FAIL, "font (Spanish glyphs)",
+                            "cannot render Spanish characters")
+        except FontSupportError as exc:
+            result.add(FAIL, "font support", str(exc))
+        except Exception as exc:  # noqa: BLE001
+            result.add(FAIL, "font (Spanish glyphs)", str(exc))
 
         try:
             count = pygame.joystick.get_count()
@@ -165,7 +190,7 @@ def run_smoke_test(paths):
             result.add(PASS if count else WARN, "joystick detection",
                         f"{count} device(s)"
                         + ("" if count else " — keyboard only"))
-        except pygame.error as exc:
+        except Exception as exc:  # noqa: BLE001
             result.add(FAIL, "joystick detection", str(exc))
 
         try:
@@ -183,8 +208,6 @@ def run_smoke_test(paths):
         except Exception as exc:  # noqa: BLE001
             result.add(FAIL, "audio backend", str(exc))
         pygame.quit()
-    except Exception as exc:  # noqa: BLE001
-        result.add(FAIL, "pygame init", str(exc))
 
     # -- input mapping -----------------------------------------------------------------------
     try:

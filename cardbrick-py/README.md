@@ -59,6 +59,18 @@ no private Anki APIs:
 Everything else is the standard library (`sqlite3`, `zipfile`, `json`,
 `datetime`, `logging`, `shutil`, ...).
 
+**Pick a Python with prebuilt wheels.** On a Python version that has no
+prebuilt wheel for your pygame flavour (e.g. classic `pygame` on
+3.13/3.14), pip silently compiles it from source, and the build will be
+missing whatever SDL satellite libraries weren't installed — typically
+`pygame.font` (SDL_ttf) and `pygame.mixer` (SDL_mixer). The symptom is
+a "partially initialized module 'pygame.font'" ImportError at first
+render. `--smoke-test` detects this and names the fix; the fix is
+`pip uninstall pygame && pip install pygame-ce`, or Python 3.11/3.12.
+Audio degrades gracefully (CLI players, incl. macOS `afplay`), but
+fonts are load-bearing for a text UI, so the app refuses to start with
+a clear message instead.
+
 ### Audio backends
 
 `pygame.mixer` is an *optional* compiled pygame module that requires

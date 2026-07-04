@@ -159,7 +159,8 @@ def main(argv=None):
 def _run_app(storage, scheduler, paths, fullscreen=None,
              initial_state=None):
     """Boot the appliance UI; fatal errors become visible screens."""
-    from cardbrick.app import CardBrickApp, DisplayInitError
+    from cardbrick.app import (CardBrickApp, DisplayInitError,
+                               FontSupportError)
     from cardbrick.audio import AudioPlayer
     from cardbrick.errors import show_error_screen
     from cardbrick.service import ReviewService
@@ -177,6 +178,11 @@ def _run_app(storage, scheduler, paths, fullscreen=None,
         print(f"FATAL: display init failed: {exc}\n"
               f"Check SDL_VIDEODRIVER (see {paths.log_path})",
               file=sys.stderr)
+        return 1
+    except FontSupportError as exc:
+        # No fonts: a text error screen can't render either.
+        log.error("%s", exc)
+        print(f"FATAL: {exc}\n(see {paths.log_path})", file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001
         log.exception("startup failed")

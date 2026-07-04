@@ -34,6 +34,7 @@ _CLI_PLAYERS = [
     ("ogg123", ["ogg123", "-q"], {".ogg"}),
     ("aplay", ["aplay", "-q"], {".wav"}),
     ("paplay", ["paplay"], {".wav", ".ogg", ".flac"}),
+    ("afplay", ["afplay"], None),   # macOS built-in (dev boxes)
     ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
      None),
 ]

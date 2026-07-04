@@ -108,6 +108,31 @@ class DisplayInitError(Exception):
     """Display could not be initialised; main() shows/logs the error."""
 
 
+class FontSupportError(Exception):
+    """This pygame build has no usable font module (SDL_ttf missing)."""
+
+
+def ensure_font_support():
+    """Fail fast, with an actionable message, on font-less pygame builds.
+
+    pygame.font is optional: a from-source build without SDL_ttf (the
+    usual outcome of `pip install pygame` on a Python version that has
+    no prebuilt wheel, e.g. classic pygame on 3.13+) leaves pygame.font
+    as a stub that raises on first use. A text UI cannot limp along
+    without fonts, so turn that into a clear diagnosis up front.
+    """
+    try:
+        pygame.font.init()
+        pygame.font.Font(None, 12)  # exercises the real module
+    except Exception as exc:
+        raise FontSupportError(
+            "This pygame build has no font support (SDL_ttf was missing "
+            "when it was compiled). Install pygame-ce "
+            "(`pip uninstall pygame; pip install pygame-ce`) or use a "
+            f"Python version with prebuilt wheels. Underlying error: {exc}"
+        ) from exc
+
+
 class CardBrickApp:
     def __init__(self, storage, service, audio, settings, paths=None,
                  fullscreen=None, initial_state=None):
@@ -123,6 +148,7 @@ class CardBrickApp:
 
         pygame.init()
         log_pygame_versions()
+        ensure_font_support()
         self.w = int(settings.get("logical_width", 640))
         self.h = int(settings.get("logical_height", 480))
         if fullscreen is None:
