@@ -19,6 +19,13 @@ class AudioPlayer:
         except pygame.error:
             self.enabled = False
 
+    def available(self, filename):
+        """True if the media file exists locally (missing-audio check)."""
+        if not filename:
+            return False
+        return os.path.exists(
+            os.path.join(self.media_dir, os.path.basename(filename)))
+
     def play(self, filename):
         """Play a media file by its imported name. Returns True if played."""
         if not self.enabled or not filename:

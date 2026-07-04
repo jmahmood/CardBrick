@@ -1,14 +1,27 @@
 """Local SQLite storage.
 
-Owns the application database: imported cards plus FSRS review state.
-Nothing here knows about .apkg files, pygame, or the FSRS algorithm —
-review_state rows are written from dicts produced by scheduler.py.
+Owns the application database: imported cards, FSRS review state, the
+append-only review log, study sessions, and child profiles. Nothing here
+knows about .apkg files, pygame, or the FSRS algorithm — review_state
+rows are written from dicts produced by scheduler.py.
+
+The schema is versioned through the ``meta`` table and migrates in place,
+so databases created by the original prototype keep their review
+progress when opened by the CardBrick-style app.
 """
 
+import json
 import os
 import sqlite3
 
+SCHEMA_VERSION = 2
+
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS cards (
     id             INTEGER PRIMARY KEY,
     note_id        INTEGER NOT NULL,
@@ -17,25 +30,85 @@ CREATE TABLE IF NOT EXISTS cards (
     back           TEXT NOT NULL,
     tags           TEXT NOT NULL DEFAULT '',
     audio_filename TEXT,
-    audio_side     TEXT CHECK (audio_side IN ('front', 'back') OR audio_side IS NULL)
+    audio_side     TEXT CHECK (audio_side IN ('front', 'back') OR audio_side IS NULL),
+    suspended      INTEGER NOT NULL DEFAULT 0,
+    buried_until   TEXT,
+    created_at     TEXT,
+    updated_at     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS review_state (
-    card_id        INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
-    due            TEXT NOT NULL,
-    stability      REAL,
-    difficulty     REAL,
-    elapsed_days   INTEGER NOT NULL DEFAULT 0,
-    scheduled_days INTEGER NOT NULL DEFAULT 0,
-    reps           INTEGER NOT NULL DEFAULT 0,
-    lapses         INTEGER NOT NULL DEFAULT 0,
-    state          INTEGER NOT NULL,
-    fsrs_json      TEXT NOT NULL
+    card_id          INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    due              TEXT NOT NULL,
+    stability        REAL,
+    difficulty       REAL,
+    elapsed_days     INTEGER NOT NULL DEFAULT 0,
+    scheduled_days   INTEGER NOT NULL DEFAULT 0,
+    reps             INTEGER NOT NULL DEFAULT 0,
+    lapses           INTEGER NOT NULL DEFAULT 0,
+    state            INTEGER NOT NULL,
+    fsrs_json        TEXT NOT NULL,
+    last_reviewed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS review_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id             INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    reviewed_at         TEXT NOT NULL,
+    rating              INTEGER NOT NULL,
+    elapsed_ms          INTEGER,
+    was_new             INTEGER NOT NULL DEFAULT 0,
+    previous_state_json TEXT NOT NULL,
+    new_state_json      TEXT NOT NULL,
+    session_id          INTEGER,
+    undone              INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id      INTEGER,
+    started_at      TEXT NOT NULL,
+    ended_at        TEXT,
+    category_filter TEXT,
+    cards_reviewed  INTEGER NOT NULL DEFAULT 0,
+    new_cards       INTEGER NOT NULL DEFAULT 0,
+    review_cards    INTEGER NOT NULL DEFAULT 0,
+    again_count     INTEGER NOT NULL DEFAULT 0,
+    hard_count      INTEGER NOT NULL DEFAULT 0,
+    good_count      INTEGER NOT NULL DEFAULT 0,
+    easy_count      INTEGER NOT NULL DEFAULT 0,
+    buried_count    INTEGER NOT NULL DEFAULT 0,
+    suspended_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS child_profiles (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                 TEXT NOT NULL,
+    active_categories    TEXT,
+    daily_new_cards      INTEGER NOT NULL DEFAULT 10,
+    daily_review_cards   INTEGER NOT NULL DEFAULT 40,
+    session_card_limit   INTEGER NOT NULL DEFAULT 50,
+    session_time_minutes INTEGER NOT NULL DEFAULT 15,
+    study_direction      TEXT NOT NULL DEFAULT 'normal'
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck);
 CREATE INDEX IF NOT EXISTS idx_review_due ON review_state(due);
+CREATE INDEX IF NOT EXISTS idx_log_session ON review_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_log_reviewed_at ON review_log(reviewed_at);
 """
+
+# Columns added to prototype-era tables; applied with ALTER TABLE when a
+# pre-versioned database is opened.
+_CARD_UPGRADES = {
+    "suspended": "INTEGER NOT NULL DEFAULT 0",
+    "buried_until": "TEXT",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+_STATE_UPGRADES = {
+    "last_reviewed_at": "TEXT",
+}
 
 
 class Storage:
@@ -44,26 +117,53 @@ class Storage:
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self._migrate()
+
+    def _migrate(self):
+        self._upgrade_table("cards", _CARD_UPGRADES)
+        self._upgrade_table("review_state", _STATE_UPGRADES)
         self.conn.executescript(SCHEMA)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES "
+            "('schema_version', ?)", (str(SCHEMA_VERSION),))
+        self.conn.commit()
+
+    def _upgrade_table(self, table, upgrades):
+        row = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,)).fetchone()
+        if row is None:
+            return
+        existing = {r["name"] for r in
+                    self.conn.execute(f"PRAGMA table_info({table})")}
+        for column, decl in upgrades.items():
+            if column not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self):
         self.conn.close()
 
+    def commit(self):
+        self.conn.commit()
+
     # -- import-side writes -------------------------------------------------
 
     def upsert_card(self, card_id, note_id, deck, front, back, tags,
-                    audio_filename=None, audio_side=None):
+                    audio_filename=None, audio_side=None, now_iso=None):
         self.conn.execute(
             """INSERT INTO cards (id, note_id, deck, front, back, tags,
-                                  audio_filename, audio_side)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  audio_filename, audio_side,
+                                  created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    note_id=excluded.note_id, deck=excluded.deck,
                    front=excluded.front, back=excluded.back,
                    tags=excluded.tags, audio_filename=excluded.audio_filename,
-                   audio_side=excluded.audio_side""",
+                   audio_side=excluded.audio_side,
+                   updated_at=excluded.updated_at""",
             (card_id, note_id, deck, front, back, tags,
-             audio_filename, audio_side))
+             audio_filename, audio_side, now_iso, now_iso))
 
     def init_review_state(self, state):
         """Insert initial FSRS state for a card, unless one already exists.
@@ -78,21 +178,290 @@ class Storage:
                        :scheduled_days, :reps, :lapses, :state, :fsrs_json)""",
             state)
 
-    def commit(self):
-        self.conn.commit()
+    # -- card reads -----------------------------------------------------------
 
-    # -- review-side reads/writes -------------------------------------------
+    def get_card(self, card_id):
+        """A card joined with its review state (the shape the UI consumes)."""
+        return self.conn.execute(
+            """SELECT c.*, r.due, r.reps, r.lapses, r.state AS fsrs_state,
+                      r.fsrs_json
+               FROM cards c JOIN review_state r ON r.card_id = c.id
+               WHERE c.id = ?""", (card_id,)).fetchone()
 
-    def save_review_state(self, state):
+    def get_review_state(self, card_id):
+        return self.conn.execute(
+            "SELECT * FROM review_state WHERE card_id = ?",
+            (card_id,)).fetchone()
+
+    def all_tags(self):
+        """Sorted distinct tags across all cards."""
+        tags = set()
+        for row in self.conn.execute("SELECT DISTINCT tags FROM cards"):
+            tags.update(row["tags"].split())
+        return sorted(tags)
+
+    def queue_candidates(self, now_iso, new_cards=False):
+        """Cards eligible for the review queue, before tag filtering.
+
+        Excludes suspended cards and cards buried until later than now.
+        ``new_cards`` selects never-reviewed cards (reps = 0) ordered by
+        id; otherwise cards that are due now, most overdue first.
+        """
+        base = """SELECT c.*, r.due, r.reps, r.lapses,
+                         r.state AS fsrs_state, r.fsrs_json
+                  FROM cards c JOIN review_state r ON r.card_id = c.id
+                  WHERE c.suspended = 0
+                    AND (c.buried_until IS NULL OR c.buried_until <= :now)"""
+        if new_cards:
+            query = base + " AND r.reps = 0 ORDER BY c.id"
+        else:
+            query = base + " AND r.reps > 0 AND r.due <= :now ORDER BY r.due"
+        return self.conn.execute(query, {"now": now_iso}).fetchall()
+
+    def suspended_cards(self):
+        return self.conn.execute(
+            "SELECT * FROM cards WHERE suspended = 1 ORDER BY deck, id"
+        ).fetchall()
+
+    # -- review-side writes ---------------------------------------------------
+
+    def save_review_state(self, state, last_reviewed_at=None):
+        state = dict(state)
+        state["last_reviewed_at"] = last_reviewed_at
         self.conn.execute(
             """UPDATE review_state SET
                    due=:due, stability=:stability, difficulty=:difficulty,
                    elapsed_days=:elapsed_days, scheduled_days=:scheduled_days,
                    reps=:reps, lapses=:lapses, state=:state,
-                   fsrs_json=:fsrs_json
+                   fsrs_json=:fsrs_json,
+                   last_reviewed_at=:last_reviewed_at
                WHERE card_id=:card_id""",
             state)
         self.conn.commit()
+
+    def restore_review_state(self, state):
+        """Overwrite a card's review state from a snapshot dict (undo)."""
+        keys = ("due", "stability", "difficulty", "elapsed_days",
+                "scheduled_days", "reps", "lapses", "state", "fsrs_json",
+                "last_reviewed_at")
+        snapshot = {k: state.get(k) for k in keys}
+        snapshot["card_id"] = state["card_id"]
+        self.conn.execute(
+            """UPDATE review_state SET
+                   due=:due, stability=:stability, difficulty=:difficulty,
+                   elapsed_days=:elapsed_days, scheduled_days=:scheduled_days,
+                   reps=:reps, lapses=:lapses, state=:state,
+                   fsrs_json=:fsrs_json,
+                   last_reviewed_at=:last_reviewed_at
+               WHERE card_id=:card_id""",
+            snapshot)
+
+    def set_suspended(self, card_id, suspended, now_iso=None):
+        self.conn.execute(
+            "UPDATE cards SET suspended=?, updated_at=? WHERE id=?",
+            (1 if suspended else 0, now_iso, card_id))
+        self.conn.commit()
+
+    def set_buried_until(self, card_id, buried_until_iso, now_iso=None):
+        self.conn.execute(
+            "UPDATE cards SET buried_until=?, updated_at=? WHERE id=?",
+            (buried_until_iso, now_iso, card_id))
+        self.conn.commit()
+
+    # -- review log -----------------------------------------------------------
+
+    def append_review_log(self, card_id, reviewed_at, rating, elapsed_ms,
+                          was_new, previous_state_json, new_state_json,
+                          session_id):
+        cur = self.conn.execute(
+            """INSERT INTO review_log
+               (card_id, reviewed_at, rating, elapsed_ms, was_new,
+                previous_state_json, new_state_json, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (card_id, reviewed_at, rating, elapsed_ms, 1 if was_new else 0,
+             previous_state_json, new_state_json, session_id))
+        return cur.lastrowid
+
+    def last_review_log(self, session_id):
+        """Most recent not-undone log entry for a session."""
+        return self.conn.execute(
+            """SELECT * FROM review_log
+               WHERE session_id = ? AND undone = 0
+               ORDER BY id DESC LIMIT 1""", (session_id,)).fetchone()
+
+    def mark_log_undone(self, log_id):
+        self.conn.execute(
+            "UPDATE review_log SET undone = 1 WHERE id = ?", (log_id,))
+
+    def daily_counts(self, day_start_iso):
+        """Distinct cards introduced/reviewed since the local day start.
+
+        Returns (new_count, review_count, new_card_ids). A card whose
+        first-ever review happened today counts only as new, even if it
+        was answered again later the same day.
+        """
+        new_ids = {row["card_id"] for row in self.conn.execute(
+            """SELECT DISTINCT card_id FROM review_log
+               WHERE undone = 0 AND was_new = 1 AND reviewed_at >= ?""",
+            (day_start_iso,))}
+        all_ids = {row["card_id"] for row in self.conn.execute(
+            """SELECT DISTINCT card_id FROM review_log
+               WHERE undone = 0 AND reviewed_at >= ?""",
+            (day_start_iso,))}
+        return len(new_ids), len(all_ids - new_ids), new_ids
+
+    def daily_history(self, since_iso):
+        """Raw (reviewed_at, was_new, card_id) tuples for progress views."""
+        return self.conn.execute(
+            """SELECT reviewed_at, was_new, card_id FROM review_log
+               WHERE undone = 0 AND reviewed_at >= ?
+               ORDER BY reviewed_at""", (since_iso,)).fetchall()
+
+    # -- sessions ---------------------------------------------------------------
+
+    def create_session(self, profile_id, started_at, category_filter):
+        cur = self.conn.execute(
+            """INSERT INTO sessions (profile_id, started_at, category_filter)
+               VALUES (?, ?, ?)""",
+            (profile_id, started_at,
+             json.dumps(category_filter) if category_filter else None))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def bump_session_counter(self, session_id, field):
+        if field not in ("buried_count", "suspended_count"):
+            raise ValueError(field)
+        self.conn.execute(
+            f"UPDATE sessions SET {field} = {field} + 1 WHERE id = ?",
+            (session_id,))
+        self.conn.commit()
+
+    def session_row(self, session_id):
+        return self.conn.execute(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+
+    def session_counts(self, session_id):
+        """Aggregate review counters for a session from the review log.
+
+        Deriving these from the log (rather than mutating counters in
+        memory) makes them automatically correct across undo and crashes.
+        """
+        rows = self.conn.execute(
+            """SELECT card_id, rating, was_new, elapsed_ms FROM review_log
+               WHERE session_id = ? AND undone = 0""",
+            (session_id,)).fetchall()
+        counts = {"cards_reviewed": len(rows), "new_cards": 0,
+                  "review_cards": 0, "again_count": 0, "hard_count": 0,
+                  "good_count": 0, "easy_count": 0, "elapsed_ms": 0,
+                  "unique_cards": 0}
+        rating_field = {1: "again_count", 2: "hard_count",
+                        3: "good_count", 4: "easy_count"}
+        new_ids, all_ids = set(), set()
+        for row in rows:
+            counts[rating_field[row["rating"]]] += 1
+            counts["elapsed_ms"] += row["elapsed_ms"] or 0
+            all_ids.add(row["card_id"])
+            if row["was_new"]:
+                new_ids.add(row["card_id"])
+        counts["new_cards"] = len(new_ids)
+        counts["review_cards"] = len(all_ids - new_ids)
+        counts["unique_cards"] = len(all_ids)
+        return counts
+
+    def finish_session(self, session_id, ended_at):
+        """Stamp the end time and persist final aggregates from the log."""
+        counts = self.session_counts(session_id)
+        self.conn.execute(
+            """UPDATE sessions SET ended_at=?, cards_reviewed=?, new_cards=?,
+                   review_cards=?, again_count=?, hard_count=?, good_count=?,
+                   easy_count=?
+               WHERE id=?""",
+            (ended_at, counts["cards_reviewed"], counts["new_cards"],
+             counts["review_cards"], counts["again_count"],
+             counts["hard_count"], counts["good_count"],
+             counts["easy_count"], session_id))
+        self.conn.commit()
+
+    def close_dangling_sessions(self, fallback_ended_at):
+        """Finish sessions left open by a crash or power-off.
+
+        Reviews already answered were committed one by one, so nothing is
+        lost; the session just never got an end stamp.
+        """
+        open_ids = [row["id"] for row in self.conn.execute(
+            "SELECT id FROM sessions WHERE ended_at IS NULL")]
+        for session_id in open_ids:
+            last = self.conn.execute(
+                """SELECT MAX(reviewed_at) AS t FROM review_log
+                   WHERE session_id = ?""", (session_id,)).fetchone()
+            self.finish_session(session_id,
+                                last["t"] or fallback_ended_at)
+        return open_ids
+
+    # -- child profiles ---------------------------------------------------------
+
+    def create_profile(self, name, **fields):
+        allowed = {"active_categories", "daily_new_cards",
+                   "daily_review_cards", "session_card_limit",
+                   "session_time_minutes", "study_direction"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Unknown profile fields: {unknown}")
+        if "active_categories" in fields and \
+                fields["active_categories"] is not None:
+            fields["active_categories"] = json.dumps(
+                fields["active_categories"])
+        columns = ["name"] + list(fields)
+        values = [name] + list(fields.values())
+        cur = self.conn.execute(
+            f"""INSERT INTO child_profiles ({', '.join(columns)})
+                VALUES ({', '.join('?' * len(values))})""", values)
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_profile(self, profile_id, **fields):
+        allowed = {"name", "active_categories", "daily_new_cards",
+                   "daily_review_cards", "session_card_limit",
+                   "session_time_minutes", "study_direction"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Unknown profile fields: {unknown}")
+        if "active_categories" in fields and \
+                fields["active_categories"] is not None:
+            fields["active_categories"] = json.dumps(
+                fields["active_categories"])
+        sets = ", ".join(f"{k}=?" for k in fields)
+        self.conn.execute(
+            f"UPDATE child_profiles SET {sets} WHERE id=?",
+            list(fields.values()) + [profile_id])
+        self.conn.commit()
+
+    def get_profile(self, profile_id):
+        row = self.conn.execute(
+            "SELECT * FROM child_profiles WHERE id=?",
+            (profile_id,)).fetchone()
+        return self._profile_dict(row) if row else None
+
+    def list_profiles(self):
+        return [self._profile_dict(row) for row in self.conn.execute(
+            "SELECT * FROM child_profiles ORDER BY id")]
+
+    def ensure_default_profile(self, name="Student"):
+        """Return the first profile, creating one if none exist."""
+        profiles = self.list_profiles()
+        if profiles:
+            return profiles[0]
+        profile_id = self.create_profile(name)
+        return self.get_profile(profile_id)
+
+    @staticmethod
+    def _profile_dict(row):
+        profile = dict(row)
+        raw = profile.get("active_categories")
+        profile["active_categories"] = json.loads(raw) if raw else None
+        return profile
+
+    # -- legacy prototype queries (main.py review / decks) ------------------------
 
     def next_due_card(self, now_iso, deck=None):
         """The most overdue card, joined with its review state."""
