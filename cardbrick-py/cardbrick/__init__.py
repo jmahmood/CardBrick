@@ -5,4 +5,4 @@ runs entirely from its own SQLite database, scheduled by py-fsrs and
 rendered with pygame. No Anki runtime, no Rust, no network.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

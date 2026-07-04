@@ -33,23 +33,45 @@ Pygame app        (cardbrick/app.py — state-driven child/parent UI on a
                    640x480 logical canvas, controller-first)
 ```
 
-Supporting modules: `cardbrick/audio.py` ([sound:...] playback, fails
-soft without an audio device), `cardbrick/settings.py` (JSON app
-settings), `cardbrick/textutil.py` (HTML stripping, wrapping), and
-`cardbrick/ui.py` (the original minimal prototype reviewer, kept
-working under `python main.py review`).
+Supporting modules: `cardbrick/audio.py` (pluggable playback backends —
+see below), `cardbrick/input_map.py` (semantic controller mapping +
+calibration persistence), `cardbrick/paths.py` (writable data-root
+resolution), `cardbrick/bootlog.py` (file logging + startup
+diagnostics), `cardbrick/smoke.py` (`--smoke-test`),
+`cardbrick/errors.py` (visible fatal-error screens),
+`cardbrick/settings.py` (JSON app settings), `cardbrick/textutil.py`
+(HTML stripping, wrapping), and `cardbrick/ui.py` (the original
+minimal prototype reviewer, kept working under `python main.py
+review`).
 
 ### Dependencies
 
-Only two, both pure-Python-installable on ARM:
+Minimal and pure-pip-installable on ARM64 — no Rust, no compilation,
+no private Anki APIs:
 
-| Library  | Role                                     |
-|----------|------------------------------------------|
-| `pygame` | display, input, audio                     |
-| `fsrs`   | py-fsrs, the FSRS spaced-repetition engine |
+| Library             | Role                                        |
+|---------------------|---------------------------------------------|
+| `pygame-ce`         | display, input, audio (classic `pygame`     |
+|                     | >= 2.1 also works — install one, not both)  |
+| `fsrs`              | py-fsrs, the FSRS spaced-repetition engine  |
+| `typing-extensions` | pulled in by fsrs                           |
 
-Everything else is the standard library. No Rust, no compilation beyond
-what pygame's prebuilt wheels provide, no private Anki APIs.
+Everything else is the standard library (`sqlite3`, `zipfile`, `json`,
+`datetime`, `logging`, `shutil`, ...).
+
+### Audio backends
+
+`pygame.mixer` is an *optional* compiled pygame module that requires
+SDL_mixer, which cannot be guaranteed on handheld firmware. Playback
+therefore auto-selects the first working backend and logs the choice:
+
+1. `mixer` — pygame.mixer, if the module exists and initialises;
+2. `command` — an external CLI player found on PATH (`mpg123`,
+   `ogg123`, `aplay`, `paplay`, `ffplay`), launched non-blocking;
+3. `none` — logged no-op: the app runs silent, never crashes.
+
+Override with `CARDBRICK_AUDIO=auto|mixer|command|none` or point at an
+exact player with `CARDBRICK_AUDIO_CMD="mpg123 -q {file}"`.
 
 ## Usage
 
@@ -72,15 +94,24 @@ python main.py profile --categories all      # study every tag
 # Legacy prototype reviewer (no limits/undo/profiles)
 python main.py review [--deck NAME] [--fullscreen]
 python main.py decks                  # list decks + due counts
+
+# Deployment tooling (see deploy/knulli/ at the repo root)
+python main.py --smoke-test           # non-interactive sanity checks
+python main.py --input-diagnostic     # controller test + calibration
+python main.py --desktop|--knulli     # force platform mode
 ```
 
 No deck handy? Generate a test one:
 `python scripts/make_sample_apkg.py sample.apkg`
 
-Data lives in `./data/` next to `main.py` (override with `--data-dir`
-or the `CARDBRICK_DATA` env var): `cardbrick.db` (SQLite),
-`settings.json` (app settings, hand-editable), and `media/`. The whole
-application plus its data is a single copyable folder.
+The writable data root is resolved in this priority order and logged
+at startup: `--data-dir` → `CARD_BRICK_DATA_DIR` env → `CARDBRICK_DATA`
+env (legacy) → `/userdata/saves/cardbrick` on Knulli-style devices →
+`./data` next to `main.py`. It contains `cardbrick.db` (SQLite),
+`settings.json` and `input_mapping.json` (hand-editable JSON),
+`media/`, and `logs/cardbrick.log` (rotating). Nothing mutable is ever
+written into the app folder, so the app itself can live on a read-only
+mount.
 
 ## The daily loop
 
@@ -96,27 +127,36 @@ Press A to start!              B=Again Y=Hard A=Good X=Easy      session stats
 
 ### Controls (study)
 
-| Input   | Question side       | Answer side |
-|---------|---------------------|-------------|
-| D-pad   | Reveal answer       | —           |
-| A       | Reveal answer       | Good        |
-| B       | —                   | Again       |
-| X       | —                   | Easy        |
-| Y       | —                   | Hard        |
-| L       | Replay audio        | Replay audio|
-| R       | —                   | Bury until tomorrow |
-| SELECT  | Action menu (undo / bury / suspend / end) | same |
-| START   | Finish session      | same        |
+Buttons are addressed by *physical position*, never by A/B/X/Y labels
+(printed labels don't reliably match SDL indices on cheap handhelds):
+
+| Input          | Question side       | Answer side |
+|----------------|---------------------|-------------|
+| D-pad          | Reveal answer       | —           |
+| Bottom button  | Reveal answer       | Good        |
+| Right button   | —                   | Again       |
+| Left button    | —                   | Easy        |
+| Top button     | —                   | Hard        |
+| L1             | Replay audio        | Replay audio|
+| R1             | —                   | Bury until tomorrow |
+| SELECT         | Action menu (undo / bury / suspend / end) | same |
+| START          | Finish session      | same        |
+| SELECT + START held 2 s | Force exit to launcher | same |
 
 Keyboard fallback for desktop testing: arrows/Space reveal, `1/2/3/4` =
 Again/Hard/Good/Easy (or literal `A/B/X/Y` keys), `L` replay, `R` bury,
-`U` undo, `Tab` menu, `Esc` finish.
+`U` undo, `Tab` menu, `Esc` finish/quit.
 
-Gamepad button numbering differs between handhelds; remap without
-touching code via
-`CARDBRICK_JOYMAP="A=1,B=0,X=3,Y=2,L=4,R=5,SELECT=6,START=7"`.
-A font override is available the same way:
-`CARDBRICK_FONT=/path/to/font.ttf`.
+Raw button indices are mapped to semantic actions through
+`input_mapping.json` in the data folder, written by the in-app
+calibration screen (Parent Mode → *Controller test & setup*, or
+`python main.py --input-diagnostic`). The defaults match common
+Anbernic/Knulli ordering but are only a starting guess — calibrate on
+real hardware. A font override is available via
+`CARDBRICK_FONT=/path/to/font.ttf`; by default the bundled
+`assets/fonts/DejaVuSans.ttf` is used (full Spanish coverage:
+á é í ó ú ñ ü ¿ ¡). The legacy `review` prototype still honours the
+old `CARDBRICK_JOYMAP` env var.
 
 ### Parent mode
 
@@ -181,16 +221,20 @@ temp directories, and no pygame.
 
 ## Deploying to a handheld
 
-1. Copy the `cardbrick-py/` folder to the device (SD card / SSH).
-2. Vendor the two dependencies next to the app so nothing needs
-   installing on-device:
-   `pip install --target vendor --platform manylinux2014_aarch64 --only-binary=:all: pygame fsrs`
-   and launch with `PYTHONPATH=vendor`. (Knulli and most Batocera-derived
-   firmwares already ship Python; many also ship pygame.)
-3. Add a Ports-style launcher script that runs
-   `python3 main.py study --fullscreen`.
-4. Import decks on your PC and copy the `data/` folder over, or drop the
-   `.apkg` in `data/` and import from parent mode on-device.
+Full instructions, launch-script template, package layout, and a
+manual pre-flight checklist live in **`deploy/knulli/`** at the repo
+root. The short version:
+
+1. On a PC, vendor the dependencies (no on-device pip, ever):
+   `pip install --target vendor --platform manylinux2014_aarch64
+   --only-binary=:all: -r requirements.txt`
+2. Copy `cardbrick-py/` + `vendor/` + the adapted
+   `deploy/knulli/launch_cardbrick_spanish.sh` to
+   `/userdata/roms/ports/CardBrickSpanish/`.
+3. Run `python3 main.py --knulli --smoke-test` (the launch script does
+   this automatically on first boot) and read
+   `/userdata/saves/cardbrick/logs/`.
+4. Calibrate the controller in Parent Mode before the first session.
 
 ## Scope (deliberately excluded)
 

@@ -8,27 +8,47 @@ Usage:
     python main.py review [--deck NAME]     Legacy prototype reviewer
     python main.py decks                    List decks and due counts
     python main.py profile [...]            View/edit the child profile
+
+Deployment flags (usable with or without a subcommand):
+    --smoke-test          Non-interactive sanity check; exit 0 on pass
+    --input-diagnostic    Controller event viewer + calibration
+    --desktop / --knulli  Force platform mode (else auto-detected)
+    --data-dir PATH       Writable data root (else CARD_BRICK_DATA_DIR /
+                          CARDBRICK_DATA env, Knulli userdata, or ./data)
 """
 
 import argparse
 import json
-import os
+import logging
 import sys
 
+from cardbrick import __version__
+from cardbrick.bootlog import log_environment, setup_logging
 from cardbrick.importer import ApkgError, import_apkg
+from cardbrick.paths import AppPaths
 from cardbrick.scheduler import ReviewScheduler, iso, now_utc
 from cardbrick.storage import Storage
 
-DEFAULT_DATA_DIR = os.environ.get(
-    "CARDBRICK_DATA",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
+log = logging.getLogger("cardbrick.main")
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(prog="cardbrick", description=__doc__)
-    parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR,
-                        help="Where the database and media live "
-                             "(default: ./data)")
+    parser.add_argument("--data-dir", default=None,
+                        help="Writable data root (default: "
+                             "CARD_BRICK_DATA_DIR env, Knulli userdata, "
+                             "or ./data)")
+    parser.add_argument("--desktop", action="store_true",
+                        help="Force desktop mode")
+    parser.add_argument("--knulli", action="store_true",
+                        help="Force Knulli/handheld mode")
+    parser.add_argument("--smoke-test", action="store_true",
+                        help="Run non-interactive deployment checks and "
+                             "exit")
+    parser.add_argument("--input-diagnostic", action="store_true",
+                        help="Open the controller test/calibration screen")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Debug-level logging")
     sub = parser.add_subparsers(dest="command")
 
     p_study = sub.add_parser(
@@ -63,19 +83,51 @@ def main(argv=None):
                                 "or 'all' for every tag")
     p_profile.add_argument("--direction", choices=["normal", "reversed"],
                            help="Card direction")
+    return parser
 
+
+def main(argv=None):
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
         args.command, args.fullscreen = "study", False
 
-    db_path = os.path.join(args.data_dir, "cardbrick.db")
-    media_dir = os.path.join(args.data_dir, "media")
-    storage = Storage(db_path)
-    scheduler = ReviewScheduler()
+    cli_mode = "knulli" if args.knulli else "desktop" if args.desktop \
+        else None
+    paths = AppPaths.resolve(cli_data_dir=args.data_dir, cli_mode=cli_mode)
+    try:
+        paths.ensure_directories()
+    except OSError as exc:
+        print(f"FATAL: cannot create data directory {paths.data_dir}: "
+              f"{exc}", file=sys.stderr)
+        return 1
+    setup_logging(paths.log_path, verbose=args.verbose)
+    log_environment(paths, __version__)
+
+    if args.smoke_test:
+        from cardbrick.smoke import run_smoke_test
+        return 0 if run_smoke_test(paths).ok else 1
 
     try:
+        storage = Storage(paths.db_path)
+    except Exception as exc:  # noqa: BLE001 - anything here is fatal
+        from cardbrick.errors import show_error_screen
+        show_error_screen(
+            "Cannot open database", f"{paths.db_path}: {exc}",
+            log_path=paths.log_path,
+            next_action="If the file is corrupt, restore a .backup-* "
+                        "copy from the same folder or move the file "
+                        "away and re-import your decks.")
+        return 1
+
+    scheduler = ReviewScheduler()
+    try:
+        if args.input_diagnostic:
+            return _run_app(storage, scheduler, paths,
+                            fullscreen=False, initial_state="INPUT_DIAG")
         if args.command == "import":
-            stats = import_apkg(args.apkg, storage, scheduler, media_dir)
+            stats = import_apkg(args.apkg, storage, scheduler,
+                                paths.media_dir)
             print(stats.summary())
         elif args.command == "decks":
             rows = storage.decks(iso(now_utc()))
@@ -89,27 +141,58 @@ def main(argv=None):
         elif args.command == "review":
             from cardbrick.audio import AudioPlayer
             from cardbrick.ui import ReviewApp
-            audio = AudioPlayer(media_dir)
+            audio = AudioPlayer(paths.media_dir)
             app = ReviewApp(storage, scheduler, audio,
                             deck=args.deck, fullscreen=args.fullscreen)
             app.run()
         else:  # study
-            from cardbrick.app import CardBrickApp
-            from cardbrick.audio import AudioPlayer
-            from cardbrick.service import ReviewService
-            from cardbrick.settings import AppSettings
-            settings = AppSettings(os.path.join(args.data_dir,
-                                                "settings.json"))
-            service = ReviewService(storage, scheduler)
-            audio = AudioPlayer(media_dir)
-            app = CardBrickApp(storage, service, audio, settings,
-                               fullscreen=args.fullscreen or None)
-            app.run()
+            return _run_app(storage, scheduler, paths,
+                            fullscreen=args.fullscreen or None)
     except ApkgError as exc:
         print(f"Import failed: {exc}", file=sys.stderr)
         return 1
     finally:
         storage.close()
+    return 0
+
+
+def _run_app(storage, scheduler, paths, fullscreen=None,
+             initial_state=None):
+    """Boot the appliance UI; fatal errors become visible screens."""
+    from cardbrick.app import CardBrickApp, DisplayInitError
+    from cardbrick.audio import AudioPlayer
+    from cardbrick.errors import show_error_screen
+    from cardbrick.service import ReviewService
+    from cardbrick.settings import AppSettings
+
+    settings = AppSettings(paths.settings_path)
+    service = ReviewService(storage, scheduler)
+    audio = AudioPlayer(paths.media_dir)
+    try:
+        app = CardBrickApp(storage, service, audio, settings, paths=paths,
+                           fullscreen=fullscreen,
+                           initial_state=initial_state)
+    except DisplayInitError as exc:
+        # No display: an error screen can't render either; log + stderr.
+        print(f"FATAL: display init failed: {exc}\n"
+              f"Check SDL_VIDEODRIVER (see {paths.log_path})",
+              file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        log.exception("startup failed")
+        show_error_screen("CardBrick could not start", str(exc),
+                          log_path=paths.log_path)
+        return 1
+
+    try:
+        app.run()
+    except Exception as exc:  # noqa: BLE001
+        log.exception("unhandled error during session")
+        show_error_screen("CardBrick hit an error", str(exc),
+                          log_path=paths.log_path,
+                          next_action="Your completed reviews are saved. "
+                                      "Restart the app to continue.")
+        return 1
     return 0
 
 
@@ -130,14 +213,13 @@ def _profile_command(storage, args):
         updates["study_direction"] = args.direction
     if args.categories:
         if args.categories.strip().lower() == "all":
-            updates["active_categories"] = None
+            categories = None
         else:
-            updates["active_categories"] = [
-                c.strip() for c in args.categories.split(",") if c.strip()]
+            categories = [c.strip() for c in args.categories.split(",")
+                          if c.strip()]
         # update_profile serializes lists; None means "all categories"
         storage.update_profile(profile["id"],
-                               active_categories=updates.pop(
-                                   "active_categories"))
+                               active_categories=categories)
     if updates:
         storage.update_profile(profile["id"], **updates)
     profile = storage.get_profile(profile["id"])

@@ -1,0 +1,13 @@
+# Runtime dependencies vendored onto the device (built on a PC with:
+#   pip install --target vendor \
+#       --platform manylinux2014_aarch64 --only-binary=:all: \
+#       -r requirements-runtime.txt
+# ). Everything else the app uses is the Python standard library
+# (sqlite3, zipfile, json, datetime, logging, shutil, ...).
+#
+# pygame-ce is the maintained community fork with better SDL/KMSDRM
+# support on handhelds; it installs as the `pygame` package. Never
+# install classic pygame into the same vendor dir.
+pygame-ce>=2.4
+fsrs>=6.0
+typing-extensions>=4.0

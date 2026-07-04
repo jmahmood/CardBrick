@@ -11,8 +11,12 @@ progress when opened by the CardBrick-style app.
 """
 
 import json
+import logging
 import os
+import shutil
 import sqlite3
+
+log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
 
@@ -114,12 +118,41 @@ _STATE_UPGRADES = {
 class Storage:
     def __init__(self, db_path):
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        self._migrate()
+        self.db_path = db_path
+        try:
+            self.conn = sqlite3.connect(db_path)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error:
+            log.exception("cannot open database %s", db_path)
+            raise
+        try:
+            self._migrate()
+        except sqlite3.Error:
+            log.exception("migration failed for %s", db_path)
+            raise
+
+    def schema_version(self):
+        """Stored schema version, or None for a pre-versioned database."""
+        try:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()
+            return int(row["value"]) if row else None
+        except sqlite3.OperationalError:
+            return None  # no meta table yet
 
     def _migrate(self):
+        stored = self.schema_version()
+        has_cards = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND "
+            "name='cards'").fetchone() is not None
+        needs_upgrade = has_cards and (stored is None or
+                                       stored < SCHEMA_VERSION)
+        if needs_upgrade:
+            # An existing database is about to be altered: keep a
+            # one-shot backup so a bad migration is recoverable.
+            self._backup(stored)
         self._upgrade_table("cards", _CARD_UPGRADES)
         self._upgrade_table("review_state", _STATE_UPGRADES)
         self.conn.executescript(SCHEMA)
@@ -127,6 +160,23 @@ class Storage:
             "INSERT OR REPLACE INTO meta (key, value) VALUES "
             "('schema_version', ?)", (str(SCHEMA_VERSION),))
         self.conn.commit()
+        if needs_upgrade:
+            log.info("database migrated: schema v%s -> v%s",
+                     stored if stored is not None else "pre-1",
+                     SCHEMA_VERSION)
+
+    def _backup(self, from_version):
+        label = f"v{from_version}" if from_version is not None else "pre1"
+        backup_path = f"{self.db_path}.backup-{label}"
+        if os.path.exists(backup_path):
+            return  # keep the oldest backup for this version jump
+        try:
+            shutil.copyfile(self.db_path, backup_path)
+            log.info("database backed up to %s before migration",
+                     backup_path)
+        except OSError as exc:
+            log.warning("could not back up database before migration: %s",
+                        exc)
 
     def _upgrade_table(self, table, upgrades):
         row = self.conn.execute(

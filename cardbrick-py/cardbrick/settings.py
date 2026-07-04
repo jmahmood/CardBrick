@@ -5,7 +5,10 @@ with a text editor on the SD card. Unknown keys are preserved.
 """
 
 import json
+import logging
 import os
+
+log = logging.getLogger(__name__)
 
 DEFAULTS = {
     "current_child_profile_id": None,
@@ -13,6 +16,7 @@ DEFAULTS = {
     "fullscreen": False,
     "logical_width": 640,
     "logical_height": 480,
+    "integer_scaling": True,
 }
 
 
@@ -28,8 +32,18 @@ class AppSettings:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 self.data.update(loaded)
-        except (OSError, json.JSONDecodeError):
-            pass  # missing or corrupt file: fall back to defaults
+            else:
+                log.error("settings %s is not a JSON object — "
+                          "using defaults", self.path)
+        except FileNotFoundError:
+            log.info("no settings file at %s — using defaults", self.path)
+        except json.JSONDecodeError as exc:
+            log.error("invalid settings JSON %s (%s) — using defaults; "
+                      "the file will be rewritten on next change",
+                      self.path, exc)
+        except OSError as exc:
+            log.error("cannot read settings %s: %s — using defaults",
+                      self.path, exc)
         return self
 
     def save(self):
