@@ -3,9 +3,17 @@
 A state-driven pygame app aimed at children doing a short daily Spanish
 session on a handheld. Screens:
 
-    ChildStart -> Review (question/answer) -> SessionSummary -> ChildStart
-    ChildStart -> ParentMode (import / categories / limits / suspended /
-                              progress / controller setup) -> ChildStart
+    ChildStart -> DeckSelect (only when >1 deck is assigned)
+              -> Review (question/answer) -> SessionSummary -> ChildStart
+    ChildStart -> ParentMode (import / decks / categories / limits /
+                              suspended / progress / controller setup)
+              -> ChildStart
+
+Parent Mode's Decks screen configures which decks are *assigned* to the
+child at all (child_profiles.active_decks); DeckSelect is the child's
+own per-sitting choice of which *one* assigned deck (or all of them
+combined) to study right now. A single assigned deck skips the picker
+entirely — no extra tap when there's no real choice to make.
 
 Controller-first and deployment-hardened for Knulli-style devices:
 
@@ -145,6 +153,7 @@ class CardBrickApp:
 
         self.input_map = InputMap(paths.input_map_path if paths else None)
         self._image_cache = {}  # vocab card images, decoded once per file
+        self._session_deck_filter = None  # child's per-sitting deck pick
         self.input = InputTranslator(self.input_map)
 
         pygame.init()
@@ -264,6 +273,7 @@ class CardBrickApp:
             state = "CHILD_START"
         handlers = {
             "CHILD_START": self.screen_child_start,
+            "DECK_SELECT": self.screen_deck_select,
             "REVIEW": self.screen_review,
             "SUMMARY": self.screen_summary,
             "PARENT_MENU": self.screen_parent_menu,
@@ -317,9 +327,18 @@ class CardBrickApp:
 
     # -- child start -----------------------------------------------------------------
 
+    def _resolve_available_decks(self):
+        """Decks the parent has assigned to this profile: every deck if
+        active_decks is None, else that explicit (possibly empty) list."""
+        active = self.profile["active_decks"]
+        return self.storage.deck_names_list() if active is None \
+            else list(active)
+
     def screen_child_start(self):
+        self._session_deck_filter = None  # cleared each time we land here
         review_n, new_n = self.service.counts_for_queue(profile=self.profile)
         total = review_n + new_n
+        available_decks = self._resolve_available_decks()
         categories = self.profile["active_categories"]
         cat_label = "All categories" if categories is None else \
             ", ".join(categories) if categories else "No categories set"
@@ -334,7 +353,8 @@ class CardBrickApp:
             if action == "select":
                 return "PARENT_MENU"
             if action in ("south_button", "unmapped") and total > 0:
-                return "REVIEW"
+                return "DECK_SELECT" if len(available_decks) > 1 \
+                    else "REVIEW"
 
             self.screen.fill(BG)
             self._center(self.font_small.render("SPANISH PRACTICE", True,
@@ -366,6 +386,54 @@ class CardBrickApp:
             self.present()
             self.clock.tick(FPS)
 
+    def screen_deck_select(self):
+        """Child-facing deck picker: shown only when the parent has
+        assigned more than one deck (screen_child_start skips straight
+        to REVIEW otherwise, keeping the fast path fast). Lets the
+        child choose one specific assigned deck, or all of them
+        combined, for just this sitting."""
+        available = self._resolve_available_decks()
+        entries = [("All assigned decks", None)] + \
+            [(name, [name]) for name in available]
+        # Due/new counts computed once up front, not per frame — this
+        # screen redraws every tick like the other menus, and querying
+        # the DB per entry per frame would not be free on a big deck.
+        counts = [self.service.counts_for_queue(profile=self.profile,
+                                                deck_filter=decks)
+                 for _label, decks in entries]
+        index = 0
+
+        while True:
+            action = self.poll()
+            if action in ("start", "east_button", "select"):
+                return "CHILD_START"
+            if action == "dpad_up":
+                index = (index - 1) % len(entries)
+            elif action == "dpad_down":
+                index = (index + 1) % len(entries)
+            elif action == "south_button":
+                self._session_deck_filter = entries[index][1]
+                return "REVIEW"
+
+            self.screen.fill(BG)
+            self._center(self.font_big.render("Choose a Deck", True, FG),
+                         40)
+            self._center(self.font_small.render(
+                "Which deck do you want to study?", True, DIM), 90)
+            y = 140
+            for i, (label, _decks) in enumerate(entries):
+                due, new = counts[i]
+                color = ACCENT if i == index else FG
+                prefix = "> " if i == index else "   "
+                text = f"{prefix}{label}   ({due + new} due)"
+                self.screen.blit(self.font.render(text, True, color),
+                                (60, y))
+                y += 44
+            self._footer("Up/Down = Choose   Bottom = Select   "
+                         "Right = Back")
+            self.present()
+            self.clock.tick(FPS)
+
     # -- review ----------------------------------------------------------------------
 
     MENU_ENTRIES = ("Undo last answer", "Bury card (back tomorrow)",
@@ -379,9 +447,11 @@ class CardBrickApp:
     VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
 
     def screen_review(self):
-        session = StudySession(self.storage, self.service, self.profile)
-        log.info("session %d started: %d cards queued",
-                 session.session_id, session.planned_total)
+        session = StudySession(self.storage, self.service, self.profile,
+                               deck_filter=self._session_deck_filter)
+        log.info("session %d started: %d cards queued (deck filter: %s)",
+                 session.session_id, session.planned_total,
+                 self._session_deck_filter)
         try:
             return self._review_loop(session)
         finally:

@@ -225,9 +225,9 @@ of updating the old one's progress.
 
 `SELECT` on the start screen. From there: import `.apkg` files found in
 the data folder (or `data/import/`, or the app folder), choose active
-**decks** (which imported decks the child studies) and active
-**categories** (Anki tags — a second, independent filter; both must
-match for a card to appear), set daily limits, review/restore
+**decks** (which imported decks are *assigned* to the child at all)
+and active **categories** (Anki tags — a second, independent filter;
+both must match for a card to appear), set daily limits, review/restore
 suspended cards, see a 7-day progress table, and flip the study
 direction (front-first / back-first). There is no PIN yet — the flows
 are separated, not locked.
@@ -242,6 +242,18 @@ python main.py profile --decks "Español de México — Vocabulario"
 python main.py profile --decks all           # clear the deck filter
 python main.py profile --categories restaurant,greetings
 ```
+
+### Child-facing deck picker
+
+Parent Mode's Decks screen decides which decks are *assigned* to the
+child at all; the child still picks which *one* of the assigned decks
+(or all of them combined) to study **this sitting**. If more than one
+deck is assigned, pressing the bottom button on the start screen opens
+a picker first — D-pad to choose, bottom button to confirm, right
+button to go back — showing each option's due-card count. If only one
+deck is assigned (or only one deck exists at all), the picker is
+skipped automatically and the session starts immediately: no extra tap
+when there's no real choice to make.
 
 ### Admin commands (CLI only, destructive)
 
