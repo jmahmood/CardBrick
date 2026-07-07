@@ -4,7 +4,6 @@ Configuration management for CardBrick sync daemon
 
 import os
 from pathlib import Path
-from typing import Optional
 from dataclasses import dataclass
 
 @dataclass

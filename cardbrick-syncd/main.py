@@ -13,11 +13,9 @@ import asyncio
 import logging
 import signal
 import sys
-from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI
 
 try:
     # Try relative imports first (when run as part of package)

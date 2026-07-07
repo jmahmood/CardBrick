@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 /// Metadata about a deck for selection
 #[derive(Debug, Clone)]
@@ -16,7 +16,10 @@ pub fn scan_workspace_for_decks(workspace_path: &std::path::Path) -> Vec<DeckInf
 
     // Try to read the workspace directory
     let Ok(entries) = fs::read_dir(workspace_path) else {
-        eprintln!("Could not read workspace directory: {}", workspace_path.display());
+        eprintln!(
+            "Could not read workspace directory: {}",
+            workspace_path.display()
+        );
         return decks;
     };
 
@@ -46,20 +49,11 @@ fn load_deck_metadata(deck_path: &PathBuf) -> Result<DeckInfo, Box<dyn std::erro
     let content = fs::read_to_string(deck_path)?;
     let json: serde_json::Value = serde_json::from_str(&content)?;
 
-    let name = json["name"]
-        .as_str()
-        .unwrap_or("Unknown Deck")
-        .to_string();
+    let name = json["name"].as_str().unwrap_or("Unknown Deck").to_string();
 
-    let card_count = json["cards"]
-        .as_array()
-        .map(|arr| arr.len())
-        .unwrap_or(0);
+    let card_count = json["cards"].as_array().map(|arr| arr.len()).unwrap_or(0);
 
-    let created_at = json["created_at"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let created_at = json["created_at"].as_str().unwrap_or("").to_string();
 
     Ok(DeckInfo {
         path: deck_path.clone(),

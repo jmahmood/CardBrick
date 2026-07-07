@@ -1,24 +1,24 @@
 /*!
  * Sync client implementation for CardBrick handheld devices
- * 
+ *
  * Handles:
  * - mDNS service discovery
  * - ed25519 key management and signing
  * - HTTP communication with desktop daemon
  */
 
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, Context, bail};
-use log::{info, warn, debug};
-use serde::{Serialize, Deserialize};
+use anyhow::{bail, Context, Result};
+use log::{debug, info, warn};
 use reqwest::Client;
-use ring::signature::{Ed25519KeyPair, KeyPair};
 use ring::rand::SystemRandom;
+use ring::signature::{Ed25519KeyPair, KeyPair};
+use serde::{Deserialize, Serialize};
 
 pub mod mdns_discovery;
-use mdns_discovery::{MdnsDiscovery, DiscoveredService};
+use mdns_discovery::{DiscoveredService, MdnsDiscovery};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DoorbellRequest {
@@ -52,18 +52,16 @@ impl SyncClient {
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .context("Failed to create HTTP client")?;
-            
+
         // Load or generate ed25519 key pair
-        let key_pair = load_or_generate_keypair()
-            .context("Failed to initialize device keys")?;
-            
+        let key_pair = load_or_generate_keypair().context("Failed to initialize device keys")?;
+
         // Get device IP address
-        let device_ip = get_local_ip()
-            .context("Failed to determine device IP address")?;
-            
+        let device_ip = get_local_ip().context("Failed to determine device IP address")?;
+
         // Initialize mDNS discovery
         let mdns_discovery = MdnsDiscovery::new();
-            
+
         Ok(Self {
             http_client,
             key_pair,
@@ -71,10 +69,10 @@ impl SyncClient {
             mdns_discovery,
         })
     }
-    
+
     pub async fn discover_services(&mut self) -> Vec<DiscoveredService> {
         info!("Starting mDNS-based service discovery for CardBrick sync daemons");
-        
+
         // Use proper mDNS discovery with UDP broadcast fallback
         let services = match self.mdns_discovery.discover_services().await {
             Ok(services) => services,
@@ -83,71 +81,78 @@ impl SyncClient {
                 return Vec::new(); // Return empty vec on discovery failure
             }
         };
-        
+
         // Validate discovered services with health checks
         let mut validated_services = Vec::new();
-        
+
         for service in services {
-            debug!("Validating service: {} ({}:{})", service.name, service.host, service.port);
-            
+            debug!(
+                "Validating service: {} ({}:{})",
+                service.name, service.host, service.port
+            );
+
             // Quick health check to ensure service is actually responding
             match self.probe_host(&service.host_string(), service.port).await {
                 Ok(_) => {
-                    info!("Validated CardBrick service: {} ({}:{})", 
-                          service.name, service.host, service.port);
+                    info!(
+                        "Validated CardBrick service: {} ({}:{})",
+                        service.name, service.host, service.port
+                    );
                     validated_services.push(service);
                 }
                 Err(e) => {
-                    warn!("Service validation failed for {} ({}:{}): {}", 
-                          service.name, service.host, service.port, e);
+                    warn!(
+                        "Service validation failed for {} ({}:{}): {}",
+                        service.name, service.host, service.port, e
+                    );
                 }
             }
         }
-        
-        info!("Discovered and validated {} CardBrick sync services", validated_services.len());
+
+        info!(
+            "Discovered and validated {} CardBrick sync services",
+            validated_services.len()
+        );
         validated_services
     }
-    
+
     async fn probe_host(&self, host: &str, port: u16) -> Result<DiscoveredService> {
         let url = format!("http://{}:{}/health", host, port);
-        
+
         // Quick health check with short timeout
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            self.http_client.get(&url).send()
-        ).await;
-        
+            self.http_client.get(&url).send(),
+        )
+        .await;
+
         match response {
-            Ok(Ok(resp)) if resp.status().is_success() => {
-                Ok(DiscoveredService {
-                    name: format!("CardBrick Sync on {}", host),
-                    host: host.parse()?,
-                    port,
-                    txt_records: {
-                        let mut map = HashMap::new();
-                        map.insert("proto".to_string(), "http".to_string());
-                        map.insert("ver".to_string(), "1".to_string());
-                        map
-                    },
-                })
-            }
-            _ => bail!("Host {} not responding", host)
+            Ok(Ok(resp)) if resp.status().is_success() => Ok(DiscoveredService {
+                name: format!("CardBrick Sync on {}", host),
+                host: host.parse()?,
+                port,
+                txt_records: {
+                    let mut map = HashMap::new();
+                    map.insert("proto".to_string(), "http".to_string());
+                    map.insert("ver".to_string(), "1".to_string());
+                    map
+                },
+            }),
+            _ => bail!("Host {} not responding", host),
         }
     }
-    
+
     pub async fn create_doorbell_request(
         &self,
         _host: &str,
         ssh_port: u16,
     ) -> Result<DoorbellRequest> {
         // Create request timestamp (valid for 5 minutes)
-        let ready_until = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs() + 300;
-            
+        let ready_until = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 300;
+
         // Get public key fingerprint
         let pubkey_fingerprint = get_key_fingerprint(&self.key_pair);
-        
+
         // Create canonical message for signing
         let message_data = serde_json::json!({
             "device_ip": self.device_ip,
@@ -156,14 +161,14 @@ impl SyncClient {
             "ready_until": ready_until,
             "backup_mode": false
         });
-        
-        let canonical_message = serde_json::to_string(&message_data)
-            .context("Failed to serialize doorbell message")?;
-            
+
+        let canonical_message =
+            serde_json::to_string(&message_data).context("Failed to serialize doorbell message")?;
+
         // Sign the message
         let signature = self.key_pair.sign(canonical_message.as_bytes());
         let signature_hex = hex::encode(signature.as_ref());
-        
+
         Ok(DoorbellRequest {
             device_ip: self.device_ip.clone(),
             ssh_port,
@@ -173,73 +178,70 @@ impl SyncClient {
             backup_mode: false,
         })
     }
-    
+
     pub async fn send_doorbell(
         &self,
         service: &DiscoveredService,
         request: DoorbellRequest,
     ) -> Result<DoorbellResponse> {
         let url = format!("http://{}:{}/doorbell", service.host, service.port);
-        
+
         debug!("Sending doorbell to: {}", url);
-        
-        let response = self.http_client
+
+        let response = self
+            .http_client
             .post(&url)
             .json(&request)
             .send()
             .await
             .context("Failed to send doorbell request")?;
-            
+
         if !response.status().is_success() {
             bail!("Doorbell request failed with status: {}", response.status());
         }
-        
+
         let doorbell_response: DoorbellResponse = response
             .json()
             .await
             .context("Failed to parse doorbell response")?;
-            
+
         Ok(doorbell_response)
     }
 }
 
 fn load_or_generate_keypair() -> Result<Ed25519KeyPair> {
     let key_path = get_key_path();
-    
+
     // Try to load existing key
     if key_path.exists() {
         match std::fs::read(&key_path) {
-            Ok(key_bytes) => {
-                match Ed25519KeyPair::from_pkcs8(&key_bytes) {
-                    Ok(key_pair) => {
-                        info!("Loaded existing device key from {:?}", key_path);
-                        return Ok(key_pair);
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse existing key, generating new one: {}", e);
-                    }
+            Ok(key_bytes) => match Ed25519KeyPair::from_pkcs8(&key_bytes) {
+                Ok(key_pair) => {
+                    info!("Loaded existing device key from {:?}", key_path);
+                    return Ok(key_pair);
                 }
-            }
+                Err(e) => {
+                    warn!("Failed to parse existing key, generating new one: {}", e);
+                }
+            },
             Err(e) => {
                 warn!("Failed to read existing key, generating new one: {}", e);
             }
         }
     }
-    
+
     // Generate new key pair
     let rng = SystemRandom::new();
     let key_pair = Ed25519KeyPair::generate_pkcs8(&rng)
         .map_err(|e| anyhow::anyhow!("Failed to generate ed25519 key pair: {:?}", e))?;
-        
+
     // Save the key
     if let Some(parent) = key_path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("Failed to create key directory")?;
+        std::fs::create_dir_all(parent).context("Failed to create key directory")?;
     }
-    
-    std::fs::write(&key_path, key_pair.as_ref())
-        .context("Failed to save device key")?;
-        
+
+    std::fs::write(&key_path, key_pair.as_ref()).context("Failed to save device key")?;
+
     // Set secure permissions (Unix only)
     #[cfg(unix)]
     {
@@ -248,17 +250,17 @@ fn load_or_generate_keypair() -> Result<Ed25519KeyPair> {
         perms.set_mode(0o600);
         std::fs::set_permissions(&key_path, perms)?;
     }
-    
+
     let key_pair = Ed25519KeyPair::from_pkcs8(key_pair.as_ref())
         .map_err(|e| anyhow::anyhow!("Failed to load generated key pair: {:?}", e))?;
-        
+
     info!("Generated new device key at {:?}", key_path);
     Ok(key_pair)
 }
 
 fn get_key_fingerprint(key_pair: &Ed25519KeyPair) -> String {
     use ring::digest::{digest, SHA256};
-    
+
     let public_key_bytes = key_pair.public_key().as_ref();
     let digest = digest(&SHA256, public_key_bytes);
     hex::encode(digest.as_ref())
@@ -276,56 +278,60 @@ fn get_key_path() -> std::path::PathBuf {
 fn get_local_ip() -> Result<String> {
     // Simple approach: use first non-loopback interface
     // In practice, you might want more sophisticated network detection
-    
-    
+
     // Try to connect to a remote address to determine local IP
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")
-        .context("Failed to create UDP socket")?;
-        
-    socket.connect("8.8.8.8:80")
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").context("Failed to create UDP socket")?;
+
+    socket
+        .connect("8.8.8.8:80")
         .context("Failed to connect to determine local IP")?;
-        
-    let local_addr = socket.local_addr()
-        .context("Failed to get local address")?;
-        
+
+    let local_addr = socket.local_addr().context("Failed to get local address")?;
+
     Ok(local_addr.ip().to_string())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    
+
     info!("Starting CardBrick sync client");
-    
+
     let mut client = SyncClient::new().await?;
     let services = client.discover_services().await;
-    
+
     if services.is_empty() {
         warn!("No CardBrick sync services discovered");
         return Ok(());
     }
-    
+
     for service in &services {
-        info!("Found service: {} at {}:{}", service.name, service.host, service.port);
-        
+        info!(
+            "Found service: {} at {}:{}",
+            service.name, service.host, service.port
+        );
+
         // Create and send doorbell request
-        match client.create_doorbell_request(&service.host_string(), 22).await {
-            Ok(request) => {
-                match client.send_doorbell(service, request).await {
-                    Ok(response) => {
-                        info!("Doorbell response: {} - {}", response.status, response.message);
-                    }
-                    Err(e) => {
-                        warn!("Failed to send doorbell to {}: {}", service.host, e);
-                    }
+        match client
+            .create_doorbell_request(&service.host_string(), 22)
+            .await
+        {
+            Ok(request) => match client.send_doorbell(service, request).await {
+                Ok(response) => {
+                    info!(
+                        "Doorbell response: {} - {}",
+                        response.status, response.message
+                    );
                 }
-            }
+                Err(e) => {
+                    warn!("Failed to send doorbell to {}: {}", service.host, e);
+                }
+            },
             Err(e) => {
                 warn!("Failed to create doorbell request: {}", e);
             }
         }
     }
-    
+
     Ok(())
 }
-

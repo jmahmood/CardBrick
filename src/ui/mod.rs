@@ -2,9 +2,9 @@
 // This module contains all components related to the User Interface.
 
 pub mod canvas; // For upscaling our view
-pub mod font;   // For text 
-pub mod sprite; // For cute sprites (not yet implemented)
-pub mod progress; // For progress data structures
+pub mod font; // For text
+pub mod progress;
+pub mod sprite; // For cute sprites (not yet implemented) // For progress data structures
 
 pub use self::canvas::CanvasManager;
 pub use self::font::FontManager;

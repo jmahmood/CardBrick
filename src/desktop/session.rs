@@ -84,7 +84,11 @@ impl Session {
         // Filter cards to only those that are due or new
         let due_cards = Self::get_due_cards(&deck, &card_ids_to_internal, &db_conn)?;
 
-        println!("Session created: {} cards due out of {} total", due_cards.len(), deck.cards.len());
+        println!(
+            "Session created: {} cards due out of {} total",
+            due_cards.len(),
+            deck.cards.len()
+        );
 
         let full_deck = deck.cards.clone();
 
@@ -341,9 +345,9 @@ impl Session {
     /// Get today's ratings for progress visualization
     pub fn get_todays_ratings(&self) -> anyhow::Result<Vec<Rating>> {
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let mut stmt = self.db_conn.prepare(
-            "SELECT rating FROM daily_ratings WHERE date = ?1 ORDER BY timestamp ASC"
-        )?;
+        let mut stmt = self
+            .db_conn
+            .prepare("SELECT rating FROM daily_ratings WHERE date = ?1 ORDER BY timestamp ASC")?;
 
         let ratings: Vec<Rating> = stmt
             .query_map([&date], |row| {
@@ -385,8 +389,13 @@ impl Session {
             }
 
             // Check if this card has been studied
-            let internal_id = self.card_ids_to_internal.get(&card.id).copied().unwrap_or(0);
-            let srs_state: Option<i64> = self.db_conn
+            let internal_id = self
+                .card_ids_to_internal
+                .get(&card.id)
+                .copied()
+                .unwrap_or(0);
+            let srs_state: Option<i64> = self
+                .db_conn
                 .query_row(
                     "SELECT next_due_ts FROM srs_log WHERE card_id = ?1",
                     [internal_id],

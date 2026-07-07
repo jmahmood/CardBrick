@@ -8,11 +8,7 @@ Command-line interface for managing CardBrick decks and sync operations.
 import sys
 import logging
 import asyncio
-import tempfile
-import tarfile
-import json
 from pathlib import Path
-from typing import Optional
 
 import click
 
@@ -207,7 +203,7 @@ def send_backup(ctx, learner_uuid):
         # Run async function
         code = asyncio.run(wormhole.send_backup(learner_uuid))
         
-        click.echo(f"✓ Backup sent successfully!")
+        click.echo("✓ Backup sent successfully!")
         click.echo(f"Wormhole code: {code}")
         click.echo("Share this code with the recipient to download the backup.")
         
@@ -237,7 +233,7 @@ def receive_backup(ctx, wormhole_code, uuid):
         # Run async function
         restored_uuid = asyncio.run(wormhole.receive_backup(wormhole_code, uuid))
         
-        click.echo(f"✓ Backup restored successfully!")
+        click.echo("✓ Backup restored successfully!")
         click.echo(f"Learner UUID: {restored_uuid}")
         click.echo(f"Data location: {data_dir / 'learners' / restored_uuid}")
         

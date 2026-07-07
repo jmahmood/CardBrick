@@ -1,8 +1,8 @@
 // src/ui/sprite.rs
 // Manages the animated "mother" sprite.
 
-use macroquad::prelude::*;
 use crate::ui::CanvasManager;
+use macroquad::prelude::*;
 use std::time::Instant;
 
 // Represents the different emotional states of the sprite.
@@ -13,7 +13,7 @@ pub enum SpriteState {
 
 pub struct Sprite {
     #[allow(dead_code)]
-    state: SpriteState,  // We plan on using this in tehfuture.
+    state: SpriteState, // We plan on using this in tehfuture.
     last_frame_time: Instant,
     is_blinking: bool,
 }
@@ -45,16 +45,22 @@ impl Sprite {
         // **FIXED**: Positioned the sprite in the bottom right corner, aligned with the control hints.
         let (sprite_x, sprite_y) = canvas_manager.logical_to_screen(470.0, 330.0);
         let sprite_size = 32.0 * canvas_manager.get_scale_factor();
-        
+
         // Draw body
-        draw_rectangle(sprite_x, sprite_y, sprite_size, sprite_size, Color::from_rgba(200, 200, 255, 255));
+        draw_rectangle(
+            sprite_x,
+            sprite_y,
+            sprite_size,
+            sprite_size,
+            Color::from_rgba(200, 200, 255, 255),
+        );
 
         // Draw eyes
         if !self.is_blinking {
             let (eye1_x, eye1_y) = canvas_manager.logical_to_screen(476.0, 340.0);
             let (eye2_x, eye2_y) = canvas_manager.logical_to_screen(488.0, 340.0);
             let eye_size = 5.0 * canvas_manager.get_scale_factor();
-            
+
             draw_rectangle(eye1_x, eye1_y, eye_size, eye_size, BLACK);
             draw_rectangle(eye2_x, eye2_y, eye_size, eye_size, BLACK);
         }

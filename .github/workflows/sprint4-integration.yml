@@ -292,7 +292,7 @@ jobs:
         
     - name: Upload test logs
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: integration-test-logs
         path: integration-test-logs.txt
@@ -331,7 +331,7 @@ jobs:
         
     - name: Upload security reports
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: security-reports
         path: "*-report.json"

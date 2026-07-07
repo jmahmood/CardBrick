@@ -4,7 +4,7 @@ use std::process::Command;
 
 fn main() {
     println!("=== CardBrick Display Diagnostics ===");
-    
+
     // Check if we're running on the device
     println!("1. Device Detection:");
     if std::path::Path::new("/mnt/SDCARD/Tools").exists() {
@@ -14,19 +14,19 @@ fn main() {
     } else {
         println!("   ✓ Desktop/Unknown device");
     }
-    
+
     // Check display environment
     println!("\n2. Display Environment:");
     match std::env::var("DISPLAY") {
         Ok(display) => println!("   ✓ DISPLAY: {}", display),
         Err(_) => println!("   ✗ DISPLAY not set"),
     }
-    
+
     match std::env::var("WAYLAND_DISPLAY") {
         Ok(display) => println!("   ✓ WAYLAND_DISPLAY: {}", display),
         Err(_) => println!("   ✗ WAYLAND_DISPLAY not set"),
     }
-    
+
     // Check for framebuffer
     println!("\n3. Framebuffer:");
     if std::path::Path::new("/dev/fb0").exists() {
@@ -34,7 +34,7 @@ fn main() {
     } else {
         println!("   ✗ /dev/fb0 not found");
     }
-    
+
     // Check OpenGL
     println!("\n4. OpenGL/Graphics:");
     if let Ok(output) = Command::new("glxinfo").arg("-B").output() {
@@ -52,17 +52,18 @@ fn main() {
     } else {
         println!("   ✗ glxinfo not available");
     }
-    
+
     // Check EGL
     println!("\n5. EGL:");
-    if std::path::Path::new("/usr/lib/libEGL.so").exists() || 
-       std::path::Path::new("/usr/lib/aarch64-linux-gnu/libEGL.so").exists() ||
-       std::path::Path::new("/lib/libEGL.so").exists() {
+    if std::path::Path::new("/usr/lib/libEGL.so").exists()
+        || std::path::Path::new("/usr/lib/aarch64-linux-gnu/libEGL.so").exists()
+        || std::path::Path::new("/lib/libEGL.so").exists()
+    {
         println!("   ✓ EGL library found");
     } else {
         println!("   ✗ EGL library not found");
     }
-    
+
     // Check running processes
     println!("\n6. Graphics Processes:");
     if let Ok(output) = Command::new("ps").arg("aux").output() {
@@ -73,6 +74,6 @@ fn main() {
             }
         }
     }
-    
+
     println!("\n=== End Diagnostics ===");
 }
