@@ -1,13 +1,13 @@
 // src/bin/cardbrick_cli.rs
 // CardBrick CLI - Command-line interface for data operations
 
-use anyhow::{Result, Context, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use uuid::Uuid;
-use rusqlite::{Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
 #[command(name = "cardbrick-cli")]
@@ -245,7 +245,10 @@ fn parse_rating(rating_str: &str) -> Result<Rating> {
         "hard" => Ok(Rating::Hard),
         "good" => Ok(Rating::Good),
         "easy" => Ok(Rating::Easy),
-        _ => bail!("Invalid rating: {}. Must be one of: again, hard, good, easy", rating_str),
+        _ => bail!(
+            "Invalid rating: {}. Must be one of: again, hard, good, easy",
+            rating_str
+        ),
     }
 }
 
@@ -286,11 +289,9 @@ fn find_cache_root() -> PathBuf {
 
 /// Load and parse a manifest file
 fn load_manifest(manifest_path: &std::path::Path) -> Result<DeckManifest> {
-    let content = std::fs::read_to_string(manifest_path)
-        .context("Failed to read manifest file")?;
+    let content = std::fs::read_to_string(manifest_path).context("Failed to read manifest file")?;
 
-    serde_json::from_str(&content)
-        .context("Failed to parse manifest JSON")
+    serde_json::from_str(&content).context("Failed to parse manifest JSON")
 }
 
 /// Load cached decks from the cache directory (simplified version of scanner logic)
@@ -302,8 +303,7 @@ fn load_cached_decks() -> Result<Vec<DeckMetadata>> {
     }
 
     let mut decks = Vec::new();
-    let entries = std::fs::read_dir(&cache_root)
-        .context("Failed to read cache directory")?;
+    let entries = std::fs::read_dir(&cache_root).context("Failed to read cache directory")?;
 
     for entry in entries {
         let entry = entry.context("Failed to read cache directory entry")?;
@@ -322,7 +322,11 @@ fn load_cached_decks() -> Result<Vec<DeckMetadata>> {
                         });
                     }
                     Err(e) => {
-                        eprintln!("Warning: Failed to load manifest at {}: {}", manifest_path.display(), e);
+                        eprintln!(
+                            "Warning: Failed to load manifest at {}: {}",
+                            manifest_path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -334,10 +338,10 @@ fn load_cached_decks() -> Result<Vec<DeckMetadata>> {
 
 /// Get deck path from deck ID
 fn get_deck_path(deck_id: &str) -> Result<PathBuf> {
-    let cached_decks = load_cached_decks()
-        .context("Failed to load cached decks")?;
+    let cached_decks = load_cached_decks().context("Failed to load cached decks")?;
 
-    let deck_metadata = cached_decks.iter()
+    let deck_metadata = cached_decks
+        .iter()
         .find(|d| d.id == deck_id)
         .context("Deck not found")?;
 
@@ -358,7 +362,10 @@ fn load_cards_from_deck(deck_id: &str, limit: Option<usize>) -> Result<Vec<Card>
     let conn = Connection::open(&db_path)?;
 
     let query = if let Some(limit) = limit {
-        format!("SELECT id, nid, due, ivl, factor, lapses FROM cards LIMIT {}", limit)
+        format!(
+            "SELECT id, nid, due, ivl, factor, lapses FROM cards LIMIT {}",
+            limit
+        )
     } else {
         "SELECT id, nid, due, ivl, factor, lapses FROM cards".to_string()
     };
@@ -388,16 +395,18 @@ fn load_note_from_deck(deck_id: &str, note_id: i64) -> Result<Option<Note>> {
     let db_path = get_deck_db_path(deck_id)?;
     let conn = Connection::open(&db_path)?;
 
-    let note: Option<Note> = conn.query_row(
-        "SELECT id, flds FROM notes WHERE id = ?",
-        [note_id],
-        |row| {
-            let id: i64 = row.get(0)?;
-            let fields_str: String = row.get(1)?;
-            let fields: Vec<String> = fields_str.split('\x1f').map(String::from).collect();
-            Ok(Note { id, fields })
-        }
-    ).optional()?;
+    let note: Option<Note> = conn
+        .query_row(
+            "SELECT id, flds FROM notes WHERE id = ?",
+            [note_id],
+            |row| {
+                let id: i64 = row.get(0)?;
+                let fields_str: String = row.get(1)?;
+                let fields: Vec<String> = fields_str.split('\x1f').map(String::from).collect();
+                Ok(Note { id, fields })
+            },
+        )
+        .optional()?;
 
     Ok(note)
 }
@@ -435,35 +444,35 @@ fn apply_sm2_rating(card_id: i64, quality: Rating, timestamp: i64) -> Result<()>
     )?;
 
     // Get current card state from srs_log, or create new entry
-    let mut stmt = conn.prepare(
-        "SELECT interval, ease_factor, reps, lapses FROM srs_log WHERE card_id = ?1"
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT interval, ease_factor, reps, lapses FROM srs_log WHERE card_id = ?1")?;
 
-    let (mut interval, mut ease_factor, mut reps, mut lapses): (u32, f32, u32, u32) = match stmt.query_row([card_id], |row| {
-        let raw_interval: Option<i64> = row.get(0)?;
-        let raw_ease: Option<f64> = row.get(1)?;
-        let raw_reps: Option<i64> = row.get(2)?;
-        let raw_lapses: Option<i64> = row.get(3)?;
+    let (mut interval, mut ease_factor, mut reps, mut lapses): (u32, f32, u32, u32) = match stmt
+        .query_row([card_id], |row| {
+            let raw_interval: Option<i64> = row.get(0)?;
+            let raw_ease: Option<f64> = row.get(1)?;
+            let raw_reps: Option<i64> = row.get(2)?;
+            let raw_lapses: Option<i64> = row.get(3)?;
 
-        let interval = match raw_interval {
-            Some(v) if v > 0 => (v as u64).min(36500) as u32, // Cap at ~100 years
-            _ => 0,
-        };
-        let ease_factor = match raw_ease {
-            Some(v) => (v as f32).clamp(1.3, 2.5),
-            None => 2.5,
-        };
-        let reps = match raw_reps {
-            Some(v) if v > 0 => v as u32,
-            _ => 0,
-        };
-        let lapses = match raw_lapses {
-            Some(v) if v > 0 => v as u32,
-            _ => 0,
-        };
+            let interval = match raw_interval {
+                Some(v) if v > 0 => (v as u64).min(36500) as u32, // Cap at ~100 years
+                _ => 0,
+            };
+            let ease_factor = match raw_ease {
+                Some(v) => (v as f32).clamp(1.3, 2.5),
+                None => 2.5,
+            };
+            let reps = match raw_reps {
+                Some(v) if v > 0 => v as u32,
+                _ => 0,
+            };
+            let lapses = match raw_lapses {
+                Some(v) if v > 0 => v as u32,
+                _ => 0,
+            };
 
-        Ok((interval, ease_factor, reps, lapses))
-    }) {
+            Ok((interval, ease_factor, reps, lapses))
+        }) {
         Ok(values) => values,
         Err(_) => (0, 2.5, 0, 0), // New card defaults
     };
@@ -513,7 +522,14 @@ fn apply_sm2_rating(card_id: i64, quality: Rating, timestamp: i64) -> Result<()>
     conn.execute(
         "INSERT OR REPLACE INTO srs_log (card_id, next_due_ts, interval, ease_factor, reps, lapses)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        (card_id, next_due_ts, interval as i64, ease_factor as f64, reps as i64, lapses as i64),
+        (
+            card_id,
+            next_due_ts,
+            interval as i64,
+            ease_factor as f64,
+            reps as i64,
+            lapses as i64,
+        ),
     )?;
 
     Ok(())
@@ -604,8 +620,7 @@ fn get_session_dir() -> PathBuf {
 
 fn ensure_session_dir() -> Result<()> {
     let session_dir = get_session_dir();
-    std::fs::create_dir_all(&session_dir)
-        .context("Failed to create session directory")?;
+    std::fs::create_dir_all(&session_dir).context("Failed to create session directory")?;
     Ok(())
 }
 
@@ -613,25 +628,23 @@ fn save_session(session: &SessionState) -> Result<()> {
     ensure_session_dir()?;
     let session_file = get_session_dir().join(format!("{}.json", session.id));
     let session_json = serde_json::to_string_pretty(session)?;
-    std::fs::write(&session_file, session_json)
-        .context("Failed to save session")?;
+    std::fs::write(&session_file, session_json).context("Failed to save session")?;
     Ok(())
 }
 
 fn load_session(session_id: &str) -> Result<SessionState> {
     let session_file = get_session_dir().join(format!("{}.json", session_id));
-    let session_json = std::fs::read_to_string(&session_file)
-        .context("Failed to read session file")?;
-    let session: SessionState = serde_json::from_str(&session_json)
-        .context("Failed to parse session")?;
+    let session_json =
+        std::fs::read_to_string(&session_file).context("Failed to read session file")?;
+    let session: SessionState =
+        serde_json::from_str(&session_json).context("Failed to parse session")?;
     Ok(session)
 }
 
 fn delete_session(session_id: &str) -> Result<()> {
     let session_file = get_session_dir().join(format!("{}.json", session_id));
     if session_file.exists() {
-        std::fs::remove_file(&session_file)
-            .context("Failed to delete session file")?;
+        std::fs::remove_file(&session_file).context("Failed to delete session file")?;
     }
     Ok(())
 }
@@ -640,8 +653,7 @@ fn delete_session(session_id: &str) -> Result<()> {
 fn handle_deck_command(action: DeckCommands, _verbose: bool) -> Result<()> {
     match action {
         DeckCommands::List => {
-            let cached_decks = load_cached_decks()
-                .context("Failed to load cached decks")?;
+            let cached_decks = load_cached_decks().context("Failed to load cached decks")?;
 
             let result = serde_json::json!({
                 "decks": cached_decks.iter().map(|deck| {
@@ -657,19 +669,19 @@ fn handle_deck_command(action: DeckCommands, _verbose: bool) -> Result<()> {
         }
 
         DeckCommands::Info { deck_id } => {
-            let cached_decks = load_cached_decks()
-                .context("Failed to load cached decks")?;
+            let cached_decks = load_cached_decks().context("Failed to load cached decks")?;
 
-            let deck_metadata = cached_decks.iter()
+            let deck_metadata = cached_decks
+                .iter()
                 .find(|d| d.id == deck_id)
                 .context("Deck not found")?;
 
             // Load manifest for additional info
             let manifest_path = deck_metadata.path.join("manifest.json");
-            let manifest_content = std::fs::read_to_string(&manifest_path)
-                .context("Failed to read manifest")?;
-            let manifest: serde_json::Value = serde_json::from_str(&manifest_content)
-                .context("Failed to parse manifest")?;
+            let manifest_content =
+                std::fs::read_to_string(&manifest_path).context("Failed to read manifest")?;
+            let manifest: serde_json::Value =
+                serde_json::from_str(&manifest_content).context("Failed to parse manifest")?;
 
             let result = serde_json::json!({
                 "id": deck_metadata.id,
@@ -814,13 +826,17 @@ fn handle_session_command(action: SessionCommands, _verbose: bool) -> Result<()>
                     "card": null,
                     "has_more": false,
                     "session_complete": true
-                })
+                }),
             };
 
             output_json(&result)
         }
 
-        SessionCommands::Rate { session_id, card_id, rating } => {
+        SessionCommands::Rate {
+            session_id,
+            card_id,
+            rating,
+        } => {
             let mut session = load_session(&session_id)?;
             let rating_enum = parse_rating(&rating)?;
             let timestamp = chrono::Utc::now().timestamp();
@@ -906,7 +922,8 @@ fn handle_card_command(action: CardCommands, _verbose: bool) -> Result<()> {
     match action {
         CardCommands::Get { deck_id, card_id } => {
             let cards = load_cards_from_deck(&deck_id, None)?;
-            let card = cards.iter()
+            let card = cards
+                .iter()
                 .find(|c| c.id == card_id)
                 .context("Card not found")?;
 
@@ -958,16 +975,20 @@ fn handle_card_command(action: CardCommands, _verbose: bool) -> Result<()> {
             }
 
             // Get updated card state to return
-            let srs_state: Option<(i64, f64, i64, i64)> = conn.query_row(
-                "SELECT interval, ease_factor, reps, lapses FROM srs_log WHERE card_id = ?1",
-                [card_id],
-                |row| Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, f64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            ).optional()?;
+            let srs_state: Option<(i64, f64, i64, i64)> = conn
+                .query_row(
+                    "SELECT interval, ease_factor, reps, lapses FROM srs_log WHERE card_id = ?1",
+                    [card_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, f64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
 
             let result = serde_json::json!({
                 "card_id": card_id,
@@ -999,7 +1020,7 @@ fn handle_card_command(action: CardCommands, _verbose: bool) -> Result<()> {
             let mut stmt = conn.prepare(
                 "SELECT rating, timestamp, date FROM daily_ratings
                  WHERE card_id = ?1
-                 ORDER BY timestamp DESC"
+                 ORDER BY timestamp DESC",
             )?;
 
             let rating_iter = stmt.query_map([card_id], |row| {
@@ -1030,15 +1051,17 @@ fn handle_card_command(action: CardCommands, _verbose: bool) -> Result<()> {
 
                         if card_exists {
                             // Get revlog entries for this card
-                            let mut revlog_stmt = deck_conn.prepare(
-                                "SELECT id, cid, usn, ease, ivl, lastIvl, factor, time, type
+                            let mut revlog_stmt = deck_conn
+                                .prepare(
+                                    "SELECT id, cid, usn, ease, ivl, lastIvl, factor, time, type
                                  FROM revlog
                                  WHERE cid = ?1
-                                 ORDER BY id DESC"
-                            ).unwrap_or_else(|_| {
-                                // If revlog table doesn't exist, create empty prepared statement
-                                deck_conn.prepare("SELECT 1 WHERE 0").unwrap()
-                            });
+                                 ORDER BY id DESC",
+                                )
+                                .unwrap_or_else(|_| {
+                                    // If revlog table doesn't exist, create empty prepared statement
+                                    deck_conn.prepare("SELECT 1 WHERE 0").unwrap()
+                                });
 
                             if let Ok(revlog_iter) = revlog_stmt.query_map([card_id], |row| {
                                 Ok(serde_json::json!({
@@ -1091,7 +1114,7 @@ fn handle_progress_command(action: ProgressCommands, _verbose: bool) -> Result<(
             let mut stmt = conn.prepare(
                 "SELECT card_id, rating FROM daily_ratings
                  WHERE date = ?1
-                 ORDER BY timestamp ASC"
+                 ORDER BY timestamp ASC",
             )?;
 
             let rating_iter = stmt.query_map([&today], |row| {
@@ -1160,12 +1183,17 @@ fn handle_progress_command(action: ProgressCommands, _verbose: bool) -> Result<(
         }
 
         ProgressCommands::Points { date } => {
-            let target_date = date.unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+            let target_date =
+                date.unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
 
             // Parse the target date and get timestamp range
             let parsed_date = chrono::NaiveDate::parse_from_str(&target_date, "%Y-%m-%d")
                 .context("Invalid date format, use YYYY-MM-DD")?;
-            let start_ts = parsed_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            let start_ts = parsed_date
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp();
             let end_ts = start_ts + 86400;
 
             let points: i32 = conn
@@ -1188,12 +1216,10 @@ fn handle_progress_command(action: ProgressCommands, _verbose: bool) -> Result<(
             let mut stmt = conn.prepare(
                 "SELECT card_id FROM difficult_cards
                  WHERE date = ?1 AND difficulty_type = 'failed'
-                 ORDER BY timestamp DESC"
+                 ORDER BY timestamp DESC",
             )?;
 
-            let failed_iter = stmt.query_map([&today], |row| {
-                Ok(row.get::<_, i64>(0)?)
-            })?;
+            let failed_iter = stmt.query_map([&today], |row| Ok(row.get::<_, i64>(0)?))?;
 
             let mut failed_cards = Vec::new();
             for card in failed_iter {
@@ -1204,12 +1230,10 @@ fn handle_progress_command(action: ProgressCommands, _verbose: bool) -> Result<(
             let mut stmt = conn.prepare(
                 "SELECT card_id FROM difficult_cards
                  WHERE date = ?1 AND difficulty_type = 'hard'
-                 ORDER BY timestamp DESC"
+                 ORDER BY timestamp DESC",
             )?;
 
-            let hard_iter = stmt.query_map([&today], |row| {
-                Ok(row.get::<_, i64>(0)?)
-            })?;
+            let hard_iter = stmt.query_map([&today], |row| Ok(row.get::<_, i64>(0)?))?;
 
             let mut hard_cards = Vec::new();
             for card in hard_iter {
@@ -1292,7 +1316,8 @@ fn handle_stats_command(action: StatsCommands, _verbose: bool) -> Result<()> {
 
             // Get SRS statistics for cards in this deck
             let deck_card_ids: Vec<i64> = cards.iter().map(|c| c.id).collect();
-            let card_ids_str = deck_card_ids.iter()
+            let card_ids_str = deck_card_ids
+                .iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -1316,12 +1341,15 @@ fn handle_stats_command(action: StatsCommands, _verbose: bool) -> Result<()> {
                         "avg_interval": row.get::<_, Option<f64>>(2)?,
                         "total_lapses": row.get::<_, Option<i32>>(3)?
                     }))
-                }).unwrap_or_else(|_| serde_json::json!({
-                    "total_in_srs": 0,
-                    "avg_ease_factor": null,
-                    "avg_interval": null,
-                    "total_lapses": 0
-                }))
+                })
+                .unwrap_or_else(|_| {
+                    serde_json::json!({
+                        "total_in_srs": 0,
+                        "avg_ease_factor": null,
+                        "avg_interval": null,
+                        "total_lapses": 0
+                    })
+                })
             } else {
                 serde_json::json!({
                     "total_in_srs": 0,
@@ -1341,17 +1369,23 @@ fn handle_stats_command(action: StatsCommands, _verbose: bool) -> Result<()> {
         }
 
         StatsCommands::Points { date } => {
-            let target_date = date.unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+            let target_date =
+                date.unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
 
             // Parse the target date and get timestamp range
             let parsed_date = chrono::NaiveDate::parse_from_str(&target_date, "%Y-%m-%d")
                 .context("Invalid date format, use YYYY-MM-DD")?;
-            let start_ts = parsed_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            let start_ts = parsed_date
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp();
             let end_ts = start_ts + 86400;
 
             // Get point breakdown from study events
-            let breakdown = conn.query_row(
-                "SELECT
+            let breakdown = conn
+                .query_row(
+                    "SELECT
                     COUNT(*) as total_events,
                     SUM(bp) as base_points,
                     SUM(df) as difficulty_bonus,
@@ -1360,25 +1394,28 @@ fn handle_stats_command(action: StatsCommands, _verbose: bool) -> Result<()> {
                     SUM(pa) as total_points
                  FROM study_events
                  WHERE timestamp >= ?1 AND timestamp < ?2",
-                [start_ts, end_ts],
-                |row| {
-                    Ok(serde_json::json!({
-                        "total_events": row.get::<_, i32>(0)?,
-                        "base_points": row.get::<_, Option<i32>>(1)?,
-                        "difficulty_bonus": row.get::<_, Option<i32>>(2)?,
-                        "combo_bonus": row.get::<_, Option<i32>>(3)?,
-                        "speed_bonus": row.get::<_, Option<i32>>(4)?,
-                        "total_points": row.get::<_, Option<i32>>(5)?
-                    }))
-                }
-            ).unwrap_or_else(|_| serde_json::json!({
-                "total_events": 0,
-                "base_points": 0,
-                "difficulty_bonus": 0,
-                "combo_bonus": 0,
-                "speed_bonus": 0,
-                "total_points": 0
-            }));
+                    [start_ts, end_ts],
+                    |row| {
+                        Ok(serde_json::json!({
+                            "total_events": row.get::<_, i32>(0)?,
+                            "base_points": row.get::<_, Option<i32>>(1)?,
+                            "difficulty_bonus": row.get::<_, Option<i32>>(2)?,
+                            "combo_bonus": row.get::<_, Option<i32>>(3)?,
+                            "speed_bonus": row.get::<_, Option<i32>>(4)?,
+                            "total_points": row.get::<_, Option<i32>>(5)?
+                        }))
+                    },
+                )
+                .unwrap_or_else(|_| {
+                    serde_json::json!({
+                        "total_events": 0,
+                        "base_points": 0,
+                        "difficulty_bonus": 0,
+                        "combo_bonus": 0,
+                        "speed_bonus": 0,
+                        "total_points": 0
+                    })
+                });
 
             let result = serde_json::json!({
                 "date": target_date,

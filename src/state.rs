@@ -7,15 +7,14 @@ use crate::config::{Config, UiAssets};
 use crate::deck::Deck;
 use crate::scenes::deck_selection::DeckSelectionState;
 use crate::scenes::main_menu::MainMenuState;
-use crate::scenes::studying::StudyingState;
 use crate::scenes::progress::ProgressState;
 use crate::scenes::restore_wizard::RestoreWizardState;
+use crate::scenes::studying::StudyingState;
 use crate::ui::font::TextLayout;
-use crate::ui::{CanvasManager, FontManager, sprite::Sprite};
-use rodio::{OutputStream, OutputStreamHandle, Decoder, Source};
+use crate::ui::{sprite::Sprite, CanvasManager, FontManager};
 use evdev::Device as EvdevDevice;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Source};
 use std::io::Cursor;
-
 
 /// Holds metadata about a single deck, used for selection screens.
 #[derive(Clone)]
@@ -68,14 +67,17 @@ impl AudioManager {
     pub fn new() -> Result<Self, String> {
         let (stream, stream_handle) = OutputStream::try_default()
             .map_err(|e| format!("Failed to create audio output: {}", e))?;
-        Ok(Self { _stream: stream, stream_handle })
+        Ok(Self {
+            _stream: stream,
+            stream_handle,
+        })
     }
 
     pub fn play_sound(&self, sound_data: &'static [u8]) -> Result<(), String> {
         let cursor = Cursor::new(sound_data);
-        let source = Decoder::new(cursor)
-            .map_err(|e| format!("Failed to decode audio: {}", e))?;
-        self.stream_handle.play_raw(source.convert_samples())
+        let source = Decoder::new(cursor).map_err(|e| format!("Failed to decode audio: {}", e))?;
+        self.stream_handle
+            .play_raw(source.convert_samples())
             .map_err(|e| format!("Failed to play sound: {}", e))?;
         Ok(())
     }
@@ -139,15 +141,18 @@ pub enum BrickInput {
     ButtonDown(BrickButton),
     ButtonUp(BrickButton),
     #[allow(dead_code)]
-    AxisMotion { axis: BrickAxis, value: f32 },
+    AxisMotion {
+        axis: BrickAxis,
+        value: f32,
+    },
 }
 
 pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput> {
-    use evdev::{EventType};
-    
+    use evdev::EventType;
+
     if event.event_type() == EventType::KEY && event.value() == 1 {
         let button = match event.code() {
-            // A button (BTN_EAST in evdev) 
+            // A button (BTN_EAST in evdev)
             305 => BrickButton::A,
             // B button (BTN_SOUTH)
             304 => BrickButton::B,
@@ -166,9 +171,9 @@ pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput>
             312 => BrickButton::LeftStick,  // L2 mapped to LeftStick
             313 => BrickButton::RightStick, // R2 mapped to RightStick
             // Control buttons
-            314 => BrickButton::Back,   // Select
-            315 => BrickButton::Start,  // Start
-            316 => BrickButton::Guide,  // Menu
+            314 => BrickButton::Back,  // Select
+            315 => BrickButton::Start, // Start
+            316 => BrickButton::Guide, // Menu
             _ => return None,
         };
         Some(BrickInput::ButtonDown(button))
@@ -200,7 +205,7 @@ pub fn map_evdev_to_brick_input(event: &evdev::InputEvent) -> Option<BrickInput>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evdev::{InputEvent, EventType};
+    use evdev::{EventType, InputEvent};
 
     #[test]
     fn test_button_down_mapping() {
@@ -253,12 +258,18 @@ mod tests {
         // Test Left Shoulder (code 310)
         let event = InputEvent::new(EventType::KEY, 310, 1);
         let result = map_evdev_to_brick_input(&event);
-        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::LeftShoulder)));
+        assert_eq!(
+            result,
+            Some(BrickInput::ButtonDown(BrickButton::LeftShoulder))
+        );
 
         // Test Right Shoulder (code 311)
         let event = InputEvent::new(EventType::KEY, 311, 1);
         let result = map_evdev_to_brick_input(&event);
-        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::RightShoulder)));
+        assert_eq!(
+            result,
+            Some(BrickInput::ButtonDown(BrickButton::RightShoulder))
+        );
 
         // Test Left Stick mapped from L2 (code 312)
         let event = InputEvent::new(EventType::KEY, 312, 1);
@@ -268,7 +279,10 @@ mod tests {
         // Test Right Stick mapped from R2 (code 313)
         let event = InputEvent::new(EventType::KEY, 313, 1);
         let result = map_evdev_to_brick_input(&event);
-        assert_eq!(result, Some(BrickInput::ButtonDown(BrickButton::RightStick)));
+        assert_eq!(
+            result,
+            Some(BrickInput::ButtonDown(BrickButton::RightStick))
+        );
     }
 
     #[test]
@@ -326,4 +340,3 @@ mod tests {
         assert_eq!(result, None);
     }
 }
-

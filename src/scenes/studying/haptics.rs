@@ -8,12 +8,12 @@ pub fn short_rumble() {
     // For TrimUI Brick: GPIO-based rumble motor control
     // For RG35XX Plus: Vibration motor via device driver
     // For desktop testing: Console log or audio cue
-    
+
     #[cfg(test)]
     {
         println!("🎮 RUMBLE: Short haptic feedback triggered for goal achievement");
     }
-    
+
     #[cfg(not(test))]
     {
         // Desktop/testing fallback - could use audio beep instead
@@ -27,7 +27,7 @@ pub fn long_rumble() {
     {
         println!("🎮 RUMBLE: Long haptic feedback triggered");
     }
-    
+
     #[cfg(not(test))]
     {
         println!("🎮 Special achievement! (Long haptic feedback would trigger on device)");

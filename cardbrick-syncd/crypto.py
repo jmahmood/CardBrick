@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Dict, Set, Optional
 
 from cryptography.hazmat.primitives import serialization

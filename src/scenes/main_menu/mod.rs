@@ -1,7 +1,7 @@
 // src/scenes/main_menu/mod.rs
 
+use crate::ui::{CanvasManager, FontManager};
 use macroquad::prelude::*;
-use crate::ui::{FontManager, CanvasManager};
 
 // This line was missing. It tells the main_menu module
 // that the input.rs file is part of it.
@@ -28,7 +28,7 @@ pub fn draw_main_menu_scene(
     state: &mut MainMenuState,
 ) -> Result<(), String> {
     let options = ["Study", "Progress", "Send Backup", "Quit"];
-    
+
     // Draw everything directly in screen space so it lines up with text
     let (logical_width, _logical_height) = canvas_manager.logical_size();
     let (screen_x, screen_y) = canvas_manager.logical_to_screen(0.0, 0.0);
@@ -37,14 +37,44 @@ pub fn draw_main_menu_scene(
     let screen_h = 384.0 * scale;
 
     // Background base
-    draw_rectangle(screen_x, screen_y, screen_w, screen_h, Color::from_rgba(40, 41, 46, 255));
+    draw_rectangle(
+        screen_x,
+        screen_y,
+        screen_w,
+        screen_h,
+        Color::from_rgba(40, 41, 46, 255),
+    );
 
     // Header banner and accents
     let header_h = 64.0;
-    draw_rectangle(screen_x, screen_y, 512.0 * scale, header_h * scale, Color::from_rgba(35, 43, 68, 255));
-    draw_rectangle(screen_x, screen_y + (header_h - 2.0) * scale, 512.0 * scale, 2.0 * scale, Color::from_rgba(100, 180, 255, 180));
-    draw_rectangle(screen_x, screen_y + header_h * scale, 4.0 * scale, 16.0 * scale, Color::from_rgba(100, 180, 255, 140));
-    draw_rectangle(screen_x + (512.0 - 4.0) * scale, screen_y + header_h * scale, 4.0 * scale, 16.0 * scale, Color::from_rgba(100, 180, 255, 140));
+    draw_rectangle(
+        screen_x,
+        screen_y,
+        512.0 * scale,
+        header_h * scale,
+        Color::from_rgba(35, 43, 68, 255),
+    );
+    draw_rectangle(
+        screen_x,
+        screen_y + (header_h - 2.0) * scale,
+        512.0 * scale,
+        2.0 * scale,
+        Color::from_rgba(100, 180, 255, 180),
+    );
+    draw_rectangle(
+        screen_x,
+        screen_y + header_h * scale,
+        4.0 * scale,
+        16.0 * scale,
+        Color::from_rgba(100, 180, 255, 140),
+    );
+    draw_rectangle(
+        screen_x + (512.0 - 4.0) * scale,
+        screen_y + header_h * scale,
+        4.0 * scale,
+        16.0 * scale,
+        Color::from_rgba(100, 180, 255, 140),
+    );
 
     // Title with drop shadow (smaller font)
     let title_x = 24;
@@ -70,7 +100,13 @@ pub fn draw_main_menu_scene(
 
             // Left accent bar
             let (ax, ay) = canvas_manager.logical_to_screen(text_left - padding_x, y_top);
-            draw_rectangle(ax, ay, 4.0 * canvas_manager.get_scale_factor(), hh, Color::from_rgba(100, 180, 255, 255));
+            draw_rectangle(
+                ax,
+                ay,
+                4.0 * canvas_manager.get_scale_factor(),
+                hh,
+                Color::from_rgba(100, 180, 255, 255),
+            );
         }
         font_manager.draw_single_line(option, text_left as i32, y_pos, canvas_manager)?;
         y_pos += 40;

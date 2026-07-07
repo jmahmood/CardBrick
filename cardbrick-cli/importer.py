@@ -5,7 +5,6 @@ Converts CSV and Markdown files to CardBrick's .cbdeck format.
 Supports various input formats and produces decks compatible with the Rust handheld app.
 """
 
-import csv
 import json
 import hashlib
 import logging
@@ -16,7 +15,6 @@ from datetime import datetime
 
 import pandas as pd
 import markdown
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 

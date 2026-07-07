@@ -5,7 +5,6 @@ Test script for local authentication system
 
 import asyncio
 import sys
-from pathlib import Path
 
 from auth import AuthClient
 

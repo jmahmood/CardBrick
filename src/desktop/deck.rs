@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 /// A deck in the KARTA JSON format
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,10 +114,8 @@ mod tests {
             created_at: Utc::now(),
         };
 
-        card.fields.insert(
-            "back".to_string(),
-            "to shake suddenly".to_string()
-        );
+        card.fields
+            .insert("back".to_string(), "to shake suddenly".to_string());
 
         let (definition, example) = card.parse_back();
         assert_eq!(definition, "to shake suddenly");

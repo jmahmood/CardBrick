@@ -17,10 +17,10 @@ impl ReplayLogger {
     pub fn new(deck_id: &str) -> Result<Self, std::io::Error> {
         let path = Path::new("anki/history/txn");
         fs::create_dir_all(path)?;
-        
+
         // For simplicity, we'll use one log file per deck for now.
         let log_path = path.join(format!("{}.log", deck_id));
-        
+
         Ok(ReplayLogger { log_path })
     }
 

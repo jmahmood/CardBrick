@@ -9,15 +9,12 @@ Handles:
 """
 
 import asyncio
-import json
 import logging
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, Optional, Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 try:

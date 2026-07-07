@@ -4,7 +4,6 @@ Wormhole backup functionality for CardBrick
 Handles sending and receiving backup packages via magic-wormhole
 """
 
-import asyncio
 import json
 import logging
 import shutil

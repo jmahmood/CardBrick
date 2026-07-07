@@ -1,27 +1,27 @@
 /*!
  * CardBrick Sync Ring - Handheld Sync Client
- * 
+ *
  * Lightweight binary for handheld devices to trigger sync operations.
- * 
+ *
  * Features:
  * - mDNS discovery of desktop daemons
- * - ed25519 authentication 
+ * - ed25519 authentication
  * - Rate limiting (max 1 ring per 15 minutes)
  * - Minimal resource usage for embedded devices
  */
 
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, Context};
-use log::{info, warn, error};
-use serde::{Serialize, Deserialize};
+use anyhow::{Context, Result};
+use log::{error, info, warn};
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 #[path = "sync_client.rs"]
 mod sync_client;
-use sync_client::{SyncClient, DoorbellResponse};
 use sync_client::mdns_discovery::DiscoveredService;
+use sync_client::{DoorbellResponse, SyncClient};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SyncState {
@@ -46,55 +46,60 @@ impl Default for SyncState {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    
+
     // Parse command line arguments
     let args = parse_args();
-    
+
     info!("CardBrick Sync Ring starting...");
-    
+
     // Load or create sync state
     let mut state = load_sync_state().unwrap_or_default();
-    
+
     // Check rate limiting (skip for force backup)
-    let current_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs();
-        
+    let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
     const RATE_LIMIT_SECONDS: u64 = 15 * 60; // 15 minutes
-    
+
     if !args.force_backup && current_time - state.last_ring_time < RATE_LIMIT_SECONDS {
         let wait_time = RATE_LIMIT_SECONDS - (current_time - state.last_ring_time);
-        warn!("Rate limited. Next sync allowed in {} minutes", wait_time / 60);
+        warn!(
+            "Rate limited. Next sync allowed in {} minutes",
+            wait_time / 60
+        );
         return Ok(());
     }
-    
+
     // Initialize sync client
     let mut client = SyncClient::new().await?;
-    
+
     // Discover desktop services
     info!("Discovering CardBrick sync services...");
     let discovered = timeout(Duration::from_secs(10), client.discover_services())
         .await
         .context("Service discovery timeout")?;
-        
+
     if discovered.is_empty() {
         warn!("No CardBrick sync services found on network");
         return Ok(());
     }
-    
+
     info!("Found {} sync service(s)", discovered.len());
-    
+
     // Try to sync with each discovered service
     let mut sync_success = false;
-    
+
     for service in discovered {
-        info!("Attempting sync with {} ({}:{})", 
-              service.name, service.host, service.port);
-              
+        info!(
+            "Attempting sync with {} ({}:{})",
+            service.name, service.host, service.port
+        );
+
         match attempt_sync(&mut client, &service, args.force_backup).await {
             Ok(response) => {
-                info!("Sync request successful: {} - {}", 
-                      response.status, response.message);
+                info!(
+                    "Sync request successful: {} - {}",
+                    response.status, response.message
+                );
                 if response.status == "accepted" {
                     sync_success = true;
                     break;
@@ -106,25 +111,29 @@ async fn main() -> Result<()> {
             }
         }
     }
-    
+
     if sync_success {
         // Update rate limiting state (except for force backup)
         if !args.force_backup {
             state.last_ring_time = current_time;
             save_sync_state(&state)?;
         }
-        let sync_type = if args.force_backup { "Manual backup" } else { "Sync" };
+        let sync_type = if args.force_backup {
+            "Manual backup"
+        } else {
+            "Sync"
+        };
         info!("{} initiated successfully", sync_type);
     } else {
         error!("All sync attempts failed");
     }
-    
+
     Ok(())
 }
 
 fn parse_args() -> Args {
     let args: Vec<String> = std::env::args().collect();
-    
+
     Args {
         force_backup: args.contains(&"--force-backup".to_string()),
     }
@@ -133,56 +142,53 @@ fn parse_args() -> Args {
 async fn attempt_sync(
     client: &mut SyncClient,
     service: &DiscoveredService,
-    force_backup: bool
+    force_backup: bool,
 ) -> Result<DoorbellResponse> {
     // Create doorbell request
-    let mut request = client.create_doorbell_request(
-        &service.host_string(),
-        22, // Default SSH port - could be configurable
-    ).await?;
-    
+    let mut request = client
+        .create_doorbell_request(
+            &service.host_string(),
+            22, // Default SSH port - could be configurable
+        )
+        .await?;
+
     // Mark as backup request if forced
     if force_backup {
         request.backup_mode = true;
     }
-    
+
     // Send doorbell
     let response = client.send_doorbell(&service, request).await?;
-    
+
     Ok(response)
 }
 
 fn load_sync_state() -> Result<SyncState> {
     let state_path = get_state_path();
-    
+
     if !state_path.exists() {
         return Ok(SyncState::default());
     }
-    
-    let contents = std::fs::read_to_string(&state_path)
-        .context("Failed to read sync state")?;
-        
-    let state: SyncState = serde_json::from_str(&contents)
-        .context("Failed to parse sync state")?;
-        
+
+    let contents = std::fs::read_to_string(&state_path).context("Failed to read sync state")?;
+
+    let state: SyncState = serde_json::from_str(&contents).context("Failed to parse sync state")?;
+
     Ok(state)
 }
 
 fn save_sync_state(state: &SyncState) -> Result<()> {
     let state_path = get_state_path();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = state_path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("Failed to create state directory")?;
+        std::fs::create_dir_all(parent).context("Failed to create state directory")?;
     }
-    
-    let contents = serde_json::to_string_pretty(state)
-        .context("Failed to serialize sync state")?;
-        
-    std::fs::write(&state_path, contents)
-        .context("Failed to write sync state")?;
-        
+
+    let contents = serde_json::to_string_pretty(state).context("Failed to serialize sync state")?;
+
+    std::fs::write(&state_path, contents).context("Failed to write sync state")?;
+
     Ok(())
 }
 

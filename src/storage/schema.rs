@@ -188,7 +188,7 @@ pub fn create_deck_database_tables(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
-    
+
     create_srs_log_table(conn)?;
     create_bandit_state_table(conn)?;
     create_daily_log_table(conn)?;
@@ -217,10 +217,10 @@ pub fn create_deck_database_tables(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
-    
+
     // Set database version for deck databases
     conn.execute("PRAGMA user_version = 3", [])?;
-    
+
     Ok(())
 }
 

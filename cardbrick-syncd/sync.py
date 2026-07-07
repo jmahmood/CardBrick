@@ -6,10 +6,7 @@ Handles rsync operations to pull decks from handheld devices
 
 import asyncio
 import logging
-import shlex
 import shutil
-import sqlite3
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional

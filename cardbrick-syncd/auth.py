@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import secrets
-import socket
 import time
 from pathlib import Path
 from typing import Dict, Optional, Set

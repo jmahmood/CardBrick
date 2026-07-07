@@ -1,4 +1,4 @@
-use crate::state::{BrickInput, BrickButton};
+use crate::state::{BrickButton, BrickInput};
 use crate::{AppState, GameState};
 use std::process::Command;
 
@@ -21,7 +21,10 @@ pub fn handle_main_menu_input(state: &mut AppState, input: BrickInput) -> Result
                 let _ = state.audio.play_sound(crate::assets::OPEN_SOUND);
                 match main_menu.selected_index {
                     0 => state.game_state = GameState::GoToDeckSelection,
-                    1 => state.game_state = GameState::Progress(crate::scenes::progress::ProgressState::new()),
+                    1 => {
+                        state.game_state =
+                            GameState::Progress(crate::scenes::progress::ProgressState::new())
+                    }
                     2 => {
                         // Trigger manual backup sync
                         if let Err(e) = trigger_manual_backup() {
@@ -42,12 +45,10 @@ pub fn handle_main_menu_input(state: &mut AppState, input: BrickInput) -> Result
 /// Trigger a manual backup sync operation
 fn trigger_manual_backup() -> Result<(), String> {
     log::info!("Starting manual backup sync...");
-    
+
     // Use the sync_ring binary to trigger backup
-    let result = Command::new("sync_ring")
-        .arg("--force-backup")
-        .output();
-        
+    let result = Command::new("sync_ring").arg("--force-backup").output();
+
     match result {
         Ok(output) => {
             if output.status.success() {

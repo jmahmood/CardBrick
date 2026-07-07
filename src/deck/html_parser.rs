@@ -56,7 +56,7 @@ fn process_node(
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 nf.is_bold = true; // Treat other headings as bold
                 nf.new_text_block = true;
-            } 
+            }
             "br" => {
                 is_br = true;
                 nf.new_text_block = true;
@@ -109,17 +109,22 @@ fn process_node(
                             for rt_child in child_tag.children().top().to_vec() {
                                 process_node(rt_child, parser, &mut rt_spans, nf.clone());
                             }
-                            ruby_text_content = Some(rt_spans.into_iter().map(|s| s.text).collect());
+                            ruby_text_content =
+                                Some(rt_spans.into_iter().map(|s| s.text).collect());
                         }
                         _ => {}
                     }
                 } else if let Some(child_bytes) = child_node.as_raw() {
-                    base_text_spans.push(TextSpan { text: child_bytes.as_utf8_str().to_string(), ..nf.clone() });
+                    base_text_spans.push(TextSpan {
+                        text: child_bytes.as_utf8_str().to_string(),
+                        ..nf.clone()
+                    });
                 }
             }
-            
+
             if !base_text_spans.is_empty() {
-                let combined_base_text: String = base_text_spans.into_iter().map(|s| s.text).collect();
+                let combined_base_text: String =
+                    base_text_spans.into_iter().map(|s| s.text).collect();
                 spans.push(TextSpan {
                     text: combined_base_text,
                     is_bold: nf.is_bold,
@@ -130,7 +135,8 @@ fn process_node(
                     is_newline: false,
                 });
             }
-        } else if !is_br { // Normal element, process children recursively, if not a <br> or <ruby>
+        } else if !is_br {
+            // Normal element, process children recursively, if not a <br> or <ruby>
             for child in tag.children().top().to_vec() {
                 process_node(child, parser, spans, nf.clone());
             }
@@ -141,8 +147,12 @@ fn process_node(
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "hr" | "li" | "hr/" | "ul" => {
                 // Ensure a single newline is added after these block elements.
                 // Check if the last span is *not* already a newline.
-                if spans.last().map_or(true, |s| s.text != "\n") { // Add if empty or last is not newline
-                    spans.push(TextSpan { text: "\n".into(), ..fmt.clone() });
+                if spans.last().map_or(true, |s| s.text != "\n") {
+                    // Add if empty or last is not newline
+                    spans.push(TextSpan {
+                        text: "\n".into(),
+                        ..fmt.clone()
+                    });
                 }
             }
             _ => {}
@@ -254,18 +264,18 @@ mod tests {
     #[test]
     fn test_mixed_formatting() {
         let spans = parse_html_to_spans("<b>Bold</b> and <i>italic</i> text");
-        
+
         // The parser produces more spans than expected - account for whitespace and structure
         assert!(spans.len() >= 3);
-        
+
         // Find the bold span
         let bold_span = spans.iter().find(|s| s.is_bold).unwrap();
         assert_eq!(bold_span.text, "Bold");
-        
+
         // Find the italic span
         let italic_span = spans.iter().find(|s| s.is_italic).unwrap();
         assert_eq!(italic_span.text, "italic");
-        
+
         // Find the word "text"
         let text_span = spans.iter().find(|s| s.text.contains("text")).unwrap();
         assert!(!text_span.is_bold);
@@ -324,15 +334,15 @@ mod tests {
     #[test]
     fn test_hr_tag() {
         let spans = parse_html_to_spans("Before<hr/>After");
-        
+
         // The parser may produce more spans - be flexible
         assert!(spans.len() >= 3);
-        
+
         // Check that we have "Before", a newline, and "After"
         let before_span = spans.iter().find(|s| s.text == "Before").unwrap();
         let after_span = spans.iter().find(|s| s.text == "After").unwrap();
         let newline_span = spans.iter().find(|s| s.text == "\n").unwrap();
-        
+
         assert_eq!(before_span.text, "Before");
         assert_eq!(newline_span.text, "\n");
         assert_eq!(after_span.text, "After");

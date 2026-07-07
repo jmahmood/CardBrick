@@ -1,5 +1,5 @@
+use crate::desktop::browser::{default_workspace_dir, scan_workspace_for_decks, DeckInfo};
 use crate::desktop::session::{CardFace, Session};
-use crate::desktop::browser::{DeckInfo, scan_workspace_for_decks, default_workspace_dir};
 use crate::desktop::KartaDeck;
 use crate::scheduler::sm2::Rating;
 use egui::{Align, Color32, Frame, Key, Layout, Margin, RichText, Rounding, Stroke, Vec2};
@@ -64,7 +64,11 @@ impl CardBrickApp {
             let workspace_path = default_workspace_dir();
             let decks = scan_workspace_for_decks(&workspace_path);
 
-            println!("Found {} decks in {}", decks.len(), workspace_path.display());
+            println!(
+                "Found {} decks in {}",
+                decks.len(),
+                workspace_path.display()
+            );
 
             Self {
                 state: AppState::DeckSelection {
@@ -152,11 +156,7 @@ impl CardBrickApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Deck name
-                    ui.label(
-                        RichText::new(session.deck_name())
-                            .size(16.0)
-                            .strong(),
-                    );
+                    ui.label(RichText::new(session.deck_name()).size(16.0).strong());
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // Progress
@@ -264,9 +264,7 @@ impl CardBrickApp {
                             if let Some(ex) = example {
                                 ui.add_space(12.0);
                                 ui.label(
-                                    RichText::new(ex)
-                                        .size(16.0)
-                                        .color(Color32::from_gray(80)),
+                                    RichText::new(ex).size(16.0).color(Color32::from_gray(80)),
                                 );
                             }
                         });
@@ -281,28 +279,19 @@ impl CardBrickApp {
                             .size(14.0)
                             .color(Color32::from_gray(100)),
                     );
-                    ui.label(
-                        RichText::new("  •  ")
-                            .color(Color32::from_gray(180)),
-                    );
+                    ui.label(RichText::new("  •  ").color(Color32::from_gray(180)));
                     ui.label(
                         RichText::new("2: Hard")
                             .size(14.0)
                             .color(Color32::from_gray(100)),
                     );
-                    ui.label(
-                        RichText::new("  •  ")
-                            .color(Color32::from_gray(180)),
-                    );
+                    ui.label(RichText::new("  •  ").color(Color32::from_gray(180)));
                     ui.label(
                         RichText::new("3: OK")
                             .size(14.0)
                             .color(Color32::from_gray(100)),
                     );
-                    ui.label(
-                        RichText::new("  •  ")
-                            .color(Color32::from_gray(180)),
-                    );
+                    ui.label(RichText::new("  •  ").color(Color32::from_gray(180)));
                     ui.label(
                         RichText::new("4: Easy")
                             .size(14.0)
@@ -318,11 +307,9 @@ impl CardBrickApp {
         Frame::none()
             .fill(Color32::WHITE)
             .inner_margin(Margin::same(40.0))
-            .show(ui, |ui| {
-                match session.current_face() {
-                    CardFace::Front => Self::render_front_card(ui, session),
-                    CardFace::Back => Self::render_back_card(ui, session),
-                }
+            .show(ui, |ui| match session.current_face() {
+                CardFace::Front => Self::render_front_card(ui, session),
+                CardFace::Back => Self::render_back_card(ui, session),
             });
     }
 
@@ -365,40 +352,42 @@ impl CardBrickApp {
                 ui.add_space(40.0);
 
                 // Action buttons
-                if ui.add_sized(
-                    [300.0, 50.0],
-                    egui::Button::new(
-                        RichText::new("↻ Review These Cards Again")
-                            .size(16.0)
+                if ui
+                    .add_sized(
+                        [300.0, 50.0],
+                        egui::Button::new(RichText::new("↻ Review These Cards Again").size(16.0)),
                     )
-                ).clicked() {
+                    .clicked()
+                {
                     action = SessionCompleteAction::Restart;
                 }
 
                 ui.add_space(15.0);
 
                 if remaining > 0 {
-                    if ui.add_sized(
-                        [300.0, 50.0],
-                        egui::Button::new(
-                            RichText::new("+ Continue Studying (10 more cards)")
-                                .size(16.0)
+                    if ui
+                        .add_sized(
+                            [300.0, 50.0],
+                            egui::Button::new(
+                                RichText::new("+ Continue Studying (10 more cards)").size(16.0),
+                            ),
                         )
-                    ).clicked() {
+                        .clicked()
+                    {
                         action = SessionCompleteAction::Continue;
                     }
 
                     ui.add_space(15.0);
                 }
 
-                if ui.add_sized(
-                    [300.0, 50.0],
-                    egui::Button::new(
-                        RichText::new("✓ Done for Today")
-                            .size(16.0)
+                if ui
+                    .add_sized(
+                        [300.0, 50.0],
+                        egui::Button::new(RichText::new("✓ Done for Today").size(16.0))
+                            .fill(Color32::from_gray(220)),
                     )
-                    .fill(Color32::from_gray(220))
-                ).clicked() {
+                    .clicked()
+                {
                     action = SessionCompleteAction::Exit;
                 }
 
@@ -439,11 +428,7 @@ impl CardBrickApp {
                         .inner_margin(Margin::symmetric(16.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(session.deck_name())
-                                        .size(16.0)
-                                        .strong(),
-                                );
+                                ui.label(RichText::new(session.deck_name()).size(16.0).strong());
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     let (current, total) = session.progress();
@@ -528,18 +513,19 @@ impl CardBrickApp {
         ctx.request_repaint();
     }
 
-    fn render_deck_selection(ui: &mut egui::Ui, decks: &[DeckInfo], selected: &mut Option<usize>, workspace_path: &PathBuf) -> Option<PathBuf> {
+    fn render_deck_selection(
+        ui: &mut egui::Ui,
+        decks: &[DeckInfo],
+        selected: &mut Option<usize>,
+        workspace_path: &PathBuf,
+    ) -> Option<PathBuf> {
         let mut deck_to_load = None;
         ui.centered_and_justified(|ui| {
             ui.vertical(|ui| {
                 ui.add_space(20.0);
 
                 // Header
-                ui.label(
-                    RichText::new("Select a Deck")
-                        .size(32.0)
-                        .strong(),
-                );
+                ui.label(RichText::new("Select a Deck").size(32.0).strong());
 
                 ui.add_space(10.0);
                 ui.label(
@@ -558,9 +544,12 @@ impl CardBrickApp {
                     );
                     ui.add_space(10.0);
                     ui.label(
-                        RichText::new(format!("Place deck folders in: {}", workspace_path.display()))
-                            .size(14.0)
-                            .color(Color32::from_gray(120)),
+                        RichText::new(format!(
+                            "Place deck folders in: {}",
+                            workspace_path.display()
+                        ))
+                        .size(14.0)
+                        .color(Color32::from_gray(120)),
                     );
                 } else {
                     // Scrollable deck list
@@ -570,12 +559,10 @@ impl CardBrickApp {
                             for (idx, deck_info) in decks.iter().enumerate() {
                                 let is_selected = *selected == Some(idx);
 
-                                let response = ui.add(
-                                    egui::SelectableLabel::new(
-                                        is_selected,
-                                        RichText::new(&deck_info.name).size(18.0),
-                                    )
-                                );
+                                let response = ui.add(egui::SelectableLabel::new(
+                                    is_selected,
+                                    RichText::new(&deck_info.name).size(18.0),
+                                ));
 
                                 if response.clicked() {
                                     *selected = Some(idx);
@@ -596,7 +583,13 @@ impl CardBrickApp {
 
                     // Load button
                     let can_load = selected.is_some();
-                    if ui.add_enabled(can_load, egui::Button::new("Load Deck").min_size(Vec2::new(120.0, 40.0))).clicked() {
+                    if ui
+                        .add_enabled(
+                            can_load,
+                            egui::Button::new("Load Deck").min_size(Vec2::new(120.0, 40.0)),
+                        )
+                        .clicked()
+                    {
                         if let Some(idx) = *selected {
                             if let Some(deck_info) = decks.get(idx) {
                                 deck_to_load = Some(deck_info.path.clone());
@@ -631,21 +624,28 @@ impl eframe::App for CardBrickApp {
 
         // Main panel
         let state_clone = match &self.state {
-            AppState::DeckSelection { decks, selected_index, workspace_path } => {
-                AppState::DeckSelection {
-                    decks: decks.clone(),
-                    selected_index: *selected_index,
-                    workspace_path: workspace_path.clone(),
-                }
-            }
+            AppState::DeckSelection {
+                decks,
+                selected_index,
+                workspace_path,
+            } => AppState::DeckSelection {
+                decks: decks.clone(),
+                selected_index: *selected_index,
+                workspace_path: workspace_path.clone(),
+            },
             AppState::Studying(_) => return self.render_studying_state(ctx),
             AppState::Error(err) => AppState::Error(err.clone()),
         };
 
-        let deck_to_load = egui::CentralPanel::default().show(ctx, |ui| {
-            match &mut self.state {
+        let deck_to_load = egui::CentralPanel::default()
+            .show(ctx, |ui| match &mut self.state {
                 AppState::DeckSelection { selected_index, .. } => {
-                    if let AppState::DeckSelection { decks, workspace_path, .. } = &state_clone {
+                    if let AppState::DeckSelection {
+                        decks,
+                        workspace_path,
+                        ..
+                    } = &state_clone
+                    {
                         Self::render_deck_selection(ui, decks, selected_index, workspace_path)
                     } else {
                         None
@@ -667,9 +667,9 @@ impl eframe::App for CardBrickApp {
                     });
                     None
                 }
-                _ => None
-            }
-        }).inner;
+                _ => None,
+            })
+            .inner;
 
         // Handle deck loading outside the closure
         if let Some(deck_path) = deck_to_load {
