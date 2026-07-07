@@ -379,13 +379,23 @@ class CardBrickApp:
             self._center(self.font.render(cat_label, True, ACCENT), 150)
             self._center(self.font_small.render(deck_label, True, DIM), 182)
             if startable:
+                # "Last sprint" only makes sense once earlier sprints
+                # happened; an untouched day gets "today" phrasing.
                 n = status["sprints_remaining"]
-                headline = "Last sprint of the day!" if n == 1 else \
-                    f"{n} sprints to go today"
+                if status["cards_done"] == 0:
+                    headline = "Just one sprint today!" if n == 1 else \
+                        f"{n} sprints today"
+                else:
+                    headline = "Last sprint of the day!" if n == 1 else \
+                        f"{n} sprints to go today"
                 self._center(self.font_big.render(headline, True, FG), 215)
-                self._center(self.font.render(
-                    f"{status['cards_done']} / {status['goal_today']} "
-                    f"cards done", True, DIM), 265)
+                progress = (f"{status['cards_done']} / "
+                            f"{status['goal_today']} cards done")
+                if status["goal_today"] < status["goal"]:
+                    # Supply-limited (e.g. a fresh deck paced by
+                    # daily_new_cards): say why the day is short.
+                    progress += " — more unlock tomorrow"
+                self._center(self.font.render(progress, True, DIM), 265)
                 minutes = self.profile["session_time_minutes"]
                 sprint_line = (f"next sprint: "
                                f"{status['next_sprint_cards']} cards"
