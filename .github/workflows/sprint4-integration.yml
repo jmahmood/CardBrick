@@ -184,12 +184,12 @@ jobs:
             --home-dir /var/lib/cardbrick --create-home cardbrick-sync
             
         # Copy Python daemon
-        COPY cardbrick-syncd/ /app/cardbrick-syncd/
-        COPY cardbrick-cli/ /app/cardbrick-cli/
+        COPY cardbrick-syncd/ /app/cardbrick_syncd/
+        COPY cardbrick-cli/ /app/cardbrick_cli/
         
         # Install Python dependencies
-        RUN pip install -r /app/cardbrick-syncd/requirements.txt
-        RUN pip install -r /app/cardbrick-cli/requirements.txt
+        RUN pip install -r /app/cardbrick_syncd/requirements.txt
+        RUN pip install -r /app/cardbrick_cli/requirements.txt
         
         # Set up directories
         RUN mkdir -p /var/lib/cardbrick/{inbox,keys/devices}
@@ -206,11 +206,14 @@ jobs:
         
         # Handheld Dockerfile (Rust client)
         cat > tests/Dockerfile.handheld << 'EOF'
-        FROM rust:1.75-slim
+        FROM rust:slim
         
         # Install system dependencies
         RUN apt-get update && apt-get install -y \
+            build-essential \
+            cmake \
             pkg-config \
+            libasound2-dev \
             libssl-dev \
             curl \
             && rm -rf /var/lib/apt/lists/*
