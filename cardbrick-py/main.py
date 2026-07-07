@@ -93,6 +93,9 @@ def build_parser():
     p_profile.add_argument("--categories",
                            help="Comma-separated active categories, "
                                 "or 'all' for every tag")
+    p_profile.add_argument("--decks",
+                           help="Comma-separated active deck names, "
+                                "or 'all' for every deck")
     p_profile.add_argument("--direction", choices=["normal", "reversed"],
                            help="Card direction")
 
@@ -265,6 +268,13 @@ def _profile_command(storage, args):
         # update_profile serializes lists; None means "all categories"
         storage.update_profile(profile["id"],
                                active_categories=categories)
+    if args.decks:
+        if args.decks.strip().lower() == "all":
+            decks = None
+        else:
+            decks = [d.strip() for d in args.decks.split(",") if d.strip()]
+        # None means "all decks", same convention as active_categories
+        storage.update_profile(profile["id"], active_decks=decks)
     if updates:
         storage.update_profile(profile["id"], **updates)
     profile = storage.get_profile(profile["id"])
@@ -272,6 +282,9 @@ def _profile_command(storage, args):
     tags = storage.all_tags()
     if tags:
         print("Available categories: " + ", ".join(tags))
+    decks = storage.deck_names_list()
+    if decks:
+        print("Available decks: " + ", ".join(decks))
 
 
 def _admin_command(storage, paths, args):

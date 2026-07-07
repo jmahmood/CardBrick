@@ -269,6 +269,7 @@ class CardBrickApp:
             "PARENT_MENU": self.screen_parent_menu,
             "PARENT_IMPORT": self.screen_parent_import,
             "PARENT_CATEGORIES": self.screen_parent_categories,
+            "PARENT_DECKS": self.screen_parent_decks,
             "PARENT_LIMITS": self.screen_parent_limits,
             "PARENT_SUSPENDED": self.screen_parent_suspended,
             "PARENT_PROGRESS": self.screen_parent_progress,
@@ -322,6 +323,9 @@ class CardBrickApp:
         categories = self.profile["active_categories"]
         cat_label = "All categories" if categories is None else \
             ", ".join(categories) if categories else "No categories set"
+        decks = self.profile["active_decks"]
+        deck_label = "All decks" if decks is None else \
+            ", ".join(decks) if decks else "No decks set"
 
         while True:
             action = self.poll()
@@ -338,6 +342,7 @@ class CardBrickApp:
             self._center(self.font_big.render(self.profile["name"], True,
                                               FG), 80)
             self._center(self.font.render(cat_label, True, ACCENT), 150)
+            self._center(self.font_small.render(deck_label, True, DIM), 182)
             if total > 0:
                 due_text = f"{total} cards today"
                 detail = f"{review_n} to review  +  {new_n} new"
@@ -794,6 +799,7 @@ class CardBrickApp:
         direction = self.profile.get("study_direction", "normal")
         entries = [
             ("Import deck (.apkg)", "PARENT_IMPORT"),
+            ("Decks", "PARENT_DECKS"),
             ("Categories", "PARENT_CATEGORIES"),
             ("Daily limits", "PARENT_LIMITS"),
             ("Suspended cards", "PARENT_SUSPENDED"),
@@ -925,19 +931,36 @@ class CardBrickApp:
         self._footer("Bottom = Import   Right = Back")
 
     def screen_parent_categories(self):
-        tags = self.storage.all_tags()
-        active = self.profile["active_categories"]
+        return self._screen_multi_select(
+            title="Categories", subtitle="Choose what the child studies",
+            all_label="[ All categories ]", items=self.storage.all_tags(),
+            profile_field="active_categories",
+            empty_message="No tags found — import a deck first.")
+
+    def screen_parent_decks(self):
+        return self._screen_multi_select(
+            title="Decks", subtitle="Choose which decks the child studies",
+            all_label="[ All decks ]", items=self.storage.deck_names_list(),
+            profile_field="active_decks",
+            empty_message="No decks found — import one first.")
+
+    def _screen_multi_select(self, title, subtitle, all_label, items,
+                             profile_field, empty_message):
+        """Shared toggle-list UI behind Categories and Decks: a
+        "[ All ... ]" entry plus one per item, with the active subset
+        persisted to the profile (None means "all active")."""
+        active = self.profile[profile_field]
         selected = None if active is None else set(active)
         index = 0
-        entries = ["[ All categories ]"] + tags
+        entries = [all_label] + items
         top = 0
         visible = 7
 
         def save():
             self.storage.update_profile(
                 self.profile["id"],
-                active_categories=(None if selected is None
-                                   else sorted(selected)))
+                **{profile_field: (None if selected is None
+                                  else sorted(selected))})
             self._reload_profile()
 
         while True:
@@ -953,19 +976,18 @@ class CardBrickApp:
                 if index == 0:
                     selected = None
                 else:
-                    tag = entries[index]
+                    item = entries[index]
                     if selected is None:
-                        selected = {tag}
-                    elif tag in selected:
-                        selected.discard(tag)
+                        selected = {item}
+                    elif item in selected:
+                        selected.discard(item)
                     else:
-                        selected.add(tag)
+                        selected.add(item)
             top = min(max(top, index - visible + 1), index)
 
             self.screen.fill(BG)
-            self._center(self.font_big.render("Categories", True, FG), 36)
-            self._center(self.font_small.render(
-                "Choose what the child studies", True, DIM), 86)
+            self._center(self.font_big.render(title, True, FG), 36)
+            self._center(self.font_small.render(subtitle, True, DIM), 86)
             y = 120
             for i in range(top, min(top + visible, len(entries))):
                 label = entries[i]
@@ -979,9 +1001,9 @@ class CardBrickApp:
                 self.screen.blit(self.font.render(
                     f"{prefix}{mark} {label}", True, color), (80, y))
                 y += 40
-            if not tags:
-                self._center(self.font.render(
-                    "No tags found — import a deck first.", True, DIM), 200)
+            if not items:
+                self._center(self.font.render(empty_message, True, DIM),
+                            200)
             self._footer("Bottom = Toggle   Right = Save & back")
             self.present()
             self.clock.tick(FPS)

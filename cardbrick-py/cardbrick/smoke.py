@@ -102,12 +102,17 @@ def run_smoke_test(paths):
         if profiles:
             profile = profiles[0]
             cats = profile["active_categories"]
+            decks = profile["active_decks"]
             result.add(PASS, "child profile",
                         f"{profile['name']} "
-                        f"(categories: {'all' if cats is None else cats})")
+                        f"(categories: {'all' if cats is None else cats}; "
+                        f"decks: {'all' if decks is None else decks})")
             if cats == []:
                 result.add(WARN, "active categories",
                             "empty category list — child will see 0 cards")
+            if decks == []:
+                result.add(WARN, "active decks",
+                            "empty deck list — child will see 0 cards")
         else:
             result.add(WARN, "child profile",
                         "none configured yet (created on first run)")

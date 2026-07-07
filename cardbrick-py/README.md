@@ -225,10 +225,23 @@ of updating the old one's progress.
 
 `SELECT` on the start screen. From there: import `.apkg` files found in
 the data folder (or `data/import/`, or the app folder), choose active
-categories (Anki tags) for the child, set daily limits, review/restore
+**decks** (which imported decks the child studies) and active
+**categories** (Anki tags — a second, independent filter; both must
+match for a card to appear), set daily limits, review/restore
 suspended cards, see a 7-day progress table, and flip the study
 direction (front-first / back-first). There is no PIN yet — the flows
 are separated, not locked.
+
+Decks and categories both default to "all" (`None` in the profile) and
+follow the same convention: selecting nothing explicitly means *no*
+cards match, rather than falling back to "everything." Set from the
+CLI too:
+
+```bash
+python main.py profile --decks "Español de México — Vocabulario"
+python main.py profile --decks all           # clear the deck filter
+python main.py profile --categories restaurant,greetings
+```
 
 ### Admin commands (CLI only, destructive)
 

@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS child_profiles (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     name                 TEXT NOT NULL,
     active_categories    TEXT,
+    active_decks         TEXT,
     daily_new_cards      INTEGER NOT NULL DEFAULT 10,
     daily_review_cards   INTEGER NOT NULL DEFAULT 40,
     session_card_limit   INTEGER NOT NULL DEFAULT 50,
@@ -131,6 +132,9 @@ _CARD_UPGRADES = {
 }
 _STATE_UPGRADES = {
     "last_reviewed_at": "TEXT",
+}
+_PROFILE_UPGRADES = {
+    "active_decks": "TEXT",
 }
 
 
@@ -174,6 +178,7 @@ class Storage:
             self._backup(stored)
         self._upgrade_table("cards", _CARD_UPGRADES)
         self._upgrade_table("review_state", _STATE_UPGRADES)
+        self._upgrade_table("child_profiles", _PROFILE_UPGRADES)
         self.conn.executescript(SCHEMA)
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES "
@@ -306,23 +311,33 @@ class Storage:
             tags.update(row["tags"].split())
         return sorted(tags)
 
-    def queue_candidates(self, now_iso, new_cards=False):
+    def queue_candidates(self, now_iso, new_cards=False, decks=None):
         """Cards eligible for the review queue, before tag filtering.
 
         Excludes suspended cards and cards buried until later than now.
         ``new_cards`` selects never-reviewed cards (reps = 0) ordered by
         id; otherwise cards that are due now, most overdue first.
+        ``decks`` of None means every deck; otherwise a list of deck
+        names to restrict to (unlike tags, a card has exactly one deck,
+        so this filters in SQL rather than in Python).
         """
         base = """SELECT c.*, r.due, r.reps, r.lapses,
                          r.state AS fsrs_state, r.fsrs_json
                   FROM cards c JOIN review_state r ON r.card_id = c.id
                   WHERE c.suspended = 0
                     AND (c.buried_until IS NULL OR c.buried_until <= :now)"""
+        if decks is not None and len(decks) == 0:
+            return []  # explicitly "no decks active": nothing is due
+        params = {"now": now_iso}
+        if decks is not None:
+            placeholders = ",".join(f":deck{i}" for i in range(len(decks)))
+            base += f" AND c.deck IN ({placeholders})"
+            params.update({f"deck{i}": name for i, name in enumerate(decks)})
         if new_cards:
             query = base + " AND r.reps = 0 ORDER BY c.id"
         else:
             query = base + " AND r.reps > 0 AND r.due <= :now ORDER BY r.due"
-        return self.conn.execute(query, {"now": now_iso}).fetchall()
+        return self.conn.execute(query, params).fetchall()
 
     def suspended_cards(self):
         return self.conn.execute(
@@ -506,17 +521,16 @@ class Storage:
 
     # -- child profiles ---------------------------------------------------------
 
+    _PROFILE_LIST_FIELDS = ("active_categories", "active_decks")
+
     def create_profile(self, name, **fields):
-        allowed = {"active_categories", "daily_new_cards",
+        allowed = {"active_categories", "active_decks", "daily_new_cards",
                    "daily_review_cards", "session_card_limit",
                    "session_time_minutes", "study_direction"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")
-        if "active_categories" in fields and \
-                fields["active_categories"] is not None:
-            fields["active_categories"] = json.dumps(
-                fields["active_categories"])
+        self._serialize_profile_lists(fields)
         columns = ["name"] + list(fields)
         values = [name] + list(fields.values())
         cur = self.conn.execute(
@@ -526,21 +540,27 @@ class Storage:
         return cur.lastrowid
 
     def update_profile(self, profile_id, **fields):
-        allowed = {"name", "active_categories", "daily_new_cards",
-                   "daily_review_cards", "session_card_limit",
-                   "session_time_minutes", "study_direction"}
+        allowed = {"name", "active_categories", "active_decks",
+                   "daily_new_cards", "daily_review_cards",
+                   "session_card_limit", "session_time_minutes",
+                   "study_direction"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")
-        if "active_categories" in fields and \
-                fields["active_categories"] is not None:
-            fields["active_categories"] = json.dumps(
-                fields["active_categories"])
+        self._serialize_profile_lists(fields)
         sets = ", ".join(f"{k}=?" for k in fields)
         self.conn.execute(
             f"UPDATE child_profiles SET {sets} WHERE id=?",
             list(fields.values()) + [profile_id])
         self.conn.commit()
+
+    @classmethod
+    def _serialize_profile_lists(cls, fields):
+        """None means "everything active" and is stored as NULL; an
+        explicit list (including []) is JSON-encoded in place."""
+        for key in cls._PROFILE_LIST_FIELDS:
+            if key in fields and fields[key] is not None:
+                fields[key] = json.dumps(fields[key])
 
     def get_profile(self, profile_id):
         row = self.conn.execute(
@@ -560,11 +580,12 @@ class Storage:
         profile_id = self.create_profile(name)
         return self.get_profile(profile_id)
 
-    @staticmethod
-    def _profile_dict(row):
+    @classmethod
+    def _profile_dict(cls, row):
         profile = dict(row)
-        raw = profile.get("active_categories")
-        profile["active_categories"] = json.loads(raw) if raw else None
+        for key in cls._PROFILE_LIST_FIELDS:
+            raw = profile.get(key)
+            profile[key] = json.loads(raw) if raw else None
         return profile
 
     # -- legacy prototype queries (main.py review / decks) ------------------------

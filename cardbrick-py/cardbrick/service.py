@@ -71,13 +71,19 @@ class ReviewService:
 
     # -- queue building --------------------------------------------------------
 
-    def get_due_cards(self, profile=None, category_filter=None, limits=None):
+    def get_due_cards(self, profile=None, category_filter=None,
+                      deck_filter=None, limits=None):
         """Build the capped review queue for a study session.
 
         Order: due review cards (most overdue first), then new cards.
         Suspended and buried cards never appear. Daily caps subtract
         work already logged today, so a backlog can never flood a child
         and restarting mid-day continues from where the day left off.
+
+        ``category_filter``/``deck_filter`` of None fall back to the
+        profile's ``active_categories``/``active_decks``; an explicit
+        [] means "none active" (an empty queue), same as the profile
+        field would.
 
         Returns a list of card rows (joined with review state).
         """
@@ -88,6 +94,8 @@ class ReviewService:
                     limits[key] = profile[key]
             if category_filter is None:
                 category_filter = profile.get("active_categories")
+            if deck_filter is None:
+                deck_filter = profile.get("active_decks")
 
         now = self.now()
         new_done, review_done, _ = self.storage.daily_counts(
@@ -97,13 +105,15 @@ class ReviewService:
             limits["daily_review_cards"] - review_done, 0)
 
         queue = []
-        for row in self.storage.queue_candidates(iso(now), new_cards=False):
+        for row in self.storage.queue_candidates(iso(now), new_cards=False,
+                                                 decks=deck_filter):
             if remaining_review <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
                 queue.append(row)
                 remaining_review -= 1
-        for row in self.storage.queue_candidates(iso(now), new_cards=True):
+        for row in self.storage.queue_candidates(iso(now), new_cards=True,
+                                                 decks=deck_filter):
             if remaining_new <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
@@ -113,9 +123,10 @@ class ReviewService:
         return queue[:limits["session_card_limit"]]
 
     def counts_for_queue(self, profile=None, category_filter=None,
-                         limits=None):
+                         deck_filter=None, limits=None):
         """(review, new) counts of what get_due_cards would return."""
-        queue = self.get_due_cards(profile, category_filter, limits)
+        queue = self.get_due_cards(profile, category_filter, deck_filter,
+                                   limits)
         new = sum(1 for row in queue if row["reps"] == 0)
         return len(queue) - new, new
 
