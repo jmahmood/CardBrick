@@ -8,6 +8,7 @@ Usage:
     python main.py review [--deck NAME]     Legacy prototype reviewer
     python main.py decks                    List decks and due counts
     python main.py profile [...]            View/edit the child profile
+    python main.py admin purge-decks [...]  Permanently delete imported decks
 
 Deployment flags (usable with or without a subcommand):
     --smoke-test          Non-interactive sanity check; exit 0 on pass
@@ -20,7 +21,9 @@ Deployment flags (usable with or without a subcommand):
 import argparse
 import json
 import logging
+import shutil
 import sys
+from datetime import datetime
 
 from cardbrick import __version__
 from cardbrick.bootlog import log_environment, setup_logging
@@ -92,6 +95,23 @@ def build_parser():
                                 "or 'all' for every tag")
     p_profile.add_argument("--direction", choices=["normal", "reversed"],
                            help="Card direction")
+
+    p_admin = sub.add_parser(
+        "admin", help="Administrative commands (destructive — use with "
+                      "care)")
+    admin_sub = p_admin.add_subparsers(dest="admin_command")
+
+    p_purge = admin_sub.add_parser(
+        "purge-decks", help="Permanently delete imported decks: cards, "
+                            "review history, and vocab content. Child "
+                            "profiles and settings are untouched.")
+    p_purge.add_argument("--deck", action="append", dest="decks",
+                         metavar="NAME",
+                         help="Deck to purge (repeatable). Omit to purge "
+                              "ALL decks.")
+    p_purge.add_argument("--yes", action="store_true",
+                         help="Skip the confirmation prompt (for "
+                              "scripts/automation)")
     return parser
 
 
@@ -155,6 +175,8 @@ def main(argv=None):
                       f"{row['total']} total")
         elif args.command == "profile":
             _profile_command(storage, args)
+        elif args.command == "admin":
+            return _admin_command(storage, paths, args)
         elif args.command == "review":
             from cardbrick.audio import AudioPlayer
             from cardbrick.ui import ReviewApp
@@ -250,6 +272,68 @@ def _profile_command(storage, args):
     tags = storage.all_tags()
     if tags:
         print("Available categories: " + ", ".join(tags))
+
+
+def _admin_command(storage, paths, args):
+    if args.admin_command == "purge-decks":
+        return _admin_purge_decks(storage, paths, args.decks, args.yes)
+    print("Usage: cardbrick admin purge-decks [--deck NAME ...] [--yes]",
+          file=sys.stderr)
+    return 1
+
+
+def _admin_purge_decks(storage, paths, deck_names, assume_yes):
+    """Permanently delete cards (and their cascading review history) for
+    the given decks, or every deck if none are named. Always backs up
+    the database first and always asks for confirmation unless --yes
+    was passed — this is the one command in the app that discards data
+    the child-facing UI has no way to create a do-over for."""
+    available = storage.deck_names_list()
+    if not available:
+        print("No decks to purge.")
+        return 0
+
+    if deck_names:
+        unknown = [d for d in deck_names if d not in available]
+        if unknown:
+            print(f"Unknown deck(s): {', '.join(unknown)}\n"
+                  f"Available decks: {', '.join(available)}",
+                  file=sys.stderr)
+            return 1
+        target_desc = ", ".join(deck_names)
+    else:
+        deck_names = None  # purge_decks(None) means "every deck"
+        target_desc = f"ALL {len(available)} deck(s): " + \
+            ", ".join(available)
+
+    count = storage.count_cards_in_decks(deck_names)
+    if count == 0:
+        print("Nothing to purge (0 cards match).")
+        return 0
+
+    print(f"This will PERMANENTLY delete {count} card(s) and all their "
+          f"review history from: {target_desc}")
+    print(f"Database: {paths.db_path}")
+    if not assume_yes:
+        answer = input("Type 'yes' to confirm: ").strip().lower()
+        if answer != "yes":
+            print("Aborted — nothing was deleted.")
+            return 1
+
+    backup_path = _backup_database(paths.db_path, "purge")
+    deleted = storage.purge_decks(deck_names)
+    log.warning("admin purge-decks: deleted %d card(s) from %s "
+               "(backup: %s)", deleted, target_desc, backup_path)
+    print(f"Deleted {deleted} card(s).")
+    print(f"Database backed up to:\n  {backup_path}")
+    return 0
+
+
+def _backup_database(db_path, label):
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    backup_path = f"{db_path}.backup-{label}-{stamp}"
+    shutil.copyfile(db_path, backup_path)
+    return backup_path
 
 
 if __name__ == "__main__":

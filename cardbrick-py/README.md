@@ -230,6 +230,24 @@ suspended cards, see a 7-day progress table, and flip the study
 direction (front-first / back-first). There is no PIN yet — the flows
 are separated, not locked.
 
+### Admin commands (CLI only, destructive)
+
+```bash
+python main.py admin purge-decks              # purge every deck
+python main.py admin purge-decks --deck Spanish --deck French
+python main.py admin purge-decks --yes        # skip the confirmation prompt
+```
+
+Permanently deletes cards, their FSRS review state, review log entries,
+and vocab-card content (cascading deletes, scoped to the named decks or
+every deck if `--deck` is omitted). Child profiles and settings are
+untouched. Always backs up the database first, to
+`cardbrick.db.backup-purge-<timestamp>` next to the live database, and
+always asks `Type 'yes' to confirm:` unless `--yes` is passed — there's
+no undo button in the child-facing UI, so this is the one command in
+the app that discards data outright. This is an admin/CLI-only
+operation; it is deliberately not exposed in Parent Mode's on-device UI.
+
 ### Daily limits
 
 Per child profile: `daily_new_cards` (default 10), `daily_review_cards`

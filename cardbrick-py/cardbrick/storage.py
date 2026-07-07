@@ -611,3 +611,42 @@ class Storage:
                FROM cards c JOIN review_state r ON r.card_id = c.id
                GROUP BY c.deck ORDER BY c.deck""",
             (now_iso,)).fetchall()
+
+    # -- admin (destructive) -----------------------------------------------------
+
+    def deck_names_list(self):
+        """Distinct deck names, regardless of due status."""
+        return [row["deck"] for row in self.conn.execute(
+            "SELECT DISTINCT deck FROM cards ORDER BY deck")]
+
+    def count_cards_in_decks(self, deck_names=None):
+        """Card count for the given decks, or every card if None."""
+        if deck_names is None:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM cards").fetchone()["n"]
+        placeholders = ",".join("?" for _ in deck_names)
+        return self.conn.execute(
+            f"SELECT COUNT(*) AS n FROM cards WHERE deck IN ({placeholders})",
+            deck_names).fetchone()["n"]
+
+    def purge_decks(self, deck_names=None):
+        """Permanently delete cards for the given decks (or all decks).
+
+        Relies on ON DELETE CASCADE (foreign_keys=ON, set at connect
+        time) to remove the matching review_state, review_log, and
+        vocab_cards rows along with each card. Child profiles, app
+        settings, and historical session rows are untouched. Returns
+        the number of cards deleted. Callers are responsible for
+        confirmation and backups (see main.py's admin command) —
+        this method does not ask twice.
+        """
+        count = self.count_cards_in_decks(deck_names)
+        if deck_names is None:
+            self.conn.execute("DELETE FROM cards")
+        else:
+            placeholders = ",".join("?" for _ in deck_names)
+            self.conn.execute(
+                f"DELETE FROM cards WHERE deck IN ({placeholders})",
+                deck_names)
+        self.conn.commit()
+        return count
