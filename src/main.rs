@@ -597,11 +597,11 @@ impl CardBrickApp {
                     // Fade-in and timer-driven transition need continuous redraw
                     self.needs_redraw = true;
                 }
-                StudyingScreenMode::SessionComplete => {
-                    // Flash prompt ~2Hz; redraw on boundary to save power
-                    if studying_state.animation_frame_counter % 30 == 0 {
-                        self.needs_redraw = true;
-                    }
+                // Flash prompt ~2Hz; redraw on boundary to save power.
+                StudyingScreenMode::SessionComplete
+                    if studying_state.animation_frame_counter % 30 == 0 =>
+                {
+                    self.needs_redraw = true;
                 }
                 _ => {}
             }
