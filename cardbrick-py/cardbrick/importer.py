@@ -10,6 +10,15 @@ via "Support older Anki versions". The newer `collection.anki21b`
 variant is zstd-compressed and is deliberately not supported, to avoid
 native dependencies.
 
+Anki's default export (that checkbox left unchecked) writes *only*
+`collection.anki21b`, plus a `collection.anki21` that is not the real
+deck at all — it's a one-note placeholder ("Please update to the
+latest Anki version...") included so legacy tools degrade with a
+message instead of silently importing garbage. This importer detects
+that stub (by note count and by its exact text) and raises a clear
+"re-export with the checkbox on" error instead of "successfully"
+importing the placeholder note as if it were the deck.
+
 Note types: cards are reduced to a front/back pair from the note's
 first two fields, honouring the card ordinal so "Basic (and reversed
 card)" produces both directions. Cloze note types are skipped.
@@ -70,27 +79,40 @@ class ImportStats:
         return text
 
 
+_NEW_FORMAT_ERROR = (
+    "This .apkg was exported without 'Support older Anki versions' "
+    "checked, so the real content lives only in Anki's new compressed "
+    "format (collection.anki21b), which this importer cannot read (it "
+    "would need a zstd + protobuf dependency). Any collection.anki21 "
+    "alongside it is just a placeholder Anki includes for older tools — "
+    "not your deck. In Anki desktop: File -> Export -> tick 'Support "
+    "older Anki versions' -> re-export, then import that file instead.")
+
+# Anki's exact placeholder note text when the legacy collection is a
+# compatibility stub, not the real data (case folded for matching).
+_UPGRADE_STUB_MARKER = "update to the latest anki"
+
+
 def import_apkg(apkg_path, storage, scheduler, media_dir):
     """Import an .apkg into storage, copying media into media_dir."""
     stats = ImportStats()
     with zipfile.ZipFile(apkg_path) as zf:
         names = set(zf.namelist())
+        has_new_format = "collection.anki21b" in names
         collection = next(
             (n for n in ("collection.anki21", "collection.anki2")
              if n in names), None)
         if collection is None:
-            if "collection.anki21b" in names:
-                raise ApkgError(
-                    "This .apkg uses the new compressed format. Re-export "
-                    "it from Anki with 'Support older Anki versions' "
-                    "checked.")
+            if has_new_format:
+                raise ApkgError(_NEW_FORMAT_ERROR)
             raise ApkgError("No Anki collection found inside the archive.")
 
         with tempfile.TemporaryDirectory() as tmp:
             col_path = os.path.join(tmp, collection)
             with zf.open(collection) as src, open(col_path, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-            _import_collection(col_path, storage, scheduler, stats)
+            _import_collection(col_path, storage, scheduler, stats,
+                               has_new_format)
 
         stats.media_files = _copy_media(zf, names, media_dir)
 
@@ -98,10 +120,27 @@ def import_apkg(apkg_path, storage, scheduler, media_dir):
     return stats
 
 
-def _import_collection(col_path, storage, scheduler, stats):
+def _is_upgrade_stub(conn, has_new_format):
+    """True if the legacy collection is Anki's placeholder, not real
+    data: a real anki21b sits alongside a suspiciously tiny legacy
+    collection, or the note text is literally Anki's own warning."""
+    total_notes = conn.execute("SELECT COUNT(*) AS n FROM notes").fetchone()[0]
+    if has_new_format and total_notes <= 1:
+        return True
+    for row in conn.execute("SELECT flds FROM notes LIMIT 5"):
+        if _UPGRADE_STUB_MARKER in (row["flds"] or "").lower():
+            return True
+    return False
+
+
+def _import_collection(col_path, storage, scheduler, stats,
+                       has_new_format=False):
     conn = sqlite3.connect(col_path)
     conn.row_factory = sqlite3.Row
     try:
+        if _is_upgrade_stub(conn, has_new_format):
+            raise ApkgError(_NEW_FORMAT_ERROR)
+
         col = conn.execute(
             "SELECT decks, models FROM col LIMIT 1").fetchone()
         decks = _deck_names(conn, col)
