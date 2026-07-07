@@ -384,8 +384,8 @@ class CardBrickApp:
                     f"{n} sprints to go today"
                 self._center(self.font_big.render(headline, True, FG), 215)
                 self._center(self.font.render(
-                    f"{status['cards_done']} / {status['goal']} cards done",
-                    True, DIM), 265)
+                    f"{status['cards_done']} / {status['goal_today']} "
+                    f"cards done", True, DIM), 265)
                 minutes = self.profile["session_time_minutes"]
                 sprint_line = (f"next sprint: "
                                f"{status['next_sprint_cards']} cards"
@@ -396,11 +396,12 @@ class CardBrickApp:
                 self._center(self.font.render(
                     "Press the bottom button to start!", True, GOOD), 360)
             elif bonus:
-                self._center(self.font_big.render("Goal reached! Great job!",
-                                                  True, GOOD), 215)
+                headline = "Goal reached! Great job!" if status["goal_met"] \
+                    else "That's everything for today!"
+                self._center(self.font_big.render(headline, True, GOOD),
+                             215)
                 self._center(self.font.render(
-                    f"{status['cards_done']} cards today — all "
-                    f"{status['sprints_planned']} sprints done", True, DIM),
+                    f"{status['cards_done']} cards done today", True, DIM),
                     265)
                 self._center(self.font_small.render(
                     f"Spare time? A bonus sprint of "
@@ -878,19 +879,18 @@ class CardBrickApp:
             profile=self.profile, deck_filter=self._session_deck_filter)
         more = status["next_sprint_cards"] > 0
         bonus = not more and status["bonus_cards"] > 0
-        goal_met = status["cards_remaining"] == 0
 
-        if goal_met:
-            headline = "Goal reached! Great job!"
-            subtitle = f"{status['cards_done']} CARDS TODAY"
-        elif more:
+        if more:
             n = status["sprints_remaining"]
             headline = "¡Buen trabajo!"
             subtitle = "SPRINT DONE — LAST ONE TO GO" if n == 1 else \
                 f"SPRINT DONE — {n} TO GO TODAY"
+        elif status["goal_met"]:
+            headline = "Goal reached! Great job!"
+            subtitle = f"{status['cards_done']} CARDS TODAY"
         else:
-            headline = "¡Buen trabajo!"
-            subtitle = "SPRINT DONE — NO MORE CARDS TODAY"
+            headline = "That's everything for today!"
+            subtitle = f"{status['cards_done']} CARDS TODAY"
 
         lines = [
             (f"Cards answered:  {s.get('cards_reviewed', 0)}", FG),
@@ -904,8 +904,8 @@ class CardBrickApp:
              else "Pass rate:  —", DIM),
             (f"Time:  {minutes}m {seconds:02d}s" +
              (f"    Avg answer:  {avg / 1000:.1f}s" if avg else ""), DIM),
-            (f"Today:  {status['cards_done']} / {status['goal']} cards",
-             DIM),
+            (f"Today:  {status['cards_done']} / {status['goal_today']} "
+             f"cards", DIM),
         ]
         if s.get("buried_count") or s.get("suspended_count"):
             lines.append((f"Buried {s.get('buried_count', 0)}   "

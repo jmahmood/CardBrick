@@ -79,33 +79,19 @@ class ReviewService:
 
     # -- queue building --------------------------------------------------------
 
-    def get_due_cards(self, profile=None, category_filter=None,
-                      deck_filter=None, limits=None, bonus=False):
-        """Build the queue for one sprint.
+    def _sprint_pool(self, profile=None, category_filter=None,
+                     deck_filter=None, limits=None, bonus=False):
+        """Everything today's sprints could still draw on, due-first.
 
-        The day is a card goal (``daily_goal_cards`` distinct cards) chipped
-        away in short sprints; each call returns the next sprint's
-        worth, at most ``session_card_limit`` cards and never more than
-        what's left of the goal. Order: due review cards (most overdue
-        first), then new cards (paced by ``daily_new_cards``), then —
-        when those can't fill the sprint — soon-due cards pulled
-        forward ("studying ahead", within ``study_ahead_days``), so a
-        child with spare time never hits a dead end mid-goal. Suspended
-        and buried cards never appear. All budgets subtract work
-        already logged today, so restarting mid-day continues from
-        where the day left off.
+        Order: due review cards (most overdue first), then new cards
+        (paced by ``daily_new_cards``; uncapped for a bonus sprint —
+        the one place a keen child may pull extra new material), then
+        soon-due cards pulled forward ("studying ahead", within
+        ``study_ahead_days``). Suspended and buried cards never appear.
 
-        ``bonus=True`` ignores the goal budget: used for the optional
-        bonus sprint offered after the goal is met. It's an offer, not
-        an obligation — nothing in the queue math ever *requires* more
-        studying.
-
-        ``category_filter``/``deck_filter`` of None fall back to the
-        profile's ``active_categories``/``active_decks``; an explicit
-        [] means "none active" (an empty queue), same as the profile
-        field would.
-
-        Returns a list of card rows (joined with review state).
+        Returns (pool, limits, answered_today, cards_done) so callers
+        can budget the pool and tell fresh cards — which still advance
+        the distinct-card goal — from repeats already counted today.
         """
         limits = dict(DEFAULT_LIMITS, **(limits or {}))
         if profile:
@@ -120,37 +106,67 @@ class ReviewService:
         now = self.now()
         day_start = iso(local_day_start(now))
         new_done, review_done, _ = self.storage.daily_counts(day_start)
-        cards_done = new_done + review_done  # distinct cards, not answers
-        remaining_new = max(limits["daily_new_cards"] - new_done, 0)
-        goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
-        budget = limits["session_card_limit"] if bonus \
-            else min(goal_left, limits["session_card_limit"])
+        answered = self.storage.cards_answered_since(day_start)
+        remaining_new = None if bonus \
+            else max(limits["daily_new_cards"] - new_done, 0)
 
-        queue = []
+        pool = []
         for row in self.storage.queue_candidates(iso(now), new_cards=False,
                                                  decks=deck_filter):
-            if len(queue) >= budget:
-                break
             if card_matches_categories(row["tags"], category_filter):
-                queue.append(row)
+                pool.append(row)
         for row in self.storage.queue_candidates(iso(now), new_cards=True,
                                                  decks=deck_filter):
-            if remaining_new <= 0 or len(queue) >= budget:
+            if remaining_new is not None and remaining_new <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
-                queue.append(row)
-                remaining_new -= 1
-        if limits["study_ahead_enabled"] and len(queue) < budget:
+                pool.append(row)
+                if remaining_new is not None:
+                    remaining_new -= 1
+        if limits["study_ahead_enabled"]:
             horizon = next_local_midnight(now) + timedelta(
                 days=limits["study_ahead_days"])
             for row in self.storage.ahead_candidates(iso(now), iso(horizon),
                                                      decks=deck_filter):
-                if len(queue) >= budget:
-                    break
                 if card_matches_categories(row["tags"], category_filter):
-                    queue.append(row)
+                    pool.append(row)
 
-        return queue
+        return pool, limits, answered, new_done + review_done
+
+    def get_due_cards(self, profile=None, category_filter=None,
+                      deck_filter=None, limits=None, bonus=False):
+        """Build the queue for one sprint.
+
+        The day is a card goal (``daily_goal_cards`` distinct cards)
+        chipped away in short sprints; each call returns the next
+        sprint's worth, at most ``session_card_limit`` cards and never
+        more than what's left of the goal. Once nothing in the pool can
+        still advance the goal (every remaining card was already
+        answered today), the day is done and the queue is empty. All
+        budgets subtract work already logged today, so restarting
+        mid-day continues from where the day left off.
+
+        ``bonus=True`` ignores the goal budget and the daily new-card
+        cap: used for the optional bonus sprint offered once the day is
+        done. It's an offer, not an obligation — nothing in the queue
+        math ever *requires* more studying.
+
+        ``category_filter``/``deck_filter`` of None fall back to the
+        profile's ``active_categories``/``active_decks``; an explicit
+        [] means "none active" (an empty queue), same as the profile
+        field would.
+
+        Returns a list of card rows (joined with review state).
+        """
+        pool, limits, answered, cards_done = self._sprint_pool(
+            profile, category_filter, deck_filter, limits, bonus=bonus)
+        if bonus:
+            return pool[:limits["session_card_limit"]]
+        goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
+        fresh = sum(1 for row in pool if row["id"] not in answered)
+        if min(goal_left, fresh) == 0:
+            return []  # day done: goal met or nothing can advance it
+        return pool[:min(goal_left, limits["session_card_limit"])]
 
     def counts_for_queue(self, profile=None, category_filter=None,
                          deck_filter=None, limits=None, bonus=False):
@@ -171,32 +187,36 @@ class ReviewService:
         Everything is derived from the review log, so the numbers
         survive restarts, crashes, and undo.
 
+        The plan never promises more than the day can actually supply:
+        with a freshly imported deck only ``daily_new_cards`` cards
+        exist today, so ``goal_today`` is 10, not 150 — the child sees
+        an honest, finishable day, never a goal they cannot reach.
+
         Returns a dict:
             cards_done         distinct cards answered today (a card
                                repeating a learning step counts once)
-            goal               daily_goal_cards in effect
-            cards_remaining    what's left of the goal
-            sprints_planned    ceil(goal / sprint size)
+            goal               daily_goal_cards as configured
+            goal_today         what today can actually reach:
+                               cards_done + min(goal left, fresh cards
+                               still available)
+            goal_met           cards_done >= the configured goal
+            cards_remaining    what's left of goal_today
+            sprints_planned    ceil(goal_today / sprint size)
             sprints_remaining  ceil(cards_remaining / sprint size)
             next_sprint_cards  size of the queue the next sprint gets
-            bonus_cards        when nothing is queued: size of the
-                               optional goal-ignoring bonus sprint
-                               (0 otherwise)
+            bonus_cards        when the day is done: size of the
+                               optional bonus sprint (0 otherwise)
         """
-        limits = dict(DEFAULT_LIMITS, **(limits or {}))
-        if profile:
-            for key in DEFAULT_LIMITS:
-                if profile.get(key) is not None:
-                    limits[key] = profile[key]
-        now = self.now()
-        new_done, review_done, _ = self.storage.daily_counts(
-            iso(local_day_start(now)))
-        done = new_done + review_done
+        pool, limits, answered, done = self._sprint_pool(
+            profile, category_filter, deck_filter, limits)
         goal = limits["daily_goal_cards"]
         sprint_size = max(limits["session_card_limit"], 1)
-        remaining = max(goal - done, 0)
-        next_sprint = len(self.get_due_cards(profile, category_filter,
-                                             deck_filter, limits))
+        goal_left = max(goal - done, 0)
+        fresh = sum(1 for row in pool if row["id"] not in answered)
+        remaining = min(goal_left, fresh)
+        goal_today = done + remaining
+        next_sprint = 0 if remaining == 0 \
+            else min(len(pool), goal_left, sprint_size)
         bonus = 0
         if next_sprint == 0:
             bonus = len(self.get_due_cards(profile, category_filter,
@@ -204,8 +224,10 @@ class ReviewService:
         return {
             "cards_done": done,
             "goal": goal,
+            "goal_today": goal_today,
+            "goal_met": done >= goal,
             "cards_remaining": remaining,
-            "sprints_planned": -(-goal // sprint_size),
+            "sprints_planned": -(-goal_today // sprint_size),
             "sprints_remaining": -(-remaining // sprint_size),
             "next_sprint_cards": next_sprint,
             "bonus_cards": bonus,

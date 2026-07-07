@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -192,6 +192,22 @@ class Storage:
                 """UPDATE child_profiles
                    SET daily_goal_cards = daily_new_cards +
                                           daily_review_cards""")
+        has_profiles = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND "
+            "name='child_profiles'").fetchone() is not None
+        if has_profiles and needs_upgrade and (stored is None or
+                                               stored < 6):
+            # v5 changed session_card_limit/session_time_minutes from
+            # "one sitting" to "one sprint" but left the old sitting-
+            # sized defaults (50 cards / 15 min) in place, so a whole
+            # day fit in a single sprint. Re-baseline profiles still on
+            # those defaults to sprint scale; custom values are kept.
+            self.conn.execute(
+                """UPDATE child_profiles SET session_card_limit = 20
+                   WHERE session_card_limit = 50""")
+            self.conn.execute(
+                """UPDATE child_profiles SET session_time_minutes = 10
+                   WHERE session_time_minutes = 15""")
         self.conn.executescript(SCHEMA)
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES "
@@ -471,6 +487,17 @@ class Storage:
                WHERE undone = 0 AND reviewed_at >= ?""",
             (day_start_iso,))}
         return len(new_ids), len(all_ids - new_ids), new_ids
+
+    def cards_answered_since(self, day_start_iso):
+        """Set of card ids with a not-undone answer since day start.
+
+        Used to tell "fresh" cards (which still advance the distinct-
+        card daily goal) from repeats of cards already counted today.
+        """
+        return {row["card_id"] for row in self.conn.execute(
+            """SELECT DISTINCT card_id FROM review_log
+               WHERE undone = 0 AND reviewed_at >= ?""",
+            (day_start_iso,))}
 
     def daily_history(self, since_iso):
         """Raw (reviewed_at, was_new, card_id) tuples for progress views."""

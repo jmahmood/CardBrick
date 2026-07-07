@@ -33,15 +33,17 @@ def _ids(queue):
 
 
 def test_sprint_status_derives_counts_from_the_log(storage, service, clock):
-    for i in range(1, 7):
-        seed_card(storage, service, i)
-    limits = _limits(daily_goal_cards=40, daily_new_cards=6,
+    long_ago = clock.now() - timedelta(days=10)
+    for i in range(1, 46):
+        seed_card(storage, service, i, reps=2, due=long_ago)
+    limits = _limits(daily_goal_cards=40, daily_new_cards=0,
                      session_card_limit=10, study_ahead_enabled=0)
     status = service.sprint_status(limits=limits)
     assert status["cards_done"] == 0
+    assert status["goal_today"] == 40
     assert status["sprints_planned"] == 4
     assert status["sprints_remaining"] == 4
-    assert status["next_sprint_cards"] == 6
+    assert status["next_sprint_cards"] == 10
 
     for card_id in (1, 2, 3):
         service.answer_card(card_id, 4)
@@ -49,6 +51,55 @@ def test_sprint_status_derives_counts_from_the_log(storage, service, clock):
     assert status["cards_done"] == 3
     assert status["cards_remaining"] == 37
     assert status["sprints_remaining"] == 4  # ceil(37 / 10)
+
+
+def test_plan_never_promises_more_than_the_day_can_supply(storage, service,
+                                                          clock):
+    # A freshly imported deck has no reviews due, so the day holds only
+    # daily_new_cards cards — the plan says "1 sprint, 10 cards", not
+    # an unreachable "0 / 50".
+    for i in range(1, 101):
+        seed_card(storage, service, i)
+    limits = _limits(daily_goal_cards=50, daily_new_cards=10,
+                     session_card_limit=20)
+    status = service.sprint_status(limits=limits)
+    assert status["goal_today"] == 10
+    assert status["sprints_planned"] == 1
+    assert status["sprints_remaining"] == 1
+    assert status["next_sprint_cards"] == 10
+
+
+def test_bonus_sprint_can_pull_extra_new_cards(storage, service, clock):
+    # Day one of a fresh deck: after the paced 10 new cards the day is
+    # done, but a keen child can keep going — bonus sprints ignore the
+    # new-card cap (one optional sprint at a time).
+    for i in range(1, 101):
+        seed_card(storage, service, i)
+    limits = _limits(daily_goal_cards=50, daily_new_cards=10,
+                     session_card_limit=20)
+    for row in service.get_due_cards(limits=limits):
+        service.answer_card(row["id"], 4)
+    status = service.sprint_status(limits=limits)
+    assert status["next_sprint_cards"] == 0
+    assert not status["goal_met"]
+    assert status["bonus_cards"] == 20  # a full sprint of extra new cards
+    queue = service.get_due_cards(limits=limits, bonus=True)
+    assert len(queue) == 20
+    assert all(row["reps"] == 0 for row in queue)
+
+
+def test_repeats_do_not_stall_the_day(storage, service, clock):
+    # Cards already answered today can't advance the distinct-card
+    # goal, so once only repeats remain the day completes instead of
+    # showing "sprints to go" forever.
+    seed_card(storage, service, 1)
+    seed_card(storage, service, 2)
+    limits = _limits(daily_goal_cards=5, daily_new_cards=5)
+    service.answer_card(1, 3)  # Good: learning step, due again soon —
+    service.answer_card(2, 3)  # squarely inside the study-ahead horizon
+    status = service.sprint_status(limits=limits)
+    assert status["cards_remaining"] == 0
+    assert status["next_sprint_cards"] == 0  # done, not stuck
 
 
 def test_going_ahead_decrements_sprints_remaining(storage, service, clock):
@@ -256,10 +307,10 @@ def test_day_rolls_over_clean_after_going_ahead(storage, service, clock):
     seed_card(storage, service, 1)
     limits = _limits(daily_goal_cards=1, daily_new_cards=1,
                      study_ahead_enabled=0)
-    service.answer_card(1, 4)
+    service.answer_card(1, 3)  # Good: due again within the hour
     assert service.sprint_status(limits=limits)["cards_remaining"] == 0
 
-    clock.advance(days=1)
+    clock.advance(days=1)  # the card is due again, and it's a new day
     status = service.sprint_status(limits=limits)
     assert status["cards_done"] == 0  # yesterday's work stays yesterday's
     assert status["cards_remaining"] == 1
@@ -270,8 +321,10 @@ def test_day_rolls_over_clean_after_going_ahead(storage, service, clock):
 
 def test_migration_seeds_goal_from_old_caps(tmp_path):
     # A schema-v4 database (pre-goal): opening it must add the new
-    # columns and seed daily_goal_cards from the old review+new caps so
-    # nobody's day suddenly triples.
+    # columns, seed daily_goal_cards from the old review+new caps so
+    # nobody's day suddenly triples, and re-baseline sitting-sized
+    # session limits (the old 50-card/15-min defaults) to sprint scale
+    # — while leaving deliberately customised limits alone.
     db_path = str(tmp_path / "old.db")
     conn = sqlite3.connect(db_path)
     conn.executescript("""
@@ -295,17 +348,48 @@ def test_migration_seeds_goal_from_old_caps(tmp_path):
         INSERT INTO child_profiles (name, daily_new_cards,
                                     daily_review_cards)
         VALUES ('Maya', 5, 30);
+        INSERT INTO child_profiles (name, session_card_limit,
+                                    session_time_minutes)
+        VALUES ('Leo', 30, 8);
     """)
     conn.commit()
     conn.close()
 
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 5
-        maya = storage.list_profiles()[0]
+        assert storage.schema_version() == 6
+        maya, leo = storage.list_profiles()
         assert maya["daily_goal_cards"] == 35  # 5 new + 30 review
         assert maya["study_ahead_days"] == 1
         assert maya["study_ahead_enabled"] == 1
+        assert maya["session_card_limit"] == 20   # old default, rebased
+        assert maya["session_time_minutes"] == 10
+        assert leo["session_card_limit"] == 30    # custom values kept
+        assert leo["session_time_minutes"] == 8
+    finally:
+        storage.close()
+
+
+def test_v5_databases_get_sprint_sized_limits(tmp_path):
+    # A database that already ran the v5 migration kept the old
+    # sitting-sized 50/15 limits, which made the whole day one sprint;
+    # v6 re-baselines those too.
+    db_path = str(tmp_path / "v5.db")
+    storage = Storage(db_path)
+    profile = storage.ensure_default_profile("Student")
+    storage.update_profile(profile["id"], session_card_limit=50,
+                           session_time_minutes=15)
+    storage.conn.execute(
+        "UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+    storage.commit()
+    storage.close()
+
+    storage = Storage(db_path)
+    try:
+        assert storage.schema_version() == 6
+        student = storage.list_profiles()[0]
+        assert student["session_card_limit"] == 20
+        assert student["session_time_minutes"] == 10
     finally:
         storage.close()
 

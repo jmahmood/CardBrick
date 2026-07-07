@@ -302,10 +302,15 @@ the same as spacing them out; the schedule is the child's own and
 nothing nags. `daily_new_cards` (default 10) still paces how fast new
 material enters FSRS.
 
+The plan never promises more than the day can supply: a freshly
+imported deck has no reviews due, so day one honestly reads "1 sprint,
+10 cards" (the `daily_new_cards` pacing), not an unreachable goal.
 When today's due cards run out before the goal, sprints top up with
 soon-due cards pulled forward (`study_ahead_days`, default 1 — safe
 under FSRS, an early review just earns a smaller stability gain), and
-after the goal is met an optional bonus sprint is offered. Set
+once the day is done an optional bonus sprint is offered; bonus
+sprints may also pull extra new cards beyond the daily pacing, one
+sprint at a time, so a keen child never hits a dead end. Set
 `study_ahead_enabled` to 0 to end the day when the due pool is empty
 instead. All counters are derived from the review log, so they survive
 restarts and undo; a backlog never floods the child — extra due cards
