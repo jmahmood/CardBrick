@@ -277,17 +277,27 @@ month, **SELECT** exits. Stamps are per-profile.
 python main.py admin purge-decks              # purge every deck
 python main.py admin purge-decks --deck Spanish --deck French
 python main.py admin purge-decks --yes        # skip the confirmation prompt
+python main.py admin reset                    # wipe ALL study context
 ```
 
-Permanently deletes cards, their FSRS review state, review log entries,
-and vocab-card content (cascading deletes, scoped to the named decks or
-every deck if `--deck` is omitted). Child profiles and settings are
-untouched. Always backs up the database first, to
-`cardbrick.db.backup-purge-<timestamp>` next to the live database, and
-always asks `Type 'yes' to confirm:` unless `--yes` is passed — there's
-no undo button in the child-facing UI, so this is the one command in
-the app that discards data outright. This is an admin/CLI-only
-operation; it is deliberately not exposed in Parent Mode's on-device UI.
+`purge-decks` permanently deletes cards, their FSRS review state,
+review log entries, and vocab-card content (cascading deletes, scoped
+to the named decks or every deck if `--deck` is omitted). Child
+profiles and settings are untouched.
+
+`reset` goes further — a true clean slate: it deletes the whole
+database (decks, review history, sessions, child profiles) and all
+imported media, so the next start behaves like a first install with a
+fresh default profile. Display settings and controller calibration
+(`settings.json` / `input_mapping.json`) are kept — they're device
+facts, not study context.
+
+Both commands always back up the database first, to
+`cardbrick.db.backup-<label>-<timestamp>` next to the live database,
+and always ask `Type 'yes' to confirm:` unless `--yes` is passed —
+there's no undo button in the child-facing UI, so these are the only
+commands in the app that discard data outright. They are admin/CLI
+only; deliberately not exposed in Parent Mode's on-device UI.
 
 ### Daily goal & sprints (microstudying)
 

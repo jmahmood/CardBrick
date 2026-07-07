@@ -9,6 +9,9 @@ Usage:
     python main.py decks                    List decks and due counts
     python main.py profile [...]            View/edit the child profile
     python main.py admin purge-decks [...]  Permanently delete imported decks
+    python main.py admin reset [--yes]      Wipe ALL study context (decks,
+                                            progress, profiles, media) for
+                                            a from-scratch start
 
 Deployment flags (usable with or without a subcommand):
     --smoke-test          Non-interactive sanity check; exit 0 on pass
@@ -21,6 +24,7 @@ Deployment flags (usable with or without a subcommand):
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -122,6 +126,16 @@ def build_parser():
                          help="Deck to purge (repeatable). Omit to purge "
                               "ALL decks.")
     p_purge.add_argument("--yes", action="store_true",
+                         help="Skip the confirmation prompt (for "
+                              "scripts/automation)")
+
+    p_reset = admin_sub.add_parser(
+        "reset", help="Start from a clean slate: delete the whole "
+                      "database (decks, review history, sessions, "
+                      "profiles) and imported media. Device settings "
+                      "and controller calibration are kept. The "
+                      "database is backed up first.")
+    p_reset.add_argument("--yes", action="store_true",
                          help="Skip the confirmation prompt (for "
                               "scripts/automation)")
     return parser
@@ -304,7 +318,10 @@ def _profile_command(storage, args):
 def _admin_command(storage, paths, args):
     if args.admin_command == "purge-decks":
         return _admin_purge_decks(storage, paths, args.decks, args.yes)
-    print("Usage: cardbrick admin purge-decks [--deck NAME ...] [--yes]",
+    if args.admin_command == "reset":
+        return _admin_reset(storage, paths, args.yes)
+    print("Usage: cardbrick admin purge-decks [--deck NAME ...] [--yes]\n"
+          "       cardbrick admin reset [--yes]",
           file=sys.stderr)
     return 1
 
@@ -353,6 +370,56 @@ def _admin_purge_decks(storage, paths, deck_names, assume_yes):
                "(backup: %s)", deleted, target_desc, backup_path)
     print(f"Deleted {deleted} card(s).")
     print(f"Database backed up to:\n  {backup_path}")
+    return 0
+
+
+def _admin_reset(storage, paths, assume_yes):
+    """Wipe all study context for a from-scratch start.
+
+    Deletes the database (decks, review history, sessions, profiles)
+    after backing it up, and removes imported media. settings.json and
+    input_mapping.json survive — display and controller calibration are
+    device facts, not study context, and redoing the on-device
+    controller setup for every reset would be pointless friction. The
+    next app start recreates an empty database with a default profile.
+    """
+    print("This will PERMANENTLY delete ALL study context:")
+    print(f"  - decks, review history, sessions, and child profiles:\n"
+          f"      {paths.db_path}")
+    print(f"  - imported media:\n      {paths.media_dir}")
+    print("Device settings and controller calibration are kept.")
+    if not assume_yes:
+        answer = input("Type 'yes' to confirm: ").strip().lower()
+        if answer != "yes":
+            print("Aborted — nothing was deleted.")
+            return 1
+
+    storage.close()  # release the file before touching it
+    backup_path = None
+    if os.path.exists(paths.db_path):
+        backup_path = _backup_database(paths.db_path, "reset")
+        os.remove(paths.db_path)
+    for suffix in ("-wal", "-shm"):  # stale WAL pages must not survive
+        leftover = paths.db_path + suffix
+        if os.path.exists(leftover):
+            os.remove(leftover)
+
+    media_files = 0
+    if os.path.isdir(paths.media_dir):
+        for name in os.listdir(paths.media_dir):
+            path = os.path.join(paths.media_dir, name)
+            if os.path.isfile(path):
+                os.remove(path)
+                media_files += 1
+
+    log.warning("admin reset: database deleted (backup: %s), %d media "
+                "file(s) removed", backup_path, media_files)
+    print("Clean slate ready.")
+    if backup_path:
+        print(f"Database backed up to:\n  {backup_path}")
+    print(f"Removed {media_files} media file(s).")
+    print("The next start creates a fresh database and default profile; "
+          "re-import decks with: python main.py import <file.apkg>")
     return 0
 
 
