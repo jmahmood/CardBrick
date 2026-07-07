@@ -1068,10 +1068,13 @@ class CardBrickApp:
             ("Back to study", "CHILD_START"),
         ]
         index = 0
+        top = 0
         notice = None
         if self._card_count() == 0:
             notice = "No decks yet — copy an .apkg to the data folder " \
                      "and use Import."
+        # Leave room for the notice lines under the list when it shows.
+        visible = 6 if notice else 7
         while True:
             action = self.poll()
             if action in ("start", "east_button", "select"):
@@ -1091,13 +1094,15 @@ class CardBrickApp:
                 if target == "CALENDAR":
                     self._calendar_return = "PARENT_MENU"
                 return target
+            top = min(max(top, index - visible + 1), index)
 
             self.screen.fill(BG)
             self._center(self.font_big.render("Parent Mode", True, FG), 40)
             self._center(self.font_small.render(
                 f"Profile: {self.profile['name']}", True, DIM), 90)
             y = 124
-            for i, (label, _) in enumerate(entries):
+            for i in range(top, min(top + visible, len(entries))):
+                label = entries[i][0]
                 color = ACCENT if i == index else FG
                 prefix = "> " if i == index else "   "
                 self.screen.blit(self.font.render(prefix + label, True,
