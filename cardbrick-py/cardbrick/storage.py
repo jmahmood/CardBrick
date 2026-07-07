@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -38,7 +38,25 @@ CREATE TABLE IF NOT EXISTS cards (
     suspended      INTEGER NOT NULL DEFAULT 0,
     buried_until   TEXT,
     created_at     TEXT,
-    updated_at     TEXT
+    updated_at     TEXT,
+    card_type      TEXT NOT NULL DEFAULT 'basic'
+);
+
+-- One row per 'vocab' card_type card: the four-phase word/example/image/
+-- definition layout (see cardbrick/vocab_card.py). Untouched for 'basic'
+-- cards, which use only front/back/audio_filename above.
+CREATE TABLE IF NOT EXISTS vocab_cards (
+    card_id         INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    word            TEXT NOT NULL,
+    word_jp         TEXT,
+    gendered_forms  TEXT,
+    definitions     TEXT,
+    image_filename  TEXT,
+    example_es      TEXT,
+    example_audio   TEXT,
+    example_en      TEXT,
+    example_jp      TEXT,
+    report_link     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS review_state (
@@ -109,6 +127,7 @@ _CARD_UPGRADES = {
     "buried_until": "TEXT",
     "created_at": "TEXT",
     "updated_at": "TEXT",
+    "card_type": "TEXT NOT NULL DEFAULT 'basic'",
 }
 _STATE_UPGRADES = {
     "last_reviewed_at": "TEXT",
@@ -200,20 +219,57 @@ class Storage:
     # -- import-side writes -------------------------------------------------
 
     def upsert_card(self, card_id, note_id, deck, front, back, tags,
-                    audio_filename=None, audio_side=None, now_iso=None):
+                    audio_filename=None, audio_side=None, now_iso=None,
+                    card_type="basic"):
         self.conn.execute(
             """INSERT INTO cards (id, note_id, deck, front, back, tags,
                                   audio_filename, audio_side,
-                                  created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  created_at, updated_at, card_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    note_id=excluded.note_id, deck=excluded.deck,
                    front=excluded.front, back=excluded.back,
                    tags=excluded.tags, audio_filename=excluded.audio_filename,
                    audio_side=excluded.audio_side,
-                   updated_at=excluded.updated_at""",
+                   updated_at=excluded.updated_at,
+                   card_type=excluded.card_type""",
             (card_id, note_id, deck, front, back, tags,
-             audio_filename, audio_side, now_iso, now_iso))
+             audio_filename, audio_side, now_iso, now_iso, card_type))
+
+    def upsert_vocab_card(self, card_id, word, word_jp, gendered_forms,
+                          definitions, image_filename, example_es,
+                          example_audio, example_en, example_jp,
+                          report_link):
+        """Insert or refresh the phase-content row for a 'vocab' card.
+
+        Re-importing updates the displayed content only; review_state
+        (FSRS progress) is untouched, same guarantee as basic cards.
+        """
+        self.conn.execute(
+            """INSERT INTO vocab_cards
+               (card_id, word, word_jp, gendered_forms, definitions,
+                image_filename, example_es, example_audio, example_en,
+                example_jp, report_link)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(card_id) DO UPDATE SET
+                   word=excluded.word, word_jp=excluded.word_jp,
+                   gendered_forms=excluded.gendered_forms,
+                   definitions=excluded.definitions,
+                   image_filename=excluded.image_filename,
+                   example_es=excluded.example_es,
+                   example_audio=excluded.example_audio,
+                   example_en=excluded.example_en,
+                   example_jp=excluded.example_jp,
+                   report_link=excluded.report_link""",
+            (card_id, word, word_jp, gendered_forms, definitions,
+             image_filename, example_es, example_audio, example_en,
+             example_jp, report_link))
+
+    def get_vocab_detail(self, card_id):
+        """The phase-content row for a 'vocab' card, or None."""
+        return self.conn.execute(
+            "SELECT * FROM vocab_cards WHERE card_id = ?",
+            (card_id,)).fetchone()
 
     def init_review_state(self, state):
         """Insert initial FSRS state for a card, unless one already exists.

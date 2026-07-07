@@ -144,6 +144,7 @@ class CardBrickApp:
         self.initial_state = initial_state
 
         self.input_map = InputMap(paths.input_map_path if paths else None)
+        self._image_cache = {}  # vocab card images, decoded once per file
         self.input = InputTranslator(self.input_map)
 
         pygame.init()
@@ -366,6 +367,12 @@ class CardBrickApp:
                     "Suspend card (parent will check)", "End session",
                     "Cancel")
 
+    # Four-phase vocab cards (word -> example -> image -> definition):
+    # the phase reached when "I know this" is pressed *is* the rating.
+    # No separate Again/Hard/Good/Easy buttons for these cards.
+    VOCAB_MAX_PHASE = 3
+    VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
+
     def screen_review(self):
         session = StudySession(self.storage, self.service, self.profile)
         log.info("session %d started: %d cards queued",
@@ -384,11 +391,24 @@ class CardBrickApp:
         auto_play = bool(self.settings.get("auto_play_audio", True))
 
         flipped = False
+        phase = 0            # vocab cards only: 0..VOCAB_MAX_PHASE
+        vocab_detail = None  # vocab cards only: the vocab_cards row
         shown_at = None
         audio_status = None
         menu = None  # action-menu overlay index, or None when closed
         needs_draw = True
         heartbeat = 0
+
+        def play_vocab():
+            """Replay whatever audio belongs to the current phase: the
+            word at phase 0, the example sentence from phase 1 on."""
+            nonlocal audio_status
+            filename = card["audio_filename"] if phase == 0 else (
+                vocab_detail["example_audio"] if vocab_detail else None)
+            if not filename:
+                return
+            audio_status = "playing" if self.audio.play(filename) \
+                else "missing"
 
         def audio_for(card, side):
             """Audio filename if the card's audio belongs on this side
@@ -410,15 +430,19 @@ class CardBrickApp:
                 else "missing"
 
         def begin_card(card):
-            nonlocal flipped, shown_at, audio_status
+            nonlocal flipped, phase, vocab_detail, shown_at, audio_status
             flipped = False
+            phase = 0
+            vocab_detail = self.storage.get_vocab_detail(card["id"]) \
+                if card["card_type"] == "vocab" else None
             shown_at = self.service.now()
             audio_status = None
             if card["audio_filename"] and not self.audio.available(
                     card["audio_filename"]):
                 audio_status = "missing"
             if auto_play:
-                play(card, "front")
+                play_vocab() if vocab_detail is not None else \
+                    play(card, "front")
 
         def advance():
             """Fetch the next card after the current one was consumed.
@@ -477,12 +501,32 @@ class CardBrickApp:
             elif action == "select":
                 menu = 0
             elif action == "l1":
-                play(card, "back" if flipped else "front", forced=True)
+                if vocab_detail is not None:
+                    play_vocab()
+                else:
+                    play(card, "back" if flipped else "front", forced=True)
             elif action == "undo":
                 restored = session.undo()
                 if restored is not None:
                     card = restored
                     begin_card(card)
+            elif vocab_detail is not None:
+                if action in DPAD:
+                    if phase < self.VOCAB_MAX_PHASE:
+                        phase += 1
+                        if auto_play:
+                            play_vocab()
+                elif action == "south_button":
+                    elapsed = int((self.service.now() -
+                                   shown_at).total_seconds() * 1000)
+                    session.answer(self.VOCAB_PHASE_RATING[phase],
+                                   elapsed_ms=elapsed)
+                    advance()
+                    continue
+                elif action == "r1":
+                    session.bury_current()
+                    advance()
+                    continue
             elif not flipped:
                 if action in DPAD or action in ("south_button", "unmapped"):
                     flipped = True
@@ -505,17 +549,14 @@ class CardBrickApp:
             heartbeat += 1
             if needs_draw or heartbeat >= FPS:
                 self._draw_review(session, card, flipped, audio_status,
-                                  menu)
+                                  menu, phase=phase, vocab=vocab_detail)
                 needs_draw = False
                 heartbeat = 0
             self.clock.tick(FPS)
 
-    def _draw_review(self, session, card, flipped, audio_status, menu):
+    def _draw_review(self, session, card, flipped, audio_status, menu,
+                     phase=0, vocab=None):
         self.screen.fill(BG)
-        reversed_mode = self.profile.get("study_direction") == "reversed"
-        front, back = (card["back"], card["front"]) if reversed_mode \
-            else (card["front"], card["back"])
-
         header = card["deck"]
         if card["tags"]:
             header += "  ·  " + " ".join(card["tags"].split()[:3])
@@ -524,6 +565,26 @@ class CardBrickApp:
         surf = self.font_small.render(left, True, DIM)
         self.screen.blit(surf, (self.w - surf.get_width() - 16, 12))
         pygame.draw.line(self.screen, DIVIDER, (16, 40), (self.w - 16, 40))
+
+        if vocab is not None:
+            self._draw_vocab_phases(card, vocab, phase, audio_status,
+                                    top=60)
+            if phase < self.VOCAB_MAX_PHASE:
+                self._footer("D-pad = Reveal more   Bottom = I know this",
+                             "L1 = Replay audio   R1 = Bury   "
+                             "SELECT = Menu")
+            else:
+                self._footer("Bottom = I know this",
+                             "L1 = Replay audio   R1 = Bury   "
+                             "SELECT = Menu   START = Finish")
+            if menu is not None:
+                self._draw_menu_overlay(menu)
+            self.present()
+            return
+
+        reversed_mode = self.profile.get("study_direction") == "reversed"
+        front, back = (card["back"], card["front"]) if reversed_mode \
+            else (card["front"], card["back"])
 
         margin = 36
         max_width = self.w - 2 * margin
@@ -552,6 +613,117 @@ class CardBrickApp:
         if menu is not None:
             self._draw_menu_overlay(menu)
         self.present()
+
+    def _draw_vocab_phases(self, card, vocab, phase, audio_status, top):
+        """Phase 0: word. 1: +example (headword highlighted). 2: +image.
+        3: +gendered forms/definitions/translation. Each phase's content
+        stays on screen as later phases are revealed underneath it."""
+        margin = 36
+        max_width = self.w - 2 * margin
+        y = self._block(vocab["word"], self.font_big, FG, top=top,
+                        max_width=max_width)
+
+        if card["audio_filename"]:
+            hint, color = (("(no audio)", WARN) if audio_status == "missing"
+                          else ("♪  L1 = replay", DIM))
+            self._center(self.font_small.render(hint, True, color), y + 4)
+        y += 26
+
+        if phase >= 1:
+            pygame.draw.line(self.screen, DIVIDER, (margin, y),
+                             (self.w - margin, y))
+            y += 14
+            y = self._draw_highlighted_block(
+                vocab["example_es"] or "(no example sentence)",
+                vocab["word"], self.font, top=y, max_width=max_width)
+            y += 8
+
+        if phase >= 2:
+            image = self._vocab_image_surface(vocab["image_filename"])
+            if image is not None:
+                rect = image.get_rect()
+                rect.centerx = self.w // 2
+                rect.top = y
+                self.screen.blit(image, rect)
+                y = rect.bottom + 10
+            else:
+                self._center(self.font_small.render("(no image)", True,
+                                                    DIM), y)
+                y += 26
+
+        if phase >= 3:
+            pygame.draw.line(self.screen, DIVIDER, (margin, y),
+                             (self.w - margin, y))
+            y += 12
+            text = vocab["definitions"] or "(no definition)"
+            if vocab["gendered_forms"]:
+                text = vocab["gendered_forms"] + "\n" + text
+            if vocab["example_en"]:
+                text += "\n" + vocab["example_en"]
+            self._block(text, self.font_small, ACCENT, top=y,
+                       max_width=max_width)
+
+    def _vocab_image_surface(self, filename, max_height=140):
+        """Loaded + scaled image surface, cached by filename so it is
+        decoded once per card rather than every frame."""
+        if not filename:
+            return None
+        key = (filename, max_height)
+        if key in self._image_cache:
+            return self._image_cache[key]
+        surf = None
+        path = os.path.join(self.audio.media_dir, os.path.basename(filename))
+        if os.path.exists(path):
+            try:
+                raw = pygame.image.load(path)
+                try:
+                    raw = raw.convert_alpha()
+                except pygame.error:
+                    raw = raw.convert()
+                if raw.get_height() > max_height:
+                    scale = max_height / raw.get_height()
+                    raw = pygame.transform.smoothscale(
+                        raw, (max(1, int(raw.get_width() * scale)),
+                             max_height))
+                surf = raw
+            except pygame.error as exc:
+                log.warning("could not load image %s: %s", path, exc)
+        else:
+            log.warning("missing media file: %s", path)
+        self._image_cache[key] = surf
+        return surf
+
+    def _draw_highlighted_block(self, text, word, font, top, max_width):
+        """Like _block, but the headword is rendered in ACCENT wherever
+        it occurs (case-insensitively) — a plain-text stand-in for the
+        original card's HTML/CSS yellow-highlight span."""
+        word_lower = (word or "").lower()
+        y = top
+        for line in wrap_text(font, text, max_width):
+            if y > self.h - 80:
+                break
+            idx = line.lower().find(word_lower) if word_lower else -1
+            if idx == -1:
+                surf = font.render(line, True, FG)
+                self.screen.blit(surf, ((self.w - surf.get_width()) // 2, y))
+            else:
+                self._blit_split_highlight(line, idx, len(word_lower),
+                                           font, y)
+            y += font.get_linesize()
+        return y
+
+    def _blit_split_highlight(self, line, start, length, font, y):
+        pre, match, post = (line[:start], line[start:start + length],
+                            line[start + length:])
+        surf_pre = font.render(pre, True, FG)
+        surf_match = font.render(match, True, ACCENT)
+        surf_post = font.render(post, True, FG)
+        total_w = (surf_pre.get_width() + surf_match.get_width() +
+                  surf_post.get_width())
+        x = (self.w - total_w) // 2
+        for surf in (surf_pre, surf_match, surf_post):
+            self.screen.blit(surf, (x, y))
+            x += surf.get_width()
 
     def _draw_menu_overlay(self, index):
         entries = self.MENU_ENTRIES

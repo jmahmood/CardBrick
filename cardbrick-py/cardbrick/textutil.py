@@ -6,9 +6,11 @@ and entities are unescaped.
 """
 
 import html
+import os
 import re
 
 SOUND_RE = re.compile(r"\[sound:([^\]]+)\]")
+_IMG_SRC_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
 
 _BREAK_RE = re.compile(r"<\s*(?:br|/p|/div|/li|/tr)\s*/?\s*>", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -19,6 +21,17 @@ def extract_audio(text):
     """Return (text_without_sound_tags, [audio filenames])."""
     filenames = SOUND_RE.findall(text)
     return SOUND_RE.sub("", text), filenames
+
+
+def extract_image_filename(html_snippet):
+    """Basename of the first <img src="..."> in an HTML snippet, or None.
+
+    Deliberately shallow — no image rendering pipeline is built here
+    beyond "find the referenced file"; multiple images are not
+    supported (only the first is used).
+    """
+    match = _IMG_SRC_RE.search(html_snippet or "")
+    return os.path.basename(match.group(1)) if match else None
 
 
 def clean_html(text):

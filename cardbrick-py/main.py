@@ -56,8 +56,17 @@ def build_parser():
     p_study.add_argument("--fullscreen", action="store_true",
                          help="Run fullscreen (use on the handheld)")
 
-    p_import = sub.add_parser("import", help="Import an .apkg file")
-    p_import.add_argument("apkg", help="Path to the .apkg file")
+    p_import = sub.add_parser(
+        "import", help="Import an .apkg file, or a vocab .csv "
+                       "(detected by extension)")
+    p_import.add_argument("apkg", help="Path to the .apkg or .csv file")
+    p_import.add_argument("--media-dir",
+                          help="For .csv import: folder holding the audio/"
+                               "image files it references, copied into "
+                               "the app's media folder")
+    p_import.add_argument("--deck", dest="import_deck",
+                          help="For .csv import: deck name to file the "
+                               "cards under (default: Vocabulario)")
 
     p_review = sub.add_parser("review",
                               help="Legacy prototype reviewer (no limits)")
@@ -126,8 +135,16 @@ def main(argv=None):
             return _run_app(storage, scheduler, paths,
                             fullscreen=False, initial_state="INPUT_DIAG")
         if args.command == "import":
-            stats = import_apkg(args.apkg, storage, scheduler,
-                                paths.media_dir)
+            if args.apkg.lower().endswith(".csv"):
+                from cardbrick.vocab_csv import import_vocab_csv
+                kwargs = {"source_media_dir": args.media_dir}
+                if args.import_deck:
+                    kwargs["deck_name"] = args.import_deck
+                stats = import_vocab_csv(args.apkg, storage, scheduler,
+                                         paths.media_dir, **kwargs)
+            else:
+                stats = import_apkg(args.apkg, storage, scheduler,
+                                    paths.media_dir)
             print(stats.summary())
         elif args.command == "decks":
             rows = storage.decks(iso(now_utc()))

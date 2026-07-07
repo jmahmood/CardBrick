@@ -170,6 +170,57 @@ real hardware. A font override is available via
 á é í ó ú ñ ü ¿ ¡). The legacy `review` prototype still honours the
 old `CARDBRICK_JOYMAP` env var.
 
+### Four-phase vocab cards
+
+Cards imported from the "Español MX (word + audio + example)" Anki note
+type (or an equivalent CSV — see below) use a different review flow
+from plain front/back cards, and the two types can be mixed freely in
+the same deck/queue:
+
+```
+Phase 0: word (+ audio, autoplays)
+Phase 1: + example sentence (headword highlighted, + its own audio)
+Phase 2: + image
+Phase 3: + gendered forms / definition / English translation
+```
+
+D-pad reveals the next phase; there are no separate rating buttons —
+pressing the **bottom button ("I know this")** rates the card by *how
+much you needed to see*:
+
+| Pressed at phase | Meaning | Rating |
+|---|---|---|
+| 0 (word only) | knew it instantly | Easy |
+| 1 (needed the sentence) | Good |
+| 2 (needed the image) | Hard |
+| 3 (needed the full definition) | Again |
+
+L1 replays the current phase's audio (word audio at phase 0, example
+audio from phase 1 on); R1 bury and SELECT menu work the same as
+regular cards. The header, definitions, and gendered forms are shown
+as plain text (HTML/CSS from the original card is not rendered — see
+Scope, below); the headword highlight inside the example sentence is
+reconstructed by a case-insensitive substring match rather than the
+original `<span>`.
+
+Import either from `.apkg` (the note type is detected by field names —
+`Word` first, an `Example ES` field present — not by a hardcoded model
+id) or from a CSV with the same columns:
+
+```bash
+python main.py import VocabDeck.apkg
+python main.py import vocab.csv --media-dir ./my_media --deck "Mi Vocabulario"
+```
+
+CSV audio/image cells accept a bare filename (`gato.mp3`) or an
+Anki-style tag (`[sound:gato.mp3]`, `<img src="gato.jpg">`) copied
+straight out of a spreadsheet. `--media-dir` points at a folder holding
+the referenced files (already-named); they're copied into the app's
+media folder. **A CSV card's identity is a hash of its `Word` field**
+(there is no Anki note id to key on) — keep that field unique and
+unedited across re-imports, or a rename will create a new card instead
+of updating the old one's progress.
+
 ### Parent mode
 
 `SELECT` on the start screen. From there: import `.apkg` files found in

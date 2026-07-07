@@ -23,11 +23,17 @@ import tempfile
 import zipfile
 
 from .scheduler import iso, now_utc
-from .textutil import clean_html, extract_audio
+from .textutil import clean_html, extract_audio, extract_image_filename
 
 AUDIO_EXTENSIONS = {".mp3", ".ogg", ".wav", ".flac", ".m4a", ".opus"}
 
 CLOZE_MODEL_TYPE = 1
+
+# A note type is recognised as the four-phase vocabulary card (see
+# cardbrick/vocab_card.py) purely by field *names* — Anki model ids
+# vary per collection, but "Word" first and an "Example ES" field
+# somewhere are the two facts genanki/Anki always preserve.
+VOCAB_REQUIRED_FIELDS = ("word", "example es")
 
 
 class ApkgError(Exception):
@@ -111,6 +117,13 @@ def _import_collection(col_path, storage, scheduler, stats):
                 stats.skip(card["id"], "orphan card (missing note)")
                 continue
             model = models.get(str(note["mid"])) or models.get(note["mid"])
+            field_names = _model_field_names(model)
+            if _is_vocab_model(field_names):
+                deck = decks.get(str(card["did"]),
+                                 decks.get(card["did"], "Default"))
+                _import_vocab_note(card, note, field_names, deck, storage,
+                                   scheduler, stats)
+                continue
             if model and model.get("type") == CLOZE_MODEL_TYPE:
                 stats.skip(card["id"], "cloze note type")
                 continue
@@ -159,6 +172,86 @@ def _import_collection(col_path, storage, scheduler, stats):
             stats._notes_seen = notes_seen
     finally:
         conn.close()
+
+
+def _model_field_names(model):
+    """Field names in position order, or [] if unavailable.
+
+    New (schema 18+) collections store note type config as protobuf,
+    which this importer deliberately does not parse (no protobuf
+    dependency) — vocab-card import from such collections falls back
+    to being skipped like any other unrecognised template; use the CSV
+    importer (cardbrick/vocab_csv.py) for those exports instead.
+    """
+    if not model:
+        return []
+    try:
+        ordered = sorted(model.get("flds") or (), key=lambda f: f.get("ord", 0))
+        return [f.get("name", "") for f in ordered]
+    except (TypeError, AttributeError):
+        return []
+
+
+def _is_vocab_model(field_names):
+    lowered = [n.strip().lower() for n in field_names]
+    return (bool(lowered) and lowered[0] == "word" and
+            "example es" in lowered)
+
+
+def _import_vocab_note(card, note, field_names, deck, storage, scheduler,
+                       stats):
+    """Extract one 'Español MX (word + audio + example)' note.
+
+    Unlike Basic/reversed notes there is exactly one template per note
+    (Recognition), so no ordinal handling is needed. Fields are looked
+    up by name so the optional Japanese columns can be present or
+    absent without shifting anything else.
+    """
+    index = {name.strip().lower(): i for i, name in enumerate(field_names)}
+    fields = note["flds"].split("\x1f")
+
+    def field(name):
+        i = index.get(name)
+        return fields[i] if i is not None and i < len(fields) else ""
+
+    word = clean_html(field("word"))
+    if not word:
+        stats.skip(card["id"], "vocab note missing Word")
+        return
+
+    _, word_audio_files = extract_audio(field("word audio"))
+    _, example_audio_files = extract_audio(field("example audio"))
+    definitions = clean_html(field("definitions"))
+    example_en = clean_html(field("example en"))
+    tags = note["tags"].strip()
+
+    storage.upsert_card(
+        card_id=card["id"], note_id=note["id"], deck=deck, front=word,
+        back=definitions or example_en, tags=tags,
+        audio_filename=word_audio_files[0] if word_audio_files else None,
+        audio_side="front" if word_audio_files else None,
+        now_iso=iso(now_utc()), card_type="vocab")
+    storage.upsert_vocab_card(
+        card_id=card["id"], word=word,
+        word_jp=clean_html(field("word jp")) or None,
+        gendered_forms=clean_html(field("gendered forms")),
+        definitions=definitions,
+        image_filename=extract_image_filename(field("image")),
+        example_es=clean_html(field("example es")),
+        example_audio=example_audio_files[0] if example_audio_files else None,
+        example_en=example_en,
+        example_jp=clean_html(field("example jp")) or None,
+        report_link=field("report link").strip() or None)
+    storage.init_review_state(scheduler.initial_state(card["id"]))
+
+    stats.cards += 1
+    stats.decks.add(deck)
+    stats.tags.update(tags.split())
+    notes_seen = getattr(stats, "_notes_seen", set())
+    if note["id"] not in notes_seen:
+        notes_seen.add(note["id"])
+        stats.notes += 1
+    stats._notes_seen = notes_seen
 
 
 def _deck_names(conn, col):
