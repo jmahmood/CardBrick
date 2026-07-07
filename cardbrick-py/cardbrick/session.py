@@ -14,12 +14,19 @@ from .scheduler import iso
 
 
 class StudySession:
-    def __init__(self, storage, service, profile, deck_filter=None):
-        """``deck_filter`` overrides the profile's assigned decks for
+    def __init__(self, storage, service, profile, deck_filter=None,
+                 bonus=False):
+        """One sprint: the unit of microstudying (see
+        ReviewService.sprint_status).
+
+        ``deck_filter`` overrides the profile's assigned decks for
         just this sitting — e.g. a child picking one specific deck out
         of several the parent has assigned (see app.py's DECK_SELECT
         screen). None falls back to the profile's active_decks, same
-        convention as ReviewService.get_due_cards."""
+        convention as ReviewService.get_due_cards.
+
+        ``bonus`` marks the optional goal-ignoring sprint offered after
+        the daily goal is met; the queue is built accordingly."""
         self.storage = storage
         self.service = service
         self.profile = profile
@@ -30,7 +37,8 @@ class StudySession:
             category_filter=profile.get("active_categories"))
 
         rows = service.get_due_cards(profile=profile,
-                                     deck_filter=deck_filter)
+                                     deck_filter=deck_filter,
+                                     bonus=bonus)
         self.queue = deque(row["id"] for row in rows)
         self.planned_total = len(rows)
         self.finished = False
