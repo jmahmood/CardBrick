@@ -23,10 +23,10 @@ try:
     from .sync import SyncManager
     from .auth import LocalAuthManager
 except ImportError:
-    from config import Config
-    from crypto import CryptoManager, ValidationError
-    from sync import SyncManager
-    from auth import LocalAuthManager
+    from config import Config  # type: ignore[no-redef]
+    from crypto import CryptoManager, ValidationError  # type: ignore[no-redef]
+    from sync import SyncManager  # type: ignore[no-redef]
+    from auth import LocalAuthManager  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,8 @@ class SyncDaemon:
         async def health() -> HealthResponse:
             """Health check endpoint"""
             return HealthResponse(
+                status="healthy",
+                version="0.1.0",
                 uptime_seconds=int(time.time() - self.start_time),
                 active_jobs=len(self.active_jobs)
             )
@@ -158,7 +160,8 @@ class SyncDaemon:
             # For now, return not implemented
             return ImportResponse(
                 status="not_implemented", 
-                message="Use cardbrick-cli for imports"
+                message="Use cardbrick-cli for imports",
+                deck_path=None
             )
             
         @self.app.post("/sync", response_model=SyncTriggerResponse)
@@ -188,7 +191,8 @@ class SyncDaemon:
                 logger.warning(f"Rate limited doorbell from {request.device_ip}")
                 return DoorbellResponse(
                     status="rejected",
-                    message="Rate limited - max 1 request per 15 minutes"
+                    message="Rate limited - max 1 request per 15 minutes",
+                    job_id=None
                 )
             
             # Validate request signature and timing
@@ -225,13 +229,15 @@ class SyncDaemon:
             logger.warning(f"Invalid doorbell from {request.device_ip}: {e}")
             return DoorbellResponse(
                 status="rejected", 
-                message=str(e)
+                message=str(e),
+                job_id=None
             )
         except Exception as e:
             logger.error(f"Error handling doorbell from {request.device_ip}: {e}")
             return DoorbellResponse(
                 status="error",
-                message="Internal server error"
+                message="Internal server error",
+                job_id=None
             )
     
     def _is_rate_limited(self, device_ip: str) -> bool:

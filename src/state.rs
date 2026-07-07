@@ -52,7 +52,7 @@ pub enum GameState {
         progress: f32,
         deck_id_to_load: String,
     },
-    Studying(StudyingState<'static>),
+    Studying(Box<StudyingState<'static>>),
     Progress(ProgressState),
     RestoreWizard(RestoreWizardState),
     Error(String),

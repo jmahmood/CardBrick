@@ -59,17 +59,17 @@ impl KartaCard {
         if let Some(back) = self.back() {
             // Try to split on "example from book:" or similar markers
             if let Some(pos) = back.find("example from book:") {
-                let definition = back[..pos].trim().to_string();
+                let definition = clean_definition(&back[..pos]);
                 let example = back[pos..].trim().to_string();
                 return (definition, Some(example));
             } else if let Some(pos) = back.find("example:") {
-                let definition = back[..pos].trim().to_string();
+                let definition = clean_definition(&back[..pos]);
                 let example = back[pos..].trim().to_string();
                 return (definition, Some(example));
             }
             // If no example marker, treat the semicolon as separator
             if let Some(pos) = back.find(';') {
-                let definition = back[..pos].trim().to_string();
+                let definition = clean_definition(&back[..pos]);
                 let example = back[pos + 1..].trim().to_string();
                 return (definition, Some(example));
             }
@@ -79,6 +79,10 @@ impl KartaCard {
             (String::new(), None)
         }
     }
+}
+
+fn clean_definition(definition: &str) -> String {
+    definition.trim().trim_end_matches(';').trim().to_string()
 }
 
 #[cfg(test)]

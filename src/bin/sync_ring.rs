@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::derivable_impls, clippy::needless_borrow)]
+
 /*!
  * CardBrick Sync Ring - Handheld Sync Client
  *

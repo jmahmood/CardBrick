@@ -187,6 +187,7 @@ impl Bandit {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn should_use_round_robin(&self, today: NaiveDate) -> Result<bool, Box<dyn std::error::Error>> {
         let db_path = progress_path();
         self.should_use_round_robin_with_path(today, &db_path)
@@ -203,7 +204,7 @@ impl Bandit {
         let key = format!("first_day_{}", self.param_id);
         let first_day: Option<String> = conn
             .prepare("SELECT value FROM meta WHERE key = ?1")?
-            .query_row([&key], |row| Ok(row.get::<_, String>(0)?))
+            .query_row([&key], |row| row.get::<_, String>(0))
             .optional()?;
 
         let first_day = match first_day {
@@ -223,6 +224,7 @@ impl Bandit {
         Ok(days_since_first < ROUND_ROBIN_DAYS as i64)
     }
 
+    #[allow(dead_code)]
     fn round_robin_sample(&self, today: NaiveDate) -> f32 {
         let db_path = progress_path();
         self.round_robin_sample_with_path(today, &db_path)
@@ -234,7 +236,7 @@ impl Bandit {
             if let Ok(Some(first_day_str)) = conn
                 .prepare("SELECT value FROM meta WHERE key = ?1")
                 .and_then(|mut stmt| {
-                    stmt.query_row([&key], |row| Ok(row.get::<_, String>(0)?))
+                    stmt.query_row([&key], |row| row.get::<_, String>(0))
                         .optional()
                 })
             {
@@ -481,9 +483,9 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2025, 7, 24).unwrap();
 
         let (pack_sz, rev_coef, fail_k) = manager.sample_parameters_with_path(today, &db_path);
-        assert!(pack_sz >= 9 && pack_sz <= 15);
-        assert!(rev_coef >= 1.5 && rev_coef <= 2.5);
-        assert!(fail_k >= 3 && fail_k <= 7);
+        assert!((9..=15).contains(&pack_sz));
+        assert!((1.5..=2.5).contains(&rev_coef));
+        assert!((3..=7).contains(&fail_k));
 
         // Test update
         manager.update_with_reward(pack_sz, rev_coef, fail_k, true);

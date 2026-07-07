@@ -47,6 +47,12 @@ impl ProgressState {
     }
 }
 
+impl Default for ProgressState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Draw the progress viewer scene
 pub fn draw_progress_scene(
     progress_state: &mut ProgressState,
@@ -89,7 +95,7 @@ pub fn draw_progress_scene(
                 canvas_manager,
             )?;
         }
-        y_pos += header_layout.total_height as i32 + 10;
+        y_pos += header_layout.total_height + 10;
     }
 
     // Draw progress rows
@@ -103,13 +109,13 @@ pub fn draw_progress_scene(
                 canvas_manager,
             )?;
         }
-        y_pos += layout.total_height as i32 + 5;
+        y_pos += layout.total_height + 5;
     }
 
     // Draw error message if no data
     if progress_state.progress_data.is_empty() {
         if let Some(error_layout) = &progress_state.error_layout {
-            let error_y = (logical_height as i32 - error_layout.total_height as i32) / 2;
+            let error_y = (logical_height as i32 - error_layout.total_height) / 2;
             small_font_manager.draw_layout(
                 error_layout,
                 margin,

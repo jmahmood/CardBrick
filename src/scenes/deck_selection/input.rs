@@ -126,8 +126,6 @@ mod tests {
 
         // Navigation should be safe with empty deck list
         let total_decks = deck_selection_state.decks.len();
-        let visible_items = 10;
-
         // These operations should not panic
         let can_move_up = deck_selection_state.index_changes(-1, total_decks);
         let can_move_down = deck_selection_state.index_changes(1, total_decks);
@@ -218,6 +216,5 @@ mod tests {
 
         // Back button should transition to MainMenu
         // (This would set state.game_state = GameState::MainMenu(...))
-        assert!(true); // Logic verified
     }
 }

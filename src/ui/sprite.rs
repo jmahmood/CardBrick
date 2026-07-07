@@ -26,7 +26,15 @@ impl Sprite {
             is_blinking: false,
         }
     }
+}
 
+impl Default for Sprite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sprite {
     /// Updates the sprite's animation state. Should be called once per frame.
     /// Returns true if the visual state changed this frame (requires redraw).
     pub fn update(&mut self) -> bool {

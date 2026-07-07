@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 // src/scenes/studying/input.rs
 
 use super::logic::{
@@ -403,7 +405,7 @@ pub fn build_session_detail_layouts(
                 let card_text = format!(
                     "--- {} ---\nQ: {}\nA: {}\n",
                     rating_text,
-                    note.fields.get(0).unwrap_or(&"[No front]".to_string()),
+                    note.fields.first().unwrap_or(&"[No front]".to_string()),
                     note.fields.get(1).unwrap_or(&"[No back]".to_string())
                 );
                 let card_spans = html_parser::parse_html_to_spans(&card_text);
@@ -455,7 +457,6 @@ mod tests {
         match studying_mode {
             StudyingScreenMode::SessionComplete => {
                 // This would set state.game_state = GameState::GoToDeckSelection
-                assert!(true); // Logic path verified
             }
             _ => panic!("Wrong mode"),
         }
@@ -466,7 +467,6 @@ mod tests {
             StudyingScreenMode::SessionDetails => {
                 // This would set studying_state.mode = StudyingScreenMode::SessionComplete
                 // and reset detail_scroll_offset = 0
-                assert!(true); // Logic path verified
             }
             _ => panic!("Wrong mode"),
         }
@@ -540,7 +540,7 @@ mod tests {
             scroll_offset: 0,
         };
 
-        let layouts = vec![layout1, layout2];
+        let layouts = [layout1, layout2];
         let viewport_height = 400;
 
         // Calculate total height: (100 + 20) + (150 + 20) = 290
@@ -567,7 +567,7 @@ mod tests {
             lines: Vec::new(),
             scroll_offset: 0,
         };
-        let large_layouts = vec![layout1_copy, layout2_copy, layout3];
+        let large_layouts = [layout1_copy, layout2_copy, layout3];
 
         // Total: (100+20) + (150+20) + (300+20) = 610
         let large_total: i32 = large_layouts

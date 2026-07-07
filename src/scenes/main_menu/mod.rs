@@ -19,6 +19,12 @@ impl MainMenuState {
     }
 }
 
+impl Default for MainMenuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Draws the main menu scene.
 /// This function was moved from main.rs.
 pub fn draw_main_menu_scene(

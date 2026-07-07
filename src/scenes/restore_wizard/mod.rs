@@ -34,6 +34,12 @@ impl RestoreWizardState {
     }
 }
 
+impl Default for RestoreWizardState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn draw_restore_wizard_scene(
     font_manager: &FontManager,
     canvas_manager: &CanvasManager,

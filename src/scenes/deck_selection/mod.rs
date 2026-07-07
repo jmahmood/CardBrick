@@ -19,10 +19,6 @@ pub struct DeckSelectionState {
     first_visible: usize,
     display_names: Vec<String>, // Pre-computed display names for performance
     name_layouts: Option<Vec<TextLayout>>, // Cached layouts for deck names
-    // Offscreen cache for background + title
-    bg_rt: Option<RenderTarget>,
-    bg_dirty: bool,
-    bg_used_assets: bool,
 }
 
 impl DeckSelectionState {
@@ -40,9 +36,6 @@ impl DeckSelectionState {
             first_visible: 0,
             display_names,
             name_layouts: None,
-            bg_rt: None,
-            bg_dirty: true,
-            bg_used_assets: false,
         })
     }
 
@@ -53,7 +46,7 @@ impl DeckSelectionState {
         let new_index =
             (self.selected_index as isize + delta).clamp(0, total as isize - 1) as usize;
 
-        return self.selected_index != new_index;
+        self.selected_index != new_index
     }
 
     /// Moves the selection cursor up or down, scrolling the list if necessary.
@@ -199,7 +192,7 @@ pub fn draw_deck_selection_scene(
     if state
         .name_layouts
         .as_ref()
-        .map_or(true, |v| v.len() != state.display_names.len())
+        .is_none_or(|v| v.len() != state.display_names.len())
     {
         let mut layouts = Vec::with_capacity(state.display_names.len());
         for name in &state.display_names {

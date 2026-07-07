@@ -109,7 +109,6 @@ pub fn format_progress_table(progress: &[DailyProgress]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn test_format_empty_progress() {

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::manual_flatten,
+    clippy::manual_unwrap_or,
+    clippy::needless_question_mark
+)]
+
 // src/bin/cardbrick_cli.rs
 // CardBrick CLI - Command-line interface for data operations
 

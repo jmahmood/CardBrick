@@ -5,12 +5,9 @@
 mod sprint2_tests {
     use super::super::bandit::*;
     use super::super::queue::*;
-    use crate::storage::db::progress_path;
-    use crate::storage::schema::*;
     use crate::testing::*;
     use chrono::NaiveDate;
     use rusqlite::Connection;
-    use tempfile::tempdir;
 
     /// Test helper to set up isolated test environment - NO GLOBAL STATE POLLUTION
     fn setup_test_env() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -138,8 +135,7 @@ mod sprint2_tests {
         let (_temp, db_path) = setup_test_env();
 
         // Create fresh bandit with no history
-        let mut bandit =
-            create_test_bandit("test_cold_start", &[5.0, 10.0, 15.0], &db_path).unwrap();
+        let bandit = create_test_bandit("test_cold_start", &[5.0, 10.0, 15.0], &db_path).unwrap();
 
         // All arms should initialize with Beta(3,1) priors
         for (i, arm) in bandit.arms.iter().enumerate() {
@@ -200,15 +196,15 @@ mod sprint2_tests {
         let fail_k = row.2.unwrap() as usize;
 
         assert!(
-            pack_sz >= 9 && pack_sz <= 15,
+            (9..=15).contains(&pack_sz),
             "pack_sz should be in range [9, 15]"
         );
         assert!(
-            rev_coef >= 1.5 && rev_coef <= 2.5,
+            (1.5..=2.5).contains(&rev_coef),
             "rev_coef should be in range [1.5, 2.5]"
         );
         assert!(
-            fail_k >= 3 && fail_k <= 7,
+            (3..=7).contains(&fail_k),
             "fail_k should be in range [3, 7]"
         );
     }
@@ -239,7 +235,7 @@ mod sprint2_tests {
         }
 
         // Create deterministic bandit with specific values
-        let mut manager = BanditManager::new_with_path(&db_path).unwrap();
+        let manager = BanditManager::new_with_path(&db_path).unwrap();
         let today = NaiveDate::from_ymd_opt(2025, 8, 1).unwrap();
         let (pack_sz, rev_coef, fail_k) = manager.sample_parameters_with_path(today, &db_path);
 
@@ -312,7 +308,7 @@ mod sprint2_tests {
 
         for (points, expected_bin, expected_cont) in test_cases {
             let reward_bin = if points >= 10 { 1 } else { 0 };
-            let reward_cont = (points as f64 / 10.0).min(1.0).max(0.0);
+            let reward_cont = (points as f64 / 10.0).clamp(0.0, 1.0);
 
             println!(
                 "Points: {}, Binary: {}, Continuous: {:.1}",
@@ -360,8 +356,6 @@ mod sprint2_tests {
     #[test]
     fn test_c3_bandit_arms_updated_from_logged_reward() {
         let (_temp, db_path) = setup_test_env();
-
-        let today = NaiveDate::from_ymd_opt(2025, 8, 1).unwrap();
 
         // Create bandit and sample
         let mut bandit = create_test_bandit("test_reward_update", &[42.0], &db_path).unwrap();
@@ -565,7 +559,7 @@ mod sprint2_tests {
                 println!("Bandit loaded with {} arms", bandit.arms.len());
                 // Current implementation loads existing arms from database, even invalid ones
                 // This is acceptable behavior - the bandit loaded successfully
-                assert!(bandit.arms.len() >= 1, "Should have loaded some arms");
+                assert!(!bandit.arms.is_empty(), "Should have loaded some arms");
             }
             Err(e) => {
                 println!("Bandit load failed gracefully: {}", e);
@@ -792,10 +786,9 @@ mod sprint2_tests {
         let today = NaiveDate::from_ymd_opt(2025, 8, 1).unwrap();
 
         // 1. Sample parameters using test bandits
-        let mut pack_bandit =
-            create_test_bandit("pack_size", &[9.0, 12.0, 15.0], &db_path).unwrap();
-        let mut rev_bandit = create_test_bandit("review_coef", &[1.5, 2.0, 2.5], &db_path).unwrap();
-        let mut fail_bandit = create_test_bandit("fail_k", &[3.0, 5.0, 7.0], &db_path).unwrap();
+        let pack_bandit = create_test_bandit("pack_size", &[9.0, 12.0, 15.0], &db_path).unwrap();
+        let rev_bandit = create_test_bandit("review_coef", &[1.5, 2.0, 2.5], &db_path).unwrap();
+        let fail_bandit = create_test_bandit("fail_k", &[3.0, 5.0, 7.0], &db_path).unwrap();
 
         let pack_sz = pack_bandit.sample_with_path(today, &db_path) as usize;
         let rev_coef = rev_bandit.sample_with_path(today, &db_path) as f64;

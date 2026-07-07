@@ -46,7 +46,6 @@ import time
 
 import pygame
 
-from . import __version__
 from .bootlog import (log_display_diagnostics, log_pygame_versions)
 from .importer import ApkgError, import_apkg
 from .input_map import (FACE_LABELS, InputMap, InputTranslator,

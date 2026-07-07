@@ -42,11 +42,11 @@ fn calculate_max_scroll(progress_state: &ProgressState) -> i32 {
     let header_height = progress_state
         .header_layout
         .as_ref()
-        .map_or(0, |l| l.total_height as i32);
+        .map_or(0, |l| l.total_height);
     let rows_height: i32 = progress_state
         .row_layouts
         .iter()
-        .map(|layout| layout.total_height as i32 + 5) // 5px spacing between rows
+        .map(|layout| layout.total_height + 5) // 5px spacing between rows
         .sum();
     let total_height = header_height + rows_height + 100; // Extra padding
 

@@ -3,7 +3,7 @@ use crate::desktop::session::{CardFace, Session};
 use crate::desktop::KartaDeck;
 use crate::scheduler::sm2::Rating;
 use egui::{Align, Color32, Frame, Key, Layout, Margin, RichText, Rounding, Stroke, Vec2};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Application state
 enum AppState {
@@ -12,7 +12,7 @@ enum AppState {
         selected_index: Option<usize>,
         workspace_path: PathBuf,
     },
-    Studying(Session),
+    Studying(Box<Session>),
     Error(String),
 }
 
@@ -33,7 +33,7 @@ pub struct CardBrickApp {
 impl CardBrickApp {
     pub fn new(session: Session) -> Self {
         Self {
-            state: AppState::Studying(session),
+            state: AppState::Studying(Box::new(session)),
             error_message: None,
         }
     }
@@ -149,6 +149,7 @@ impl CardBrickApp {
         }
     }
 
+    #[allow(dead_code)]
     fn render_top_strip(ui: &mut egui::Ui, session: &Session) {
         Frame::none()
             .fill(Color32::from_gray(240))
@@ -171,6 +172,7 @@ impl CardBrickApp {
             });
     }
 
+    #[allow(dead_code)]
     fn render_command_strip(ui: &mut egui::Ui, session: &Session) {
         Frame::none()
             .fill(Color32::from_gray(240))
@@ -517,7 +519,7 @@ impl CardBrickApp {
         ui: &mut egui::Ui,
         decks: &[DeckInfo],
         selected: &mut Option<usize>,
-        workspace_path: &PathBuf,
+        workspace_path: &Path,
     ) -> Option<PathBuf> {
         let mut deck_to_load = None;
         ui.centered_and_justified(|ui| {
@@ -678,7 +680,7 @@ impl eframe::App for CardBrickApp {
                     println!("Loading deck: {} ({} cards)", deck.name, deck.cards.len());
                     match Session::new(deck) {
                         Ok(session) => {
-                            self.state = AppState::Studying(session);
+                            self.state = AppState::Studying(Box::new(session));
                         }
                         Err(e) => {
                             self.error_message = Some(format!("Failed to create session: {}", e));

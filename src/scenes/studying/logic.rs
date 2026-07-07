@@ -6,7 +6,6 @@ use crate::config::{DAILY_GOAL_POINTS, PACK_SIZE_DEFAULT};
 use crate::debug::Tracer;
 use crate::deck::{html_parser, Card};
 use crate::scheduler::bandit;
-use crate::scheduler::queue::{self};
 use crate::scheduler::{points, sm2, Rating};
 use crate::storage::db::is_card_adopted_in_progress;
 use crate::ui::FontManager;
@@ -137,7 +136,7 @@ pub fn load_card_layouts(
 
     if let Some(note) = state.scheduler.get_note(card.note_id) {
         let content_width = 512 - 60;
-        let front_html = note.fields.get(0).map_or("", |s| s.as_str());
+        let front_html = note.fields.first().map_or("", |s| s.as_str());
         let back_html = note.fields.get(1).map_or("", |s| s.as_str());
 
         state.front_layout_default = font
@@ -193,7 +192,7 @@ pub fn continue_studying(
 ) {
     // First try to load more cards from the deck
     if let Ok(new_cards) = state.scheduler.load_more_cards(PACK_SIZE_DEFAULT) {
-        if new_cards.len() > 0 {
+        if !new_cards.is_empty() {
             // Reset the done state and load next card
             state.is_done = false;
             state.mode = StudyingScreenMode::InProgress;
@@ -284,7 +283,7 @@ fn calculate_daily_points(date: NaiveDate) -> Result<i64, Box<dyn std::error::Er
         conn.prepare("SELECT rating FROM daily_ratings WHERE date = ?1 ORDER BY timestamp ASC")?;
 
     let ratings: Result<Vec<String>, _> = stmt
-        .query_map([&date_str], |row| Ok(row.get::<_, String>(0)?))?
+        .query_map([&date_str], |row| row.get::<_, String>(0))?
         .collect();
 
     let total_points: i64 = ratings?
@@ -320,7 +319,7 @@ fn finalize_daily_log(
     // Get current cards_studied count if it exists
     let cards_studied: i64 = conn
         .prepare("SELECT COUNT(*) FROM daily_ratings WHERE date = ?1")?
-        .query_row([&date_str], |row| Ok(row.get::<_, i64>(0)?))?;
+        .query_row([&date_str], |row| row.get::<_, i64>(0))?;
 
     conn.execute(
         "UPDATE daily_log SET cards_studied = ?1, points = ?2, reward_scaled = ?3, reward_bin = ?4 WHERE date = ?5",
@@ -480,7 +479,7 @@ pub fn handle_card_rating(
             // Count ratings for today as cards_studied proxy
             let cards_count: i64 = conn
                 .prepare("SELECT COUNT(*) FROM daily_ratings WHERE date = ?1")?
-                .query_row([&date_str], |row| Ok(row.get::<_, i64>(0)?))?;
+                .query_row([&date_str], |row| row.get::<_, i64>(0))?;
             let points_today = state.points_today as i64;
             let reward_bin_i64 = if points_today >= DAILY_GOAL_POINTS as i64 {
                 1
@@ -679,7 +678,7 @@ pub fn finalize_study_session(state: &mut StudyingState) -> Result<(), Box<dyn s
             &date_str,
             cards_studied as i64,
             points_earned as i64,
-            reward_scaled as f64,
+            reward_scaled,
             reward_bin as i64
         ],
     )?;

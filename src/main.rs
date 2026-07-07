@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // CardBrick - Macroquad Version with Device Compatibility
 use crate::scenes::deck_selection::draw_deck_selection_scene;
 use std::io::Write;
@@ -160,9 +162,9 @@ impl CardBrickApp {
         Self::show_loading_step(loading_canvas, loading_steps, 4).await;
         let available_decks = scanner::load_cached_decks()?;
         if available_decks.is_empty() {
-            return Err(format!(
-                "No cached decks found. Run precache_decks.py to cache .apkg files."
-            ));
+            return Err(
+                "No cached decks found. Run precache_decks.py to cache .apkg files.".to_string(),
+            );
         }
 
         // Step 5: Skip UI assets loading (load lazily when needed)
@@ -595,11 +597,11 @@ impl CardBrickApp {
                     // Fade-in and timer-driven transition need continuous redraw
                     self.needs_redraw = true;
                 }
-                StudyingScreenMode::SessionComplete => {
-                    // Flash prompt ~2Hz; redraw on boundary to save power
-                    if studying_state.animation_frame_counter % 30 == 0 {
-                        self.needs_redraw = true;
-                    }
+                // Flash prompt ~2Hz; redraw on boundary to save power.
+                StudyingScreenMode::SessionComplete
+                    if studying_state.animation_frame_counter % 30 == 0 =>
+                {
+                    self.needs_redraw = true;
                 }
                 _ => {}
             }
@@ -611,9 +613,8 @@ impl CardBrickApp {
     fn handle_input(&mut self, input: BrickInput) -> Result<(), String> {
         // Any input implies a visible change soon; mark for redraw.
         self.needs_redraw = true;
-        match input {
-            BrickInput::ButtonDown(BrickButton::Guide) => return Err("User quit".into()),
-            _ => {}
+        if let BrickInput::ButtonDown(BrickButton::Guide) = input {
+            return Err("User quit".into());
         }
 
         match &mut self.app_state.game_state {
@@ -711,7 +712,7 @@ impl CardBrickApp {
                             // Set performance monitoring scene
                             perf::set_perf_scene("studying");
 
-                            GameState::Studying(studying_state)
+                            GameState::Studying(Box::new(studying_state))
                         }
                         LoaderMessage::Complete(Err(e)) => GameState::Error(e),
                         LoaderMessage::Progress(p) => GameState::Loading {

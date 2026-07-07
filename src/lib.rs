@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // CardBrick Library
 // Shared modules for both handheld and desktop versions
 
@@ -9,6 +11,8 @@ pub mod scenes;
 pub mod scheduler;
 pub mod state;
 pub mod storage;
+#[cfg(test)]
+pub mod testing;
 pub mod ui;
 
 // Desktop-specific modules

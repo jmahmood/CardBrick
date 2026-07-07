@@ -18,6 +18,11 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libasound2-dev
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -71,8 +76,11 @@ jobs:
         
     - name: Run type checking
       run: |
-        mypy cardbrick-syncd/ --ignore-missing-imports
-        mypy cardbrick-cli/ --ignore-missing-imports
+        tmpdir="$(mktemp -d)"
+        cp -R cardbrick-syncd "$tmpdir/cardbrick_syncd"
+        cp -R cardbrick-cli "$tmpdir/cardbrick_cli"
+        mypy "$tmpdir/cardbrick_syncd" --ignore-missing-imports
+        mypy "$tmpdir/cardbrick_cli" --ignore-missing-imports
         
     - name: Test CLI import functionality
       run: |
@@ -176,12 +184,12 @@ jobs:
             --home-dir /var/lib/cardbrick --create-home cardbrick-sync
             
         # Copy Python daemon
-        COPY cardbrick-syncd/ /app/cardbrick-syncd/
-        COPY cardbrick-cli/ /app/cardbrick-cli/
+        COPY cardbrick-syncd/ /app/cardbrick_syncd/
+        COPY cardbrick-cli/ /app/cardbrick_cli/
         
         # Install Python dependencies
-        RUN pip install -r /app/cardbrick-syncd/requirements.txt
-        RUN pip install -r /app/cardbrick-cli/requirements.txt
+        RUN pip install -r /app/cardbrick_syncd/requirements.txt
+        RUN pip install -r /app/cardbrick_cli/requirements.txt
         
         # Set up directories
         RUN mkdir -p /var/lib/cardbrick/{inbox,keys/devices}
@@ -198,11 +206,14 @@ jobs:
         
         # Handheld Dockerfile (Rust client)
         cat > tests/Dockerfile.handheld << 'EOF'
-        FROM rust:1.75-slim
+        FROM rust:slim
         
         # Install system dependencies
         RUN apt-get update && apt-get install -y \
+            build-essential \
+            cmake \
             pkg-config \
+            libasound2-dev \
             libssl-dev \
             curl \
             && rm -rf /var/lib/apt/lists/*
@@ -283,12 +294,12 @@ jobs:
         
     - name: Run integration tests
       run: |
-        docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+        docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
         
     - name: Collect test results
       if: always()
       run: |
-        docker-compose -f docker-compose.test.yml logs > integration-test-logs.txt
+        docker compose -f docker-compose.test.yml logs > integration-test-logs.txt
         
     - name: Upload test logs
       if: always()
@@ -300,7 +311,7 @@ jobs:
     - name: Cleanup
       if: always()
       run: |
-        docker-compose -f docker-compose.test.yml down -v
+        docker compose -f docker-compose.test.yml down -v
 
   # Security audit  
   security-audit:

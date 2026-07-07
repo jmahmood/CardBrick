@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /*!
  * Sync client implementation for CardBrick handheld devices
  *
