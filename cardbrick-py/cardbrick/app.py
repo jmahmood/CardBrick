@@ -691,11 +691,20 @@ class CardBrickApp:
         header = card["deck"]
         if card["tags"]:
             header += "  ·  " + " ".join(card["tags"].split()[:3])
-        self.screen.blit(self.font_small.render(header, True, DIM), (16, 12))
-        left = f"{self._sprint_label}  ·  {session.remaining()} left" \
+        right = f"{self._sprint_label}  ·  {session.remaining()} left" \
             if self._sprint_label else f"{session.remaining()} left"
-        surf = self.font_small.render(left, True, DIM)
-        self.screen.blit(surf, (self.w - surf.get_width() - 16, 12))
+        right_surf = self.font_small.render(right, True, DIM)
+        # Both sides share one row: clip the (unbounded deck/tag) left
+        # side so it can never run into the (short, fixed-shape) right
+        # side, instead of letting long deck names or several tags
+        # overlap the sprint/remaining count.
+        gap = 24
+        max_left_width = self.w - 32 - right_surf.get_width() - gap
+        header = self._truncate_to_width(self.font_small, header,
+                                         max_left_width)
+        self.screen.blit(self.font_small.render(header, True, DIM), (16, 12))
+        self.screen.blit(right_surf, (self.w - right_surf.get_width() - 16,
+                                      12))
         pygame.draw.line(self.screen, DIVIDER, (16, 40), (self.w - 16, 40))
 
         if vocab is not None:
@@ -1585,6 +1594,22 @@ class CardBrickApp:
 
     def _center(self, surf, y):
         self.screen.blit(surf, ((self.w - surf.get_width()) // 2, y))
+
+    @staticmethod
+    def _truncate_to_width(font, text, max_width):
+        """``text``, shortened with a trailing "…" if it exceeds
+        ``max_width`` pixels in ``font`` — never lets a long deck name
+        or tag list run into whatever is drawn next to it."""
+        if max_width <= 0:
+            return ""
+        if font.size(text)[0] <= max_width:
+            return text
+        ellipsis_width = font.size("…")[0]
+        budget = max_width - ellipsis_width
+        truncated = text
+        while truncated and font.size(truncated)[0] > budget:
+            truncated = truncated[:-1]
+        return truncated + "…"
 
     def _block(self, text, font, color, top, max_width):
         y = top
