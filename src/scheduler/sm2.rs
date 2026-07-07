@@ -49,7 +49,7 @@ pub fn apply_rating_with_path(
     let mut stmt =
         conn.prepare("SELECT interval, ease_factor, reps, lapses FROM srs_log WHERE card_id = ?1")?;
 
-    let (mut interval, mut ease_factor, mut reps, mut lapses): (u32, f32, u32, u32) = match stmt
+    let (mut interval, mut ease_factor, mut reps, mut lapses): (u32, f32, u32, u32) = stmt
         .query_row([card_id], |row| {
             // Pull raw optional values
             let raw_interval: Option<i64> = row.get(0)?;
@@ -77,10 +77,8 @@ pub fn apply_rating_with_path(
             };
 
             Ok((interval, ease_factor, reps, lapses))
-        }) {
-        Ok(values) => values,
-        Err(_) => (0, 2.5, 0, 0), // New card defaults
-    };
+        })
+        .unwrap_or((0, 2.5, 0, 0)); // New card defaults
 
     // Apply SM-2 algorithm based on quality rating
     match quality {
@@ -468,7 +466,7 @@ impl Scheduler for Sm2Scheduler {
         let note_id_opt = if let Some(ref cached_conn) = self.deck.cached_db_connection {
             let db_conn = rusqlite::Connection::open(&cached_conn.db_path)?;
             let mut stmt = db_conn.prepare("SELECT nid FROM cards WHERE id = ?1")?;
-            let mut rows = stmt.query_map([card_id], |row| Ok(row.get::<_, i64>(0)?))?;
+            let mut rows = stmt.query_map([card_id], |row| row.get::<_, i64>(0))?;
 
             if let Some(row) = rows.next() {
                 Some(row?)

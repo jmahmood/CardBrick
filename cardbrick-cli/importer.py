@@ -22,8 +22,8 @@ class Card:
     """Represents a single flashcard"""
     front: str
     back: str
-    tags: List[str] = None
-    media: List[str] = None
+    tags: Optional[List[str]] = None
+    media: Optional[List[str]] = None
     
     def __post_init__(self):
         if self.tags is None:
@@ -377,6 +377,7 @@ def import_file(file_path: Path, output_dir: Path, deck_name: Optional[str] = No
     output_dir = Path(output_dir)
     
     # Determine importer based on file extension
+    importer: Any
     if file_path.suffix.lower() == '.csv':
         importer = CSVImporter()
     elif file_path.suffix.lower() in ['.md', '.markdown']:

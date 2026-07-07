@@ -144,8 +144,6 @@ mod tests {
             let (new_combo, cb) = combo_bonus(combo, rating);
             combo = new_combo;
 
-            let bp = base_points(rating);
-            let df = difficulty_factor(ease_factor);
             let sb = speed_bonus(response_time);
             let pa = calculate_points_awarded(rating, ease_factor, cb, sb);
 
@@ -179,9 +177,7 @@ mod tests {
             _ => 1,
         };
 
-        (base_cards + weekend_modifier + random_modifier)
-            .max(8)
-            .min(15)
+        (base_cards + weekend_modifier + random_modifier).clamp(8, 15)
     }
 
     /// Simulates realistic rating distribution (mostly Good, some Easy/Hard, occasional Again)
@@ -214,7 +210,7 @@ mod tests {
         // Use a simple distribution for response times
         let base_time = 6.0; // Average response time
         let variation = (std::ptr::addr_of!(base_time) as usize % 5) as f32; // Simple pseudo-randomness
-        (base_time + variation - 2.0).max(2.0).min(12.0)
+        (base_time + variation - 2.0).clamp(2.0, 12.0)
     }
 
     /// Records daily rating with explicit database path
@@ -260,7 +256,7 @@ mod tests {
         let bandit_entries: i64 = conn.query_row(
             "SELECT COUNT(*) FROM bandit_log WHERE date >= ?1",
             [start_date.format("%Y-%m-%d").to_string()],
-            |row| Ok(row.get(0)?),
+            |row| row.get(0),
         )?;
 
         // Should have at least some bandit learning entries (relaxed for test)

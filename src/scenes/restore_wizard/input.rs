@@ -67,13 +67,10 @@ fn handle_code_entry_input(state: &mut AppState, input: BrickInput) -> Result<()
 }
 
 fn handle_complete_input(state: &mut AppState, input: BrickInput) -> Result<(), String> {
-    match input {
-        BrickInput::ButtonDown(BrickButton::A) => {
-            // Continue to main menu (app restart would happen here)
-            state.game_state = GameState::MainMenu(crate::scenes::main_menu::MainMenuState::new());
-            let _ = state.audio.play_sound(crate::assets::OPEN_SOUND);
-        }
-        _ => {}
+    if let BrickInput::ButtonDown(BrickButton::A) = input {
+        // Continue to main menu (app restart would happen here)
+        state.game_state = GameState::MainMenu(crate::scenes::main_menu::MainMenuState::new());
+        let _ = state.audio.play_sound(crate::assets::OPEN_SOUND);
     }
     Ok(())
 }

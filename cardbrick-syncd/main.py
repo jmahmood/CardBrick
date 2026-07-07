@@ -24,9 +24,9 @@ try:
     from .config import Config
 except ImportError:
     # Fall back to absolute imports (when run as main module)
-    from daemon import SyncDaemon
-    from discovery import AvahiService, SimpleDiscovery, AVAHI_AVAILABLE
-    from config import Config
+    from daemon import SyncDaemon  # type: ignore[no-redef]
+    from discovery import AvahiService, SimpleDiscovery, AVAHI_AVAILABLE  # type: ignore[no-redef]
+    from config import Config  # type: ignore[no-redef]
 
 # Configure logging
 logging.basicConfig(

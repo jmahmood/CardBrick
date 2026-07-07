@@ -76,8 +76,11 @@ jobs:
         
     - name: Run type checking
       run: |
-        mypy cardbrick-syncd/ --ignore-missing-imports
-        mypy cardbrick-cli/ --ignore-missing-imports
+        tmpdir="$(mktemp -d)"
+        cp -R cardbrick-syncd "$tmpdir/cardbrick_syncd"
+        cp -R cardbrick-cli "$tmpdir/cardbrick_cli"
+        mypy "$tmpdir/cardbrick_syncd" --ignore-missing-imports
+        mypy "$tmpdir/cardbrick_cli" --ignore-missing-imports
         
     - name: Test CLI import functionality
       run: |

@@ -255,7 +255,6 @@ mod tests {
                     received_complete = true;
                     break;
                 }
-                _ => {}
             }
         }
 
@@ -265,7 +264,7 @@ mod tests {
             "Should have multiple progress updates"
         );
         assert!(
-            progress_values.iter().all(|&p| p >= 0.0 && p <= 1.0),
+            progress_values.iter().all(|&p| (0.0..=1.0).contains(&p)),
             "Progress should be 0.0-1.0"
         );
         assert!(

@@ -13,7 +13,7 @@ from typing import Optional
 try:
     from .config import Config
 except ImportError:
-    from config import Config
+    from config import Config  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 

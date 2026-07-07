@@ -86,7 +86,7 @@ pub fn due_cards(today: NaiveDate, conn: &Connection) -> SqlResult<Vec<CardId>> 
 
     let card_ids: Result<Vec<CardId>, _> = stmt
         .query_map([today_timestamp, BACKLOG_CAP as i64], |row| {
-            Ok(row.get::<_, i64>(0)?)
+            row.get::<_, i64>(0)
         })?
         .collect();
 
@@ -103,7 +103,7 @@ pub fn next_new_cards(count: usize, conn: &Connection) -> SqlResult<Vec<CardId>>
     )?;
 
     let card_ids: Result<Vec<CardId>, _> = stmt
-        .query_map([count as i64], |row| Ok(row.get::<_, i64>(0)?))?
+        .query_map([count as i64], |row| row.get::<_, i64>(0))?
         .collect();
 
     card_ids
@@ -220,10 +220,10 @@ pub fn build_today_with_deck_and_path(
     } else {
         pack_sz / 3
     };
-    let mut studied_ids: std::collections::HashSet<CardId> = {
+    let studied_ids: std::collections::HashSet<CardId> = {
         let mut set = std::collections::HashSet::new();
         let mut stmt = tx.prepare("SELECT card_id FROM srs_log")?;
-        let rows = stmt.query_map([], |row| Ok(row.get::<_, i64>(0)?))?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
         for r in rows {
             set.insert(r?);
         }

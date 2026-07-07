@@ -123,13 +123,7 @@ impl Config {
         let base_decks_dir = exe_dir.join("decks");
         let sfx_dir = exe_dir.join("sfx");
 
-        let (base_assets, base_decks, sfx_directory) = if is_trimui {
-            (
-                Path::new(&base_assets_dir),
-                Path::new(&base_decks_dir),
-                Path::new(&sfx_dir),
-            )
-        } else if is_rg35xx {
+        let (base_assets, base_decks, sfx_directory) = if is_trimui || is_rg35xx {
             (
                 Path::new(&base_assets_dir),
                 Path::new(&base_decks_dir),
@@ -154,5 +148,11 @@ impl Config {
             font_size_small: 10,
             assets_dir: base_assets.to_path_buf(),
         }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
     }
 }

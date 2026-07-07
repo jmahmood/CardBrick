@@ -1,3 +1,5 @@
+#![allow(dead_code, unexpected_cfgs, clippy::useless_vec)]
+
 /*!
  * mDNS service discovery implementation for CardBrick sync
  *

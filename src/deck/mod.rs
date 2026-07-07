@@ -6,7 +6,6 @@ pub mod html_parser;
 pub mod loader;
 pub mod scanner;
 
-use chrono;
 use std::collections::{HashMap, HashSet};
 
 /// Represents a single Anki card.
@@ -436,6 +435,7 @@ impl Deck {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PACK_SIZE_DEFAULT;
     use std::path::PathBuf;
 
     fn create_test_card(id: i64, note_id: i64) -> Card {
@@ -628,6 +628,7 @@ mod tests {
     }
 
     // Helper function to create an in-memory test database with cards
+    #[allow(dead_code)]
     fn create_test_database_with_cards(card_count: i64) -> rusqlite::Connection {
         let conn =
             rusqlite::Connection::open_in_memory().expect("Failed to create in-memory database");
@@ -709,7 +710,7 @@ mod tests {
 
         // Test loading cards with some marked as failed today
         let failed_today = vec![1, 3, 5]; // Cards 1, 3, 5 failed today
-        let hard_today: Vec<i64> = vec![];
+        let _hard_today: Vec<i64> = vec![];
 
         // Populate the difficult_cards table instead of relying on parameters
         let conn = rusqlite::Connection::open(&temp_db_path).unwrap();
@@ -808,7 +809,7 @@ mod tests {
         };
 
         // Test with hard cards
-        let failed_today: Vec<i64> = vec![];
+        let _failed_today: Vec<i64> = vec![];
         let hard_today = vec![2, 4, 6, 8]; // Cards 2, 4, 6, 8 were hard
 
         // Populate the difficult_cards table instead of relying on parameters
@@ -883,8 +884,8 @@ mod tests {
         };
 
         // Test with no difficult cards - should fall back to uncovered cards
-        let failed_today: Vec<i64> = vec![];
-        let hard_today: Vec<i64> = vec![];
+        let _failed_today: Vec<i64> = vec![];
+        let _hard_today: Vec<i64> = vec![];
 
         let result = deck.load_more_cards(5).unwrap();
         assert_eq!(result.len(), 5);
@@ -930,8 +931,8 @@ mod tests {
         };
 
         // Test with empty failed/hard arrays
-        let failed_today: Vec<i64> = vec![];
-        let hard_today: Vec<i64> = vec![];
+        let _failed_today: Vec<i64> = vec![];
+        let _hard_today: Vec<i64> = vec![];
 
         let result = deck.load_more_cards(6).unwrap();
         assert_eq!(result.len(), 6);
@@ -1090,8 +1091,8 @@ mod tests {
             }),
         };
 
-        let failed_today = vec![1, 2]; // Some cards are difficult
-        let hard_today = vec![3];
+        let _failed_today = [1, 2]; // Some cards are difficult
+        let _hard_today = [3];
 
         let result = deck.load_more_cards(10).unwrap();
 
@@ -1115,8 +1116,8 @@ mod tests {
             }),
         };
 
-        let failed_today = vec![1, 2];
-        let hard_today = vec![3, 4];
+        let _failed_today = [1, 2];
+        let _hard_today = [3, 4];
 
         // Should return an error for invalid database path
         let result = deck.load_more_cards(12);
@@ -1162,8 +1163,8 @@ mod tests {
             }),
         };
 
-        let failed_today: Vec<i64> = vec![];
-        let hard_today: Vec<i64> = vec![];
+        let _failed_today: Vec<i64> = vec![];
+        let _hard_today: Vec<i64> = vec![];
 
         let result = deck.load_more_cards(8).unwrap();
 

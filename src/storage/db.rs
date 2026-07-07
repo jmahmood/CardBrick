@@ -83,7 +83,7 @@ impl DatabaseManager {
         };
 
         let mut stmt = self.conn.prepare(query)?;
-        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<i64> { Ok(row.get::<_, i64>(0)?) };
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<i64> { row.get::<_, i64>(0) };
 
         let card_iter = if let Some(diff_type) = difficulty_type {
             stmt.query_map([date, diff_type], map_row)?
@@ -163,6 +163,7 @@ impl DatabaseManager {
     }
 
     /// Record a study event with complete point breakdown
+    #[allow(clippy::too_many_arguments)]
     pub fn record_study_event(
         &self,
         card_id: i64,
@@ -193,7 +194,7 @@ impl DatabaseManager {
 
         let points: i32 = self.conn
             .prepare("SELECT COALESCE(SUM(pa), 0) FROM study_events WHERE timestamp >= ?1 AND timestamp < ?2")?
-            .query_row([today_start, today_end], |row| Ok(row.get(0)?))?;
+            .query_row([today_start, today_end], |row| row.get(0))?;
 
         Ok(points)
     }
@@ -301,7 +302,7 @@ impl DatabaseManager {
         let count: i64 = self
             .conn
             .prepare("SELECT adopted_count FROM deck_daily_stats WHERE study_day = ?1")?
-            .query_row([&today], |row| Ok(row.get::<_, i64>(0)?))
+            .query_row([&today], |row| row.get::<_, i64>(0))
             .unwrap_or(0);
         Ok(count)
     }
@@ -357,7 +358,7 @@ pub fn is_card_adopted_in_progress(card_id: i64) -> Result<bool> {
     let conn = Connection::open(&path)?;
     let exists: i64 = conn
         .prepare("SELECT COUNT(1) FROM srs_log WHERE card_id = ?1")?
-        .query_row([card_id], |row| Ok(row.get::<_, i64>(0)?))?;
+        .query_row([card_id], |row| row.get::<_, i64>(0))?;
     Ok(exists > 0)
 }
 

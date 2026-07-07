@@ -156,13 +156,13 @@ impl<'a> StudyingState<'a> {
 fn detect_math_mode(scheduler: &dyn Scheduler) -> bool {
     // Sample the first few cards to detect math patterns
     let total_cards = scheduler.total_session_cards();
-    let sample_size = (total_cards.min(10)).max(1); // Sample at most 10 cards
+    let sample_size = total_cards.clamp(1, 10); // Sample at most 10 cards
 
     let mut math_indicators = 0;
     let mut total_checked = 0;
 
     // Look for math-related patterns in card content
-    for i in 0..sample_size {
+    for _ in 0..sample_size {
         // Try to get card ID from scheduler (this is a simplified check)
         // In a real implementation, we'd need a way to peek at card content
         // For now, use simple heuristics based on deck size and card count
@@ -490,11 +490,11 @@ pub fn draw_studying_scene(
 
                 // Set text alpha for fade-in effect
                 let old_alpha = WHITE.a;
-                let _fade_color = Color::from_rgba(255, 255, 255, (old_alpha as f32 * alpha) as u8);
+                let _fade_color = Color::from_rgba(255, 255, 255, (old_alpha * alpha) as u8);
 
                 font_manager.draw_layout(
                     layout,
-                    x_center as i32,
+                    x_center,
                     y_center as i32 + font_ascent as i32,
                     studying_state.show_ruby_text,
                     canvas_manager,
@@ -522,7 +522,7 @@ pub fn draw_studying_scene(
 
                 font_manager.draw_layout(
                     layout,
-                    x_center as i32,
+                    x_center,
                     y_center as i32 + font_ascent as i32,
                     studying_state.show_ruby_text,
                     canvas_manager,
@@ -548,7 +548,7 @@ pub fn draw_studying_scene(
 
                 // Flash the prompt every 30 frames (~0.5s at 60fps) - battery optimized
                 // Only evaluate flashing state once per 30 frames instead of every frame
-                let flash_visible = (studying_state.animation_frame_counter / 30) % 2 == 0;
+                let flash_visible = (studying_state.animation_frame_counter / 30).is_multiple_of(2);
                 if flash_visible {
                     let (prompt_w, _) = hint_font_manager.size_of_text(prompt_text)?;
                     let prompt_x = (512 - prompt_w) / 2;
@@ -711,7 +711,7 @@ fn draw_session_details(
                 canvas_manager,
             )?;
         }
-        current_y += layout.total_height as i32 + 20; // Spacing between layouts
+        current_y += layout.total_height + 20; // Spacing between layouts
     }
 
     // Draw "Press B to return" at bottom

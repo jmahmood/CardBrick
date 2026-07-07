@@ -147,7 +147,7 @@ fn process_node(
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "hr" | "li" | "hr/" | "ul" => {
                 // Ensure a single newline is added after these block elements.
                 // Check if the last span is *not* already a newline.
-                if spans.last().map_or(true, |s| s.text != "\n") {
+                if spans.last().is_none_or(|s| s.text != "\n") {
                     // Add if empty or last is not newline
                     spans.push(TextSpan {
                         text: "\n".into(),

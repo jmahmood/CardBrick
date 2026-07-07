@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Performance metrics collected over time
@@ -405,6 +406,12 @@ impl PerfMonitor {
     }
 }
 
+impl Default for PerfMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Performance summary statistics
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PerfSummary {
@@ -428,30 +435,28 @@ fn mean(values: &[f64]) -> Option<f64> {
 }
 
 /// Global performance monitor instance
-static mut PERF_MONITOR: Option<PerfMonitor> = None;
+static PERF_MONITOR: OnceLock<Mutex<PerfMonitor>> = OnceLock::new();
 
 /// Initialize global performance monitor
 pub fn init_perf_monitor() {
-    unsafe {
-        PERF_MONITOR = Some(PerfMonitor::new());
-    }
+    let _ = PERF_MONITOR.set(Mutex::new(PerfMonitor::new()));
 }
 
 /// Get reference to global performance monitor
-pub fn perf_monitor() -> Option<&'static mut PerfMonitor> {
-    unsafe { PERF_MONITOR.as_mut() }
+pub fn perf_monitor() -> Option<MutexGuard<'static, PerfMonitor>> {
+    PERF_MONITOR.get().and_then(|monitor| monitor.lock().ok())
 }
 
 /// Convenience function to set scene
 pub fn set_perf_scene(scene: &str) {
-    if let Some(monitor) = perf_monitor() {
+    if let Some(mut monitor) = perf_monitor() {
         monitor.set_scene(scene);
     }
 }
 
 /// Convenience function to take sample
 pub fn perf_sample() {
-    if let Some(monitor) = perf_monitor() {
+    if let Some(mut monitor) = perf_monitor() {
         monitor.sample();
     }
 }

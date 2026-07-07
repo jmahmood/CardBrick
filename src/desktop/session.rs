@@ -252,7 +252,7 @@ impl Session {
             let internal_id = self.get_internal_card_id(&card.id);
             // Use microsecond precision to avoid timestamp collisions
             let timestamp = Utc::now().timestamp_micros();
-            let timestamp_seconds = (timestamp / 1_000_000) as i64;
+            let timestamp_seconds = timestamp / 1_000_000;
 
             // Record the event in history
             self.history.push_back(SessionEvent {

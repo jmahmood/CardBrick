@@ -239,55 +239,53 @@ impl FontManager {
                         width: fit_w,
                     });
                     processed_spans.push_front(remaining_span);
+                } else if !current_line_spans.is_empty() {
+                    // The current line has content, so it's full.
+                    // Finalize it and re-process the current span on a new line.
+                    processed_spans.push_front(span);
                 } else {
-                    if !current_line_spans.is_empty() {
-                        // The current line has content, so it's full.
-                        // Finalize it and re-process the current span on a new line.
-                        processed_spans.push_front(span);
-                    } else {
-                        // The line is empty, but the word is still too long.
-                        // Force a split by taking at least one character to prevent an infinite loop.
-                        let text_to_split = span.text_to_use(use_ruby).to_string();
-                        let mut char_iter = text_to_split.chars();
-                        if let Some(first_char) = char_iter.next() {
-                            let split_at = first_char.len_utf8();
-                            let (fits, remaining) = text_to_split.split_at(split_at);
+                    // The line is empty, but the word is still too long.
+                    // Force a split by taking at least one character to prevent an infinite loop.
+                    let text_to_split = span.text_to_use(use_ruby).to_string();
+                    let mut char_iter = text_to_split.chars();
+                    if let Some(first_char) = char_iter.next() {
+                        let split_at = first_char.len_utf8();
+                        let (fits, remaining) = text_to_split.split_at(split_at);
 
-                            let mut fit_span = span.clone();
-                            let mut remaining_span = span;
+                        let mut fit_span = span.clone();
+                        let mut remaining_span = span;
 
-                            if use_ruby {
-                                fit_span.ruby_text = Some(fits.to_string());
-                                remaining_span.ruby_text = Some(remaining.to_string());
-                                // We keep the base text with the first part and clear it for the rest.
-                                remaining_span.text = String::new();
-                            } else {
-                                fit_span.text = fits.to_string();
-                                remaining_span.text = remaining.to_string();
-                            }
-
-                            let text_to_draw = if use_ruby {
-                                fit_span.ruby_text.as_deref().unwrap_or("")
-                            } else {
-                                &fit_span.text
-                            };
-                            let (fit_w, _) = self.size_of_text_with_style(
-                                text_to_draw,
-                                fit_span.is_bold,
-                                fit_span.is_italic,
-                            )?;
-                            current_line_spans.push(LayoutSpan {
-                                text: text_to_draw.to_string(),
-                                is_bold: fit_span.is_bold,
-                                is_italic: fit_span.is_italic,
-                                width: fit_w,
-                            });
-                            if !remaining.is_empty() {
-                                processed_spans.push_front(remaining_span);
-                            }
+                        if use_ruby {
+                            fit_span.ruby_text = Some(fits.to_string());
+                            remaining_span.ruby_text = Some(remaining.to_string());
+                            // We keep the base text with the first part and clear it for the rest.
+                            remaining_span.text = String::new();
                         } else {
-                            // The span was empty, do nothing.
+                            fit_span.text = fits.to_string();
+                            remaining_span.text = remaining.to_string();
                         }
+
+                        let text_to_draw = if use_ruby {
+                            fit_span.ruby_text.as_deref().unwrap_or("")
+                        } else {
+                            &fit_span.text
+                        };
+                        let (fit_w, _) = self.size_of_text_with_style(
+                            text_to_draw,
+                            fit_span.is_bold,
+                            fit_span.is_italic,
+                        )?;
+                        current_line_spans.push(LayoutSpan {
+                            text: text_to_draw.to_string(),
+                            is_bold: fit_span.is_bold,
+                            is_italic: fit_span.is_italic,
+                            width: fit_w,
+                        });
+                        if !remaining.is_empty() {
+                            processed_spans.push_front(remaining_span);
+                        }
+                    } else {
+                        // The span was empty, do nothing.
                     }
                 }
 
@@ -384,6 +382,7 @@ impl FontManager {
         Ok((dimensions.width as u32, dimensions.height as u32))
     }
 
+    #[allow(dead_code)]
     fn draw_text_span_segment_camera(
         &self,
         text: &str,
@@ -524,14 +523,12 @@ impl FontManager {
             let dimensions = measure_text(&test_line, self.font.as_ref(), font_size, 1.0);
             if dimensions.width <= box_width as f32 {
                 current_line = test_line;
+            } else if !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = word.to_string();
             } else {
-                if !current_line.is_empty() {
-                    lines.push(current_line);
-                    current_line = word.to_string();
-                } else {
-                    // Single word is too long, it becomes its own line
-                    lines.push(word.to_string());
-                }
+                // Single word is too long, it becomes its own line
+                lines.push(word.to_string());
             }
         }
         if !current_line.is_empty() {

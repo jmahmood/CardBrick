@@ -19,10 +19,10 @@ pub fn difficulty_factor(ease_factor: u32) -> i32 {
     let ease_decimal = ease_factor as f32 / 1000.0; // Convert back to decimal (e.g., 2500 -> 2.5)
 
     match ease_decimal {
-        x if x >= 1.3 && x < 1.7 => 1,
-        x if x >= 1.7 && x < 2.1 => 2,
-        x if x >= 2.1 && x < 2.5 => 3,
-        x if x >= 2.5 && x < 2.9 => 4,
+        x if (1.3..1.7).contains(&x) => 1,
+        x if (1.7..2.1).contains(&x) => 2,
+        x if (2.1..2.5).contains(&x) => 3,
+        x if (2.5..2.9).contains(&x) => 4,
         x if x >= 2.9 => 5,
         _ => 1, // Fallback for edge cases (ease < 1.3)
     }
@@ -62,7 +62,7 @@ pub fn calculate_points_awarded(
     let df = difficulty_factor(ease_factor);
     let base_score = bp * df;
 
-    (base_score + combo_bonus + speed_bonus) as i32
+    base_score + combo_bonus + speed_bonus
 }
 
 /// Session and Daily Bonus Constants
