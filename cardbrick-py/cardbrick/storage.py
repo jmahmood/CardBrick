@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -110,9 +110,12 @@ CREATE TABLE IF NOT EXISTS child_profiles (
     active_decks         TEXT,
     daily_new_cards      INTEGER NOT NULL DEFAULT 10,
     daily_review_cards   INTEGER NOT NULL DEFAULT 40,
-    session_card_limit   INTEGER NOT NULL DEFAULT 50,
-    session_time_minutes INTEGER NOT NULL DEFAULT 15,
-    study_direction      TEXT NOT NULL DEFAULT 'normal'
+    daily_goal_cards     INTEGER NOT NULL DEFAULT 150,
+    session_card_limit   INTEGER NOT NULL DEFAULT 20,
+    session_time_minutes INTEGER NOT NULL DEFAULT 10,
+    study_direction      TEXT NOT NULL DEFAULT 'normal',
+    study_ahead_days     INTEGER NOT NULL DEFAULT 1,
+    study_ahead_enabled  INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck);
@@ -135,6 +138,9 @@ _STATE_UPGRADES = {
 }
 _PROFILE_UPGRADES = {
     "active_decks": "TEXT",
+    "daily_goal_cards": "INTEGER NOT NULL DEFAULT 150",
+    "study_ahead_days": "INTEGER NOT NULL DEFAULT 1",
+    "study_ahead_enabled": "INTEGER NOT NULL DEFAULT 1",
 }
 
 
@@ -178,7 +184,14 @@ class Storage:
             self._backup(stored)
         self._upgrade_table("cards", _CARD_UPGRADES)
         self._upgrade_table("review_state", _STATE_UPGRADES)
-        self._upgrade_table("child_profiles", _PROFILE_UPGRADES)
+        added = self._upgrade_table("child_profiles", _PROFILE_UPGRADES)
+        if "daily_goal_cards" in added:
+            # Existing profiles were tuned around the old review+new caps;
+            # seed the goal from them so nobody's day suddenly triples.
+            self.conn.execute(
+                """UPDATE child_profiles
+                   SET daily_goal_cards = daily_new_cards +
+                                          daily_review_cards""")
         self.conn.executescript(SCHEMA)
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES "
@@ -203,17 +216,21 @@ class Storage:
                         exc)
 
     def _upgrade_table(self, table, upgrades):
+        """ALTER TABLE in any missing columns; returns the ones added."""
         row = self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (table,)).fetchone()
         if row is None:
-            return
+            return []
         existing = {r["name"] for r in
                     self.conn.execute(f"PRAGMA table_info({table})")}
+        added = []
         for column, decl in upgrades.items():
             if column not in existing:
                 self.conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                added.append(column)
+        return added
 
     def close(self):
         self.conn.close()
@@ -339,6 +356,30 @@ class Storage:
             query = base + " AND r.reps > 0 AND r.due <= :now ORDER BY r.due"
         return self.conn.execute(query, params).fetchall()
 
+    def ahead_candidates(self, now_iso, horizon_iso, decks=None):
+        """Cards due after now but within the study-ahead horizon.
+
+        Same eligibility rules as queue_candidates (no suspended cards,
+        no buried cards, optional deck restriction), ordered soonest-due
+        first so the most urgent cards are pulled forward first. Used to
+        top up a sprint when today's due pool runs dry.
+        """
+        if decks is not None and len(decks) == 0:
+            return []  # explicitly "no decks active": nothing to pull
+        query = """SELECT c.*, r.due, r.reps, r.lapses,
+                          r.state AS fsrs_state, r.fsrs_json
+                   FROM cards c JOIN review_state r ON r.card_id = c.id
+                   WHERE c.suspended = 0
+                     AND (c.buried_until IS NULL OR c.buried_until <= :now)
+                     AND r.reps > 0 AND r.due > :now AND r.due <= :horizon"""
+        params = {"now": now_iso, "horizon": horizon_iso}
+        if decks is not None:
+            placeholders = ",".join(f":deck{i}" for i in range(len(decks)))
+            query += f" AND c.deck IN ({placeholders})"
+            params.update({f"deck{i}": name for i, name in enumerate(decks)})
+        query += " ORDER BY r.due"
+        return self.conn.execute(query, params).fetchall()
+
     def suspended_cards(self):
         return self.conn.execute(
             "SELECT * FROM cards WHERE suspended = 1 ORDER BY deck, id"
@@ -430,6 +471,18 @@ class Storage:
                WHERE undone = 0 AND reviewed_at >= ?""",
             (day_start_iso,))}
         return len(new_ids), len(all_ids - new_ids), new_ids
+
+    def daily_answer_count(self, day_start_iso):
+        """Total not-undone answers logged since the local day start.
+
+        Unlike daily_counts this counts every answer — including
+        learning-step repeats of the same card — which is the unit of
+        the daily goal ("150 cards a day").
+        """
+        return self.conn.execute(
+            """SELECT COUNT(*) AS n FROM review_log
+               WHERE undone = 0 AND reviewed_at >= ?""",
+            (day_start_iso,)).fetchone()["n"]
 
     def daily_history(self, since_iso):
         """Raw (reviewed_at, was_new, card_id) tuples for progress views."""
@@ -536,8 +589,10 @@ class Storage:
 
     def create_profile(self, name, **fields):
         allowed = {"active_categories", "active_decks", "daily_new_cards",
-                   "daily_review_cards", "session_card_limit",
-                   "session_time_minutes", "study_direction"}
+                   "daily_review_cards", "daily_goal_cards",
+                   "session_card_limit", "session_time_minutes",
+                   "study_direction", "study_ahead_days",
+                   "study_ahead_enabled"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")
@@ -553,8 +608,9 @@ class Storage:
     def update_profile(self, profile_id, **fields):
         allowed = {"name", "active_categories", "active_decks",
                    "daily_new_cards", "daily_review_cards",
-                   "session_card_limit", "session_time_minutes",
-                   "study_direction"}
+                   "daily_goal_cards", "session_card_limit",
+                   "session_time_minutes", "study_direction",
+                   "study_ahead_days", "study_ahead_enabled"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")

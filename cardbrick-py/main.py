@@ -82,14 +82,23 @@ def build_parser():
     p_profile = sub.add_parser("profile",
                                help="View or edit the child profile")
     p_profile.add_argument("--name", help="Child's name")
+    p_profile.add_argument("--daily-goal", type=int,
+                           help="Daily goal in card answers; done in "
+                                "sprints of --sprint-cards")
     p_profile.add_argument("--daily-new", type=int,
                            help="New cards per day")
-    p_profile.add_argument("--daily-review", type=int,
-                           help="Review cards per day")
-    p_profile.add_argument("--session-cards", type=int,
-                           help="Max cards per session")
-    p_profile.add_argument("--session-minutes", type=int,
-                           help="Max minutes per session (0 = no limit)")
+    p_profile.add_argument("--sprint-cards", "--session-cards", type=int,
+                           dest="sprint_cards",
+                           help="Max cards per sprint")
+    p_profile.add_argument("--sprint-minutes", "--session-minutes",
+                           type=int, dest="sprint_minutes",
+                           help="Max minutes per sprint (0 = no limit)")
+    p_profile.add_argument("--study-ahead-days", type=int,
+                           help="How many days ahead a sprint may pull "
+                                "soon-due cards from (default 1)")
+    p_profile.add_argument("--study-ahead", choices=["on", "off"],
+                           help="Allow filling sprints with soon-due "
+                                "cards and offering bonus sprints")
     p_profile.add_argument("--categories",
                            help="Comma-separated active categories, "
                                 "or 'all' for every tag")
@@ -249,14 +258,19 @@ def _profile_command(storage, args):
     updates = {}
     if args.name:
         updates["name"] = args.name
+    if args.daily_goal is not None:
+        updates["daily_goal_cards"] = args.daily_goal
     if args.daily_new is not None:
         updates["daily_new_cards"] = args.daily_new
-    if args.daily_review is not None:
-        updates["daily_review_cards"] = args.daily_review
-    if args.session_cards is not None:
-        updates["session_card_limit"] = args.session_cards
-    if args.session_minutes is not None:
-        updates["session_time_minutes"] = args.session_minutes
+    if args.sprint_cards is not None:
+        updates["session_card_limit"] = args.sprint_cards
+    if args.sprint_minutes is not None:
+        updates["session_time_minutes"] = args.sprint_minutes
+    if args.study_ahead_days is not None:
+        updates["study_ahead_days"] = args.study_ahead_days
+    if args.study_ahead:
+        updates["study_ahead_enabled"] = 1 if args.study_ahead == "on" \
+            else 0
     if args.direction:
         updates["study_direction"] = args.direction
     if args.categories:

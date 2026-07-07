@@ -99,8 +99,10 @@ python main.py study                  # add --fullscreen on the handheld
 
 # Configure the child profile from the command line (parent mode can do
 # the same on-device)
-python main.py profile --name Maya --daily-new 10 --daily-review 40 \
-    --session-cards 50 --session-minutes 15 --categories restaurant,food
+python main.py profile --name Maya --daily-goal 150 --daily-new 10 \
+    --sprint-cards 20 --sprint-minutes 10 --categories restaurant,food
+python main.py profile --study-ahead-days 2   # pull-forward horizon
+python main.py profile --study-ahead off      # day ends with the due pool
 python main.py profile --categories all      # study every tag
 
 # Legacy prototype reviewer (no limits/undo/profiles)
@@ -287,13 +289,26 @@ no undo button in the child-facing UI, so this is the one command in
 the app that discards data outright. This is an admin/CLI-only
 operation; it is deliberately not exposed in Parent Mode's on-device UI.
 
-### Daily limits
+### Daily goal & sprints (microstudying)
 
-Per child profile: `daily_new_cards` (default 10), `daily_review_cards`
-(40), `session_card_limit` (50), `session_time_minutes` (15, 0 = off).
-Limits count work already done today across restarts (derived from the
-review log), reviews are queued before new cards, and a backlog never
-floods the child — extra due cards simply wait for tomorrow.
+The day is a card goal chipped away in short sprints, not one sitting.
+Per child profile: `daily_goal_cards` (default 150) is the day's goal
+in card answers; each sprint is bounded by `session_card_limit`
+(default 20) and `session_time_minutes` (10, 0 = off), so the child
+always knows how many sprints they still owe ("3 sprints to go today").
+Doing sprints back-to-back — "going ahead" — burns the count down just
+the same as spacing them out; the schedule is the child's own and
+nothing nags. `daily_new_cards` (default 10) still paces how fast new
+material enters FSRS.
+
+When today's due cards run out before the goal, sprints top up with
+soon-due cards pulled forward (`study_ahead_days`, default 1 — safe
+under FSRS, an early review just earns a smaller stability gain), and
+after the goal is met an optional bonus sprint is offered. Set
+`study_ahead_enabled` to 0 to end the day when the due pool is empty
+instead. All counters are derived from the review log, so they survive
+restarts and undo; a backlog never floods the child — extra due cards
+arrive one sprint at a time.
 
 ### Durability
 

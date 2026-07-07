@@ -146,7 +146,7 @@ allowlists (`storage.py:538, :554`) so the profile CLI can set them:
 
 Sprint size/length stay on the existing `session_card_limit` /
 `session_time_minutes` fields (parents should set them to the 5–10 min
-range; suggested new defaults: 20 cards / 7 minutes, tuned so
+range; new defaults: 20 cards / 10 minutes, tuned so
 `150 / 20 ≈ 8` sprints).
 
 Migration note: initialize `daily_goal_cards` for existing profiles from

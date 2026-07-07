@@ -1,10 +1,13 @@
 """CardBrick-style study appliance UI.
 
-A state-driven pygame app aimed at children doing a short daily Spanish
-session on a handheld. Screens:
+A state-driven pygame app aimed at children microstudying Spanish on a
+handheld: a daily card goal chipped away in short sprints across the
+day (see ReviewService.sprint_status), never one long sitting. Screens:
 
     ChildStart -> DeckSelect (only when >1 deck is assigned)
-              -> Review (question/answer) -> SessionSummary -> ChildStart
+              -> Review (one sprint) -> SessionSummary
+                 -> Review again ("going ahead": the next sprint now)
+                 -> or back to ChildStart
     ChildStart / SessionSummary -> Calendar (stamp calendar) -> back
     ChildStart -> ParentMode (import / decks / categories / limits /
                               suspended / progress / calendar /
@@ -156,6 +159,8 @@ class CardBrickApp:
         self.input_map = InputMap(paths.input_map_path if paths else None)
         self._image_cache = {}  # vocab card images, decoded once per file
         self._session_deck_filter = None  # child's per-sitting deck pick
+        self._session_bonus = False  # next sprint ignores the daily goal
+        self._sprint_label = ""      # "Sprint 3/8" shown in the review header
         self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
         self.input = InputTranslator(self.input_map)
 
@@ -340,8 +345,8 @@ class CardBrickApp:
 
     def screen_child_start(self):
         self._session_deck_filter = None  # cleared each time we land here
-        review_n, new_n = self.service.counts_for_queue(profile=self.profile)
-        total = review_n + new_n
+        self._session_bonus = False
+        status = self.service.sprint_status(profile=self.profile)
         available_decks = self._resolve_available_decks()
         categories = self.profile["active_categories"]
         cat_label = "All categories" if categories is None else \
@@ -349,6 +354,8 @@ class CardBrickApp:
         decks = self.profile["active_decks"]
         deck_label = "All decks" if decks is None else \
             ", ".join(decks) if decks else "No decks set"
+        startable = status["next_sprint_cards"] > 0
+        bonus = not startable and status["bonus_cards"] > 0
 
         while True:
             action = self.poll()
@@ -359,7 +366,9 @@ class CardBrickApp:
             if action == "north_button":
                 self._calendar_return = "CHILD_START"
                 return "CALENDAR"
-            if action in ("south_button", "unmapped") and total > 0:
+            if action in ("south_button", "unmapped") and \
+                    (startable or bonus):
+                self._session_bonus = bonus
                 return "DECK_SELECT" if len(available_decks) > 1 \
                     else "REVIEW"
 
@@ -370,26 +379,45 @@ class CardBrickApp:
                                               FG), 80)
             self._center(self.font.render(cat_label, True, ACCENT), 150)
             self._center(self.font_small.render(deck_label, True, DIM), 182)
-            if total > 0:
-                due_text = f"{total} cards today"
-                detail = f"{review_n} to review  +  {new_n} new"
-                self._center(self.font_big.render(due_text, True, FG), 215)
-                self._center(self.font.render(detail, True, DIM), 265)
-                limit_line = (f"up to {self.profile['session_card_limit']} "
-                              f"cards / "
-                              f"{self.profile['session_time_minutes']} min")
-                self._center(self.font_small.render(limit_line, True, DIM),
+            if startable:
+                n = status["sprints_remaining"]
+                headline = "Last sprint of the day!" if n == 1 else \
+                    f"{n} sprints to go today"
+                self._center(self.font_big.render(headline, True, FG), 215)
+                self._center(self.font.render(
+                    f"{status['cards_done']} / {status['goal']} cards done",
+                    True, DIM), 265)
+                minutes = self.profile["session_time_minutes"]
+                sprint_line = (f"next sprint: "
+                               f"{status['next_sprint_cards']} cards"
+                               + (f" / about {minutes} min" if minutes
+                                  else ""))
+                self._center(self.font_small.render(sprint_line, True, DIM),
                              305)
                 self._center(self.font.render(
                     "Press the bottom button to start!", True, GOOD), 360)
+            elif bonus:
+                self._center(self.font_big.render("Goal reached! Great job!",
+                                                  True, GOOD), 215)
+                self._center(self.font.render(
+                    f"{status['cards_done']} cards today — all "
+                    f"{status['sprints_planned']} sprints done", True, DIM),
+                    265)
+                self._center(self.font_small.render(
+                    f"Spare time? A bonus sprint of "
+                    f"{status['bonus_cards']} cards is ready.", True, DIM),
+                    305)
+                self._center(self.font.render(
+                    "Bottom button = bonus sprint (totally optional!)",
+                    True, GOOD), 360)
             else:
                 self._center(self.font_big.render("All done for today!",
                                                   True, GOOD), 230)
                 self._center(self.font.render("Come back tomorrow.", True,
                                               DIM), 285)
             self._footer(
-                "Bottom = Start    Top = Calendar" if total else
-                "Top = Calendar",
+                "Bottom = Start    Top = Calendar" if (startable or bonus)
+                else "Top = Calendar",
                 "SELECT = Parent    START = Quit")
             self.present()
             self.clock.tick(FPS)
@@ -407,7 +435,8 @@ class CardBrickApp:
         # screen redraws every tick like the other menus, and querying
         # the DB per entry per frame would not be free on a big deck.
         counts = [self.service.counts_for_queue(profile=self.profile,
-                                                deck_filter=decks)
+                                                deck_filter=decks,
+                                                bonus=self._session_bonus)
                  for _label, decks in entries]
         index = 0
 
@@ -455,11 +484,20 @@ class CardBrickApp:
     VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
 
     def screen_review(self):
+        if self._session_bonus:
+            self._sprint_label = "Bonus sprint"
+        else:
+            status = self.service.sprint_status(profile=self.profile)
+            number = min(status["sprints_planned"] -
+                         status["sprints_remaining"] + 1,
+                         status["sprints_planned"])
+            self._sprint_label = f"Sprint {number}/{status['sprints_planned']}"
         session = StudySession(self.storage, self.service, self.profile,
-                               deck_filter=self._session_deck_filter)
-        log.info("session %d started: %d cards queued (deck filter: %s)",
+                               deck_filter=self._session_deck_filter,
+                               bonus=self._session_bonus)
+        log.info("session %d started: %d cards queued (%s, deck filter: %s)",
                  session.session_id, session.planned_total,
-                 self._session_deck_filter)
+                 self._sprint_label, self._session_deck_filter)
         try:
             return self._review_loop(session)
         finally:
@@ -644,7 +682,8 @@ class CardBrickApp:
         if card["tags"]:
             header += "  ·  " + " ".join(card["tags"].split()[:3])
         self.screen.blit(self.font_small.render(header, True, DIM), (16, 12))
-        left = f"{session.remaining()} left"
+        left = f"{self._sprint_label}  ·  {session.remaining()} left" \
+            if self._sprint_label else f"{session.remaining()} left"
         surf = self.font_small.render(left, True, DIM)
         self.screen.blit(surf, (self.w - surf.get_width() - 16, 12))
         pygame.draw.line(self.screen, DIVIDER, (16, 40), (self.w - 16, 40))
@@ -833,6 +872,27 @@ class CardBrickApp:
         pass_rate = s.get("pass_rate")
         avg = s.get("avg_response_ms")
 
+        # Where the day stands now that this sprint is in the log; the
+        # deck filter is kept so "next sprint now" continues the same
+        # deck the child picked for this sitting.
+        status = self.service.sprint_status(
+            profile=self.profile, deck_filter=self._session_deck_filter)
+        more = status["next_sprint_cards"] > 0
+        bonus = not more and status["bonus_cards"] > 0
+        goal_met = status["cards_remaining"] == 0
+
+        if goal_met:
+            headline = "Goal reached! Great job!"
+            subtitle = f"{status['cards_done']} CARDS TODAY"
+        elif more:
+            n = status["sprints_remaining"]
+            headline = "¡Buen trabajo!"
+            subtitle = "SPRINT DONE — LAST ONE TO GO" if n == 1 else \
+                f"SPRINT DONE — {n} TO GO TODAY"
+        else:
+            headline = "¡Buen trabajo!"
+            subtitle = "SPRINT DONE — NO MORE CARDS TODAY"
+
         lines = [
             (f"Cards answered:  {s.get('cards_reviewed', 0)}", FG),
             (f"New cards:  {s.get('new_cards', 0)}    "
@@ -845,10 +905,19 @@ class CardBrickApp:
              else "Pass rate:  —", DIM),
             (f"Time:  {minutes}m {seconds:02d}s" +
              (f"    Avg answer:  {avg / 1000:.1f}s" if avg else ""), DIM),
+            (f"Today:  {status['cards_done']} / {status['goal']} cards",
+             DIM),
         ]
         if s.get("buried_count") or s.get("suspended_count"):
             lines.append((f"Buried {s.get('buried_count', 0)}   "
                           f"Suspended {s.get('suspended_count', 0)}", DIM))
+
+        if more:
+            go_label = "Bottom = Next sprint now    Right = Done for now"
+        elif bonus:
+            go_label = "Bottom = Bonus sprint    Right = Done for now"
+        else:
+            go_label = "Bottom = Done"
 
         while True:
             action = self.poll()
@@ -857,21 +926,24 @@ class CardBrickApp:
             if action == "north_button":
                 self._calendar_return = "CHILD_START"
                 return "CALENDAR"
-            if action in ("south_button", "east_button", "unmapped",
-                          "select"):
+            if action in ("south_button", "unmapped"):
+                # "Going ahead": roll straight into the next sprint —
+                # spare time now means fewer sprints owed later.
+                if more or bonus:
+                    self._session_bonus = bonus
+                    return "REVIEW"
+                return "CHILD_START"
+            if action in ("east_button", "select"):
                 return "CHILD_START"
 
             self.screen.fill(BG)
-            self._center(self.font_big.render("¡Buen trabajo!", True, GOOD),
-                         56)
-            self._center(self.font_small.render("SESSION COMPLETE", True,
-                                                DIM), 108)
+            self._center(self.font_big.render(headline, True, GOOD), 56)
+            self._center(self.font_small.render(subtitle, True, DIM), 108)
             y = 160
             for text, color in lines:
                 self._center(self.font.render(text, True, color), y)
                 y += 44
-            self._footer("Bottom = Done    Top = Calendar",
-                         "START = Quit")
+            self._footer(go_label, "Top = Calendar   START = Quit")
             self.present()
             self.clock.tick(FPS)
 
@@ -986,7 +1058,7 @@ class CardBrickApp:
             ("Import deck (.apkg)", "PARENT_IMPORT"),
             ("Decks", "PARENT_DECKS"),
             ("Categories", "PARENT_CATEGORIES"),
-            ("Daily limits", "PARENT_LIMITS"),
+            ("Daily goal & sprints", "PARENT_LIMITS"),
             ("Suspended cards", "PARENT_SUSPENDED"),
             ("Progress", "PARENT_PROGRESS"),
             ("Calendar (stamps)", "CALENDAR"),
@@ -1197,11 +1269,14 @@ class CardBrickApp:
             self.clock.tick(FPS)
 
     def screen_parent_limits(self):
+        # The goal/sprint pair defines the child's day: goal cards split
+        # into sprints of session_card_limit. daily_new_cards paces new
+        # material; study-ahead settings are CLI-only for now.
         fields = [
+            ("Daily goal (cards)", "daily_goal_cards", 10, 500),
             ("New cards per day", "daily_new_cards", 0, 100),
-            ("Review cards per day", "daily_review_cards", 0, 300),
-            ("Cards per session", "session_card_limit", 1, 200),
-            ("Minutes per session (0 = off)", "session_time_minutes", 0, 90),
+            ("Cards per sprint", "session_card_limit", 1, 200),
+            ("Minutes per sprint (0 = off)", "session_time_minutes", 0, 90),
         ]
         values = {key: self.profile[key] for _, key, _, _ in fields}
         index = 0
@@ -1215,13 +1290,20 @@ class CardBrickApp:
                 index = (index - 1) % len(fields)
             elif action == "dpad_down":
                 index = (index + 1) % len(fields)
-            elif action in ("dpad_left", "dpad_right"):
+            elif action in ("dpad_left", "dpad_right", "l1", "r1"):
                 label, key, lo, hi = fields[index]
-                step = -1 if action == "dpad_left" else 1
+                step = {"dpad_left": -1, "dpad_right": 1,
+                        "l1": -10, "r1": 10}[action]
                 values[key] = min(max(values[key] + step, lo), hi)
 
             self.screen.fill(BG)
-            self._center(self.font_big.render("Daily Limits", True, FG), 40)
+            self._center(self.font_big.render("Daily Goal & Sprints", True,
+                                              FG), 40)
+            sprint_size = max(values["session_card_limit"], 1)
+            sprints = -(-values["daily_goal_cards"] // sprint_size)
+            self._center(self.font_small.render(
+                f"= {sprints} sprint{'s' if sprints != 1 else ''} a day",
+                True, DIM), 92)
             y = 140
             for i, (label, key, _, _) in enumerate(fields):
                 color = ACCENT if i == index else FG
@@ -1231,7 +1313,8 @@ class CardBrickApp:
                 value = self.font.render(str(values[key]), True, color)
                 self.screen.blit(value, (self.w - 120, y))
                 y += 52
-            self._footer("Left/Right = Adjust   Right btn = Save & back")
+            self._footer("Left/Right = Adjust   L1/R1 = ±10   "
+                         "Right btn = Save & back")
             self.present()
             self.clock.tick(FPS)
 
