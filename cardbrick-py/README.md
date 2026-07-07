@@ -99,8 +99,10 @@ python main.py study                  # add --fullscreen on the handheld
 
 # Configure the child profile from the command line (parent mode can do
 # the same on-device)
-python main.py profile --name Maya --daily-goal 150 --daily-new 10 \
+python main.py profile --name Maya --daily-goal 150 \
     --sprint-cards 20 --sprint-minutes 10 --categories restaurant,food
+python main.py profile --daily-new 10    # optional fixed new-card drip
+                                         # (default 0 = goal-paced)
 python main.py profile --study-ahead-days 2   # pull-forward horizon
 python main.py profile --study-ahead off      # day ends with the due pool
 python main.py profile --categories all      # study every tag
@@ -309,12 +311,19 @@ sprint is bounded by `session_card_limit`
 always knows how many sprints they still owe ("3 sprints to go today").
 Doing sprints back-to-back — "going ahead" — burns the count down just
 the same as spacing them out; the schedule is the child's own and
-nothing nags. `daily_new_cards` (default 10) still paces how fast new
-material enters FSRS.
+nothing nags.
 
-The plan never promises more than the day can supply: a freshly
-imported deck has no reviews due, so day one honestly reads "1 sprint,
-10 cards" (the `daily_new_cards` pacing), not an unreachable goal.
+New-card intake is paced by the goal itself (`daily_new_cards` default
+0 = auto): new cards fill whatever the goal has left after due
+reviews, so day one of a fresh deck is a full goal-sized day of
+sprints, and as reviews build up they crowd new cards out
+automatically — when reviews alone exceed the goal, no new cards enter
+until the backlog drains. Set `daily_new_cards` to a number for a
+stricter fixed drip instead.
+
+The plan never promises more than the day can supply — a small deck
+that runs out of cards, or a fixed new-card cap, shrinks `goal_today`
+so the child always sees an honest, finishable day.
 When today's due cards run out before the goal, sprints top up with
 soon-due cards pulled forward (`study_ahead_days`, default 1 — safe
 under FSRS, an early review just earns a smaller stability gain), and

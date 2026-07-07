@@ -90,7 +90,9 @@ def build_parser():
                            help="Daily goal in distinct cards; done in "
                                 "sprints of --sprint-cards")
     p_profile.add_argument("--daily-new", type=int,
-                           help="New cards per day")
+                           help="Fixed cap on new cards per day "
+                                "(0 = auto: the daily goal paces new "
+                                "intake)")
     p_profile.add_argument("--sprint-cards", "--session-cards", type=int,
                            dest="sprint_cards",
                            help="Max cards per sprint")

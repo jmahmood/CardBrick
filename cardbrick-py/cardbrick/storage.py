@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS child_profiles (
     name                 TEXT NOT NULL,
     active_categories    TEXT,
     active_decks         TEXT,
-    daily_new_cards      INTEGER NOT NULL DEFAULT 10,
+    daily_new_cards      INTEGER NOT NULL DEFAULT 0,
     daily_review_cards   INTEGER NOT NULL DEFAULT 40,
     daily_goal_cards     INTEGER NOT NULL DEFAULT 150,
     session_card_limit   INTEGER NOT NULL DEFAULT 20,
@@ -208,6 +208,17 @@ class Storage:
             self.conn.execute(
                 """UPDATE child_profiles SET session_time_minutes = 10
                    WHERE session_time_minutes = 15""")
+        if has_profiles and needs_upgrade and (stored is None or
+                                               stored < 7):
+            # v7: new-card intake is paced by the daily goal itself
+            # (0 = auto) instead of a fixed drip. Profiles still on the
+            # old default of 10/day switch to auto so a fresh deck can
+            # fill a whole goal-sized day; deliberate caps are kept.
+            # (Runs after the goal seeding above, which reads the old
+            # daily_new_cards value.)
+            self.conn.execute(
+                """UPDATE child_profiles SET daily_new_cards = 0
+                   WHERE daily_new_cards = 10""")
         self.conn.executescript(SCHEMA)
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES "

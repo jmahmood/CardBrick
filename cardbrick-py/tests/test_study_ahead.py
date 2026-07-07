@@ -55,9 +55,9 @@ def test_sprint_status_derives_counts_from_the_log(storage, service, clock):
 
 def test_plan_never_promises_more_than_the_day_can_supply(storage, service,
                                                           clock):
-    # A freshly imported deck has no reviews due, so the day holds only
-    # daily_new_cards cards — the plan says "1 sprint, 10 cards", not
-    # an unreachable "0 / 50".
+    # With a parent-set fixed new-card cap, a freshly imported deck
+    # holds only daily_new_cards cards today — the plan says "1 sprint,
+    # 10 cards", not an unreachable "0 / 50".
     for i in range(1, 101):
         seed_card(storage, service, i)
     limits = _limits(daily_goal_cards=50, daily_new_cards=10,
@@ -67,6 +67,40 @@ def test_plan_never_promises_more_than_the_day_can_supply(storage, service,
     assert status["sprints_planned"] == 1
     assert status["sprints_remaining"] == 1
     assert status["next_sprint_cards"] == 10
+
+
+def test_goal_paces_new_intake_by_default(storage, service, clock):
+    # daily_new_cards=0 (the default) means the goal itself is the
+    # pacing: a fresh deck supports a full goal-sized day of sprints
+    # instead of a single drip-fed one.
+    for i in range(1, 101):
+        seed_card(storage, service, i)
+    limits = _limits(daily_goal_cards=50, daily_new_cards=0,
+                     session_card_limit=20)
+    status = service.sprint_status(limits=limits)
+    assert status["goal_today"] == 50
+    assert status["sprints_planned"] == 3
+    assert status["next_sprint_cards"] == 20
+    queue = service.get_due_cards(limits=limits)
+    assert len(queue) == 20
+    assert all(row["reps"] == 0 for row in queue)
+
+
+def test_reviews_crowd_out_new_cards_in_auto_mode(storage, service, clock):
+    # As the review load grows toward the goal, new intake shrinks by
+    # itself: 40 due reviews under a goal of 50 leave room for only 10
+    # new cards today.
+    past = clock.now() - timedelta(days=3)
+    for i in range(1, 41):
+        seed_card(storage, service, i, reps=1, due=past)
+    for i in range(41, 141):
+        seed_card(storage, service, i)
+    limits = _limits(daily_goal_cards=50, daily_new_cards=0,
+                     session_card_limit=100, study_ahead_enabled=0)
+    queue = service.get_due_cards(limits=limits)
+    assert len(queue) == 50
+    assert sum(1 for row in queue if row["reps"] == 0) == 10
+    assert all(row["reps"] > 0 for row in queue[:40])  # reviews first
 
 
 def test_bonus_sprint_can_pull_extra_new_cards(storage, service, clock):
@@ -357,15 +391,17 @@ def test_migration_seeds_goal_from_old_caps(tmp_path):
 
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 6
+        assert storage.schema_version() == 7
         maya, leo = storage.list_profiles()
         assert maya["daily_goal_cards"] == 35  # 5 new + 30 review
         assert maya["study_ahead_days"] == 1
         assert maya["study_ahead_enabled"] == 1
         assert maya["session_card_limit"] == 20   # old default, rebased
         assert maya["session_time_minutes"] == 10
+        assert maya["daily_new_cards"] == 5       # custom cap kept
         assert leo["session_card_limit"] == 30    # custom values kept
         assert leo["session_time_minutes"] == 8
+        assert leo["daily_new_cards"] == 0        # old default -> auto
     finally:
         storage.close()
 
@@ -386,7 +422,7 @@ def test_v5_databases_get_sprint_sized_limits(tmp_path):
 
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 6
+        assert storage.schema_version() == 7
         student = storage.list_profiles()[0]
         assert student["session_card_limit"] == 20
         assert student["session_time_minutes"] == 10

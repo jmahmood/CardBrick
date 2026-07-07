@@ -1283,7 +1283,7 @@ class CardBrickApp:
         # material; study-ahead settings are CLI-only for now.
         fields = [
             ("Daily goal (cards)", "daily_goal_cards", 10, 500),
-            ("New cards per day", "daily_new_cards", 0, 100),
+            ("New cards per day (0 = auto)", "daily_new_cards", 0, 500),
             ("Cards per sprint", "session_card_limit", 1, 200),
             ("Minutes per sprint (0 = off)", "session_time_minutes", 0, 90),
         ]

@@ -34,7 +34,7 @@ from .scheduler import ReviewScheduler, iso, now_utc
 LEARN_AHEAD = timedelta(minutes=20)
 
 DEFAULT_LIMITS = {
-    "daily_new_cards": 10,
+    "daily_new_cards": 0,  # 0 = auto: the daily goal paces new intake
     "daily_goal_cards": 150,
     "session_card_limit": 20,
     "session_time_minutes": 10,
@@ -83,11 +83,17 @@ class ReviewService:
                      deck_filter=None, limits=None, bonus=False):
         """Everything today's sprints could still draw on, due-first.
 
-        Order: due review cards (most overdue first), then new cards
-        (paced by ``daily_new_cards``; uncapped for a bonus sprint —
-        the one place a keen child may pull extra new material), then
-        soon-due cards pulled forward ("studying ahead", within
+        Order: due review cards (most overdue first), then new cards,
+        then soon-due cards pulled forward ("studying ahead", within
         ``study_ahead_days``). Suspended and buried cards never appear.
+
+        New-card intake is paced by the daily goal itself: new cards
+        fill whatever the goal has left, so a fresh deck supports a
+        full goal-sized day, and as reviews build up they crowd new
+        cards out automatically — the goal is the pacing. A non-zero
+        ``daily_new_cards`` imposes a stricter fixed cap instead; a
+        bonus sprint ignores both (the one place a keen child may pull
+        extra new material, one sprint at a time).
 
         Returns (pool, limits, answered_today, cards_done) so callers
         can budget the pool and tell fresh cards — which still advance
@@ -107,8 +113,14 @@ class ReviewService:
         day_start = iso(local_day_start(now))
         new_done, review_done, _ = self.storage.daily_counts(day_start)
         answered = self.storage.cards_answered_since(day_start)
-        remaining_new = None if bonus \
-            else max(limits["daily_new_cards"] - new_done, 0)
+        if bonus:
+            # A bonus sprint can't use more than one sprint's worth.
+            remaining_new = limits["session_card_limit"]
+        elif limits["daily_new_cards"]:
+            remaining_new = max(limits["daily_new_cards"] - new_done, 0)
+        else:  # auto: whatever the goal has left paces new intake
+            remaining_new = max(limits["daily_goal_cards"]
+                                - new_done - review_done, 0)
 
         pool = []
         for row in self.storage.queue_candidates(iso(now), new_cards=False,
@@ -117,12 +129,11 @@ class ReviewService:
                 pool.append(row)
         for row in self.storage.queue_candidates(iso(now), new_cards=True,
                                                  decks=deck_filter):
-            if remaining_new is not None and remaining_new <= 0:
+            if remaining_new <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
                 pool.append(row)
-                if remaining_new is not None:
-                    remaining_new -= 1
+                remaining_new -= 1
         if limits["study_ahead_enabled"]:
             horizon = next_local_midnight(now) + timedelta(
                 days=limits["study_ahead_days"])
@@ -187,10 +198,11 @@ class ReviewService:
         Everything is derived from the review log, so the numbers
         survive restarts, crashes, and undo.
 
-        The plan never promises more than the day can actually supply:
-        with a freshly imported deck only ``daily_new_cards`` cards
-        exist today, so ``goal_today`` is 10, not 150 — the child sees
-        an honest, finishable day, never a goal they cannot reach.
+        The plan never promises more than the day can actually supply
+        (``goal_today``), so the child always sees an honest,
+        finishable day — e.g. when a small deck runs out of cards, or
+        when a parent set a fixed ``daily_new_cards`` cap that limits a
+        fresh deck's first days.
 
         Returns a dict:
             cards_done         distinct cards answered today (a card
