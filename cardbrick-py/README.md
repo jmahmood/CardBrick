@@ -259,6 +259,20 @@ deck is assigned (or only one deck exists at all), the picker is
 skipped automatically and the session starts immediately: no extra tap
 when there's no real choice to make.
 
+### Child-facing topic (tag) picker
+
+Parent Mode's Categories screen decides which tags are *assigned* to
+the child at all; the same "pick one for just this sitting" pattern as
+the deck picker applies to tags too. After the deck choice (if any),
+if more than one category is assigned, a "Choose a Topic" screen
+offers "All assigned categories" plus one entry per assigned tag, each
+with its own due-card count. Picking a tag is pure session-level
+filtering — the same non-destructive idea as Anki's filtered decks:
+no card's tags or deck membership ever change, so the tag stays part
+of the whole collection and "All assigned categories" always includes
+it again next time. Skipped automatically when zero or one category is
+assigned, same as the deck picker.
+
 ### Stamp calendar
 
 A Brain Age-style calendar that stamps each day the child studied, with
