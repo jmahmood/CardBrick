@@ -144,16 +144,13 @@ fn process_node(
 
         // --- Add a newline after block-level elements for separation ---
         match tag.name().as_utf8_str().as_ref() {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "hr" | "li" | "hr/" | "ul" => {
-                // Ensure a single newline is added after these block elements.
-                // Check if the last span is *not* already a newline.
-                if spans.last().is_none_or(|s| s.text != "\n") {
-                    // Add if empty or last is not newline
-                    spans.push(TextSpan {
-                        text: "\n".into(),
-                        ..fmt.clone()
-                    });
-                }
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "hr" | "li" | "hr/" | "ul"
+                if spans.last().is_none_or(|s| s.text != "\n") =>
+            {
+                spans.push(TextSpan {
+                    text: "\n".into(),
+                    ..fmt.clone()
+                });
             }
             _ => {}
         }
