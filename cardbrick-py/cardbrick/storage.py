@@ -461,6 +461,17 @@ class Storage:
         return self.conn.execute(
             "SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
 
+    def sessions_in_range(self, profile_id, start_iso, end_iso):
+        """(started_at, cards_reviewed) for a profile's sessions whose
+        start falls in [start_iso, end_iso). Used by the stamp calendar;
+        callers group by local day and decide what counts as a "logged"
+        session (see ReviewService.sessions_per_day)."""
+        return self.conn.execute(
+            """SELECT started_at, cards_reviewed FROM sessions
+               WHERE profile_id = ? AND started_at >= ? AND started_at < ?
+               ORDER BY started_at""",
+            (profile_id, start_iso, end_iso)).fetchall()
+
     def session_counts(self, session_id):
         """Aggregate review counters for a session from the review log.
 

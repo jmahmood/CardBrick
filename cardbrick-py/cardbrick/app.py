@@ -5,9 +5,10 @@ session on a handheld. Screens:
 
     ChildStart -> DeckSelect (only when >1 deck is assigned)
               -> Review (question/answer) -> SessionSummary -> ChildStart
+    ChildStart / SessionSummary -> Calendar (stamp calendar) -> back
     ChildStart -> ParentMode (import / decks / categories / limits /
-                              suspended / progress / controller setup)
-              -> ChildStart
+                              suspended / progress / calendar /
+                              controller setup) -> ChildStart
 
 Parent Mode's Decks screen configures which decks are *assigned* to the
 child at all (child_profiles.active_decks); DeckSelect is the child's
@@ -35,6 +36,7 @@ Again/Hard/Good/Easy (or literal A/B/X/Y keys), L replay, R bury,
 U undo, Tab menu, Esc finish/quit.
 """
 
+import calendar as _calendar
 import logging
 import os
 import time
@@ -154,6 +156,7 @@ class CardBrickApp:
         self.input_map = InputMap(paths.input_map_path if paths else None)
         self._image_cache = {}  # vocab card images, decoded once per file
         self._session_deck_filter = None  # child's per-sitting deck pick
+        self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
         self.input = InputTranslator(self.input_map)
 
         pygame.init()
@@ -276,6 +279,7 @@ class CardBrickApp:
             "DECK_SELECT": self.screen_deck_select,
             "REVIEW": self.screen_review,
             "SUMMARY": self.screen_summary,
+            "CALENDAR": self.screen_calendar,
             "PARENT_MENU": self.screen_parent_menu,
             "PARENT_IMPORT": self.screen_parent_import,
             "PARENT_CATEGORIES": self.screen_parent_categories,
@@ -352,6 +356,9 @@ class CardBrickApp:
                 return "QUIT"
             if action == "select":
                 return "PARENT_MENU"
+            if action == "north_button":
+                self._calendar_return = "CHILD_START"
+                return "CALENDAR"
             if action in ("south_button", "unmapped") and total > 0:
                 return "DECK_SELECT" if len(available_decks) > 1 \
                     else "REVIEW"
@@ -380,9 +387,10 @@ class CardBrickApp:
                                                   True, GOOD), 230)
                 self._center(self.font.render("Come back tomorrow.", True,
                                               DIM), 285)
-            self._footer("Bottom = Start   SELECT = Parent   START = Quit"
-                         if total else
-                         "SELECT = Parent mode   START = Quit")
+            self._footer(
+                "Bottom = Start    Top = Calendar" if total else
+                "Top = Calendar",
+                "SELECT = Parent    START = Quit")
             self.present()
             self.clock.tick(FPS)
 
@@ -846,6 +854,9 @@ class CardBrickApp:
             action = self.poll()
             if action == "start":
                 return "QUIT"
+            if action == "north_button":
+                self._calendar_return = "CHILD_START"
+                return "CALENDAR"
             if action in ("south_button", "east_button", "unmapped",
                           "select"):
                 return "CHILD_START"
@@ -859,9 +870,113 @@ class CardBrickApp:
             for text, color in lines:
                 self._center(self.font.render(text, True, color), y)
                 y += 44
-            self._footer("Bottom = Done   START = Quit")
+            self._footer("Bottom = Done    Top = Calendar",
+                         "START = Quit")
             self.present()
             self.clock.tick(FPS)
+
+    # -- stamp calendar ---------------------------------------------------------------
+
+    STAMP_COLORS = ((236, 108, 96), (120, 180, 250), (120, 210, 140),
+                    (240, 180, 100), (200, 140, 230))
+
+    def screen_calendar(self):
+        """Brain Age-style stamp calendar: one stamp per day the child
+        studied, with the number of sessions logged that day inside it
+        (they can study repeatedly). Read-only; reachable from the child
+        start screen (Top), the session summary (Top), and Parent Mode.
+        Shows the current profile's sessions, one month at a time."""
+        today = self.service.now().astimezone().date()
+        year, month = today.year, today.month
+
+        def load(y, m):
+            return self.service.sessions_per_day(self.profile["id"], y, m)
+
+        counts = load(year, month)
+
+        def step_month(delta):
+            nonlocal year, month, counts
+            m0 = (year * 12 + (month - 1)) + delta
+            year, month = m0 // 12, m0 % 12 + 1
+            counts = load(year, month)
+
+        while True:
+            action = self.poll()
+            if action in ("start", "select", "east_button"):
+                return self._calendar_return
+            if action in ("dpad_left", "l1"):
+                step_month(-1)
+            elif action in ("dpad_right", "r1"):
+                step_month(1)
+            elif action == "south_button":
+                year, month = today.year, today.month
+                counts = load(year, month)
+
+            self._draw_calendar(year, month, counts, today)
+            self.present()
+            self.clock.tick(FPS)
+
+    def _draw_calendar(self, year, month, counts, today):
+        self.screen.fill(BG)
+        # Title: ◀  MONTH YEAR  ▶
+        title = f"◀   {_calendar.month_name[month].upper()} {year}   " \
+                f"▶"
+        self._center(self.font_big.render(title, True, FG), 14)
+        total = sum(counts.values())
+        active = len(counts)
+        subtitle = (f"{total} session{'s' if total != 1 else ''} on "
+                    f"{active} day{'s' if active != 1 else ''}"
+                    if total else "No sessions this month yet")
+        self._center(self.font_small.render(subtitle, True, DIM), 62)
+
+        margin = 16
+        grid_w = self.w - 2 * margin
+        cell_w = grid_w / 7
+        grid_top = 106
+        cell_h = 49
+
+        weekdays = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+        for col, name in enumerate(weekdays):
+            surf = self.font_small.render(name, True, DIM)
+            cx = margin + col * cell_w + (cell_w - surf.get_width()) / 2
+            self.screen.blit(surf, (int(cx), grid_top - 22))
+
+        weeks = _calendar.Calendar(firstweekday=6).monthdayscalendar(
+            year, month)
+        for row, week in enumerate(weeks):
+            for col, day in enumerate(week):
+                if day == 0:
+                    continue
+                self._draw_day_cell(
+                    day, counts.get(day, 0),
+                    is_today=(year == today.year and month == today.month
+                              and day == today.day),
+                    x=int(margin + col * cell_w), y=grid_top + row * cell_h,
+                    w=int(cell_w), h=cell_h)
+
+        self._footer("L1/R1 = Month    Bottom = Today",
+                     "SELECT = Back")
+
+    def _draw_day_cell(self, day, count, is_today, x, y, w, h):
+        if is_today:
+            pygame.draw.rect(self.screen, ACCENT, (x + 2, y, w - 4, h - 2),
+                             2, border_radius=6)
+        # Day number, top-left corner.
+        num = self.font_small.render(str(day), True,
+                                     FG if count else DIM)
+        self.screen.blit(num, (x + 6, y + 3))
+        if count <= 0:
+            return
+        # Stamp: a filled circle with the session count inside it. Colour
+        # varies with the count so busier days pop a little.
+        color = self.STAMP_COLORS[min(count - 1, len(self.STAMP_COLORS) - 1)]
+        cx, cy = x + w // 2, y + h // 2 + 6
+        radius = min(h // 2 - 4, 18)
+        pygame.draw.circle(self.screen, color, (cx, cy), radius)
+        pygame.draw.circle(self.screen, BG, (cx, cy), radius, 2)
+        label = self.font.render(str(count), True, BG)
+        self.screen.blit(label, (cx - label.get_width() // 2,
+                                 cy - label.get_height() // 2))
 
     # -- parent mode -----------------------------------------------------------------
 
@@ -874,6 +989,7 @@ class CardBrickApp:
             ("Daily limits", "PARENT_LIMITS"),
             ("Suspended cards", "PARENT_SUSPENDED"),
             ("Progress", "PARENT_PROGRESS"),
+            ("Calendar (stamps)", "CALENDAR"),
             ("Controller test & setup", "INPUT_DIAG"),
             (f"Direction: "
              f"{'Reversed (back first)' if direction == 'reversed' else 'Normal (front first)'}",
@@ -901,6 +1017,8 @@ class CardBrickApp:
                                                 study_direction=new)
                     self._reload_profile()
                     return "PARENT_MENU"
+                if target == "CALENDAR":
+                    self._calendar_return = "PARENT_MENU"
                 return target
 
             self.screen.fill(BG)

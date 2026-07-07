@@ -255,6 +255,20 @@ deck is assigned (or only one deck exists at all), the picker is
 skipped automatically and the session starts immediately: no extra tap
 when there's no real choice to make.
 
+### Stamp calendar
+
+A Brain Age-style calendar that stamps each day the child studied, with
+**the number of sessions logged that day inside the stamp** — sessions
+are meant to be repeated through the day, so the count is the point.
+Only sessions with at least one card actually reviewed earn a stamp
+(opening the app and backing out doesn't). Today is outlined; a
+subtitle sums the month ("36 sessions on 20 days"). Read-only, and
+reachable three ways: the **Top** button on the start screen, **Top**
+on the session-complete screen (the natural "you earned a stamp"
+moment), and Parent Mode → *Calendar (stamps)*. Navigate months with
+**L1/R1** (or D-pad left/right), **Bottom** jumps back to the current
+month, **SELECT** exits. Stamps are per-profile.
+
 ### Admin commands (CLI only, destructive)
 
 ```bash

@@ -223,3 +223,31 @@ class ReviewService:
             entry = per_day.get(day, {"reviews": set(), "new": set()})
             result.append((day, len(entry["reviews"]), len(entry["new"])))
         return result
+
+    def sessions_per_day(self, profile_id, year, month):
+        """{day-of-month: logged-session-count} for a local calendar month.
+
+        A "logged session" is one where at least one card was actually
+        reviewed, so merely opening the app and backing out earns no
+        stamp. Sessions are grouped by *local* day (started_at is stored
+        UTC); the DB window is padded a day on each side so a session
+        whose UTC timestamp sits just outside the month but whose local
+        day is inside it is still counted.
+        """
+        month_start = datetime(year, month, 1).astimezone()
+        next_month = (datetime(year + 1, 1, 1) if month == 12
+                      else datetime(year, month + 1, 1)).astimezone()
+        window_start = (month_start - timedelta(days=1)).astimezone(
+            timezone.utc)
+        window_end = (next_month + timedelta(days=1)).astimezone(
+            timezone.utc)
+
+        counts = {}
+        for row in self.storage.sessions_in_range(
+                profile_id, iso(window_start), iso(window_end)):
+            if not row["cards_reviewed"]:
+                continue
+            when = datetime.fromisoformat(row["started_at"]).astimezone()
+            if when.year == year and when.month == month:
+                counts[when.day] = counts.get(when.day, 0) + 1
+        return counts
