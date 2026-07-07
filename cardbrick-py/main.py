@@ -83,7 +83,7 @@ def build_parser():
                                help="View or edit the child profile")
     p_profile.add_argument("--name", help="Child's name")
     p_profile.add_argument("--daily-goal", type=int,
-                           help="Daily goal in card answers; done in "
+                           help="Daily goal in distinct cards; done in "
                                 "sprints of --sprint-cards")
     p_profile.add_argument("--daily-new", type=int,
                            help="New cards per day")

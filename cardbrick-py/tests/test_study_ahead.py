@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 from conftest import seed_card
 
 from cardbrick.scheduler import iso
-from cardbrick.service import local_day_start
 from cardbrick.session import StudySession
 from cardbrick.storage import Storage
 
@@ -311,9 +310,10 @@ def test_migration_seeds_goal_from_old_caps(tmp_path):
         storage.close()
 
 
-def test_answers_before_day_start_do_not_count(storage, service, clock):
-    day_start = local_day_start(clock.now())
-    assert storage.daily_answer_count(iso(day_start)) == 0
+def test_cards_done_counts_distinct_cards(storage, service, clock):
     seed_card(storage, service, 1)
-    service.answer_card(1, 3)
-    assert storage.daily_answer_count(iso(day_start)) == 1
+    limits = _limits(daily_goal_cards=10, study_ahead_enabled=0)
+    assert service.sprint_status(limits=limits)["cards_done"] == 0
+    service.answer_card(1, 1)  # Again: the card will repeat...
+    service.answer_card(1, 3)  # ...but stays one card toward the goal
+    assert service.sprint_status(limits=limits)["cards_done"] == 1

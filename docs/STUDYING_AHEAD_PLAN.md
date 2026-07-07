@@ -8,8 +8,8 @@ goal** (say 150 cards) in **5–10 minute sprints** spread across the day.
 
 Two numbers drive everything:
 
-* `daily_goal_cards` — how many card answers the child should log today
-  (parent-set, e.g. 150);
+* `daily_goal_cards` — how many distinct cards the child should answer
+  today (parent-set, e.g. 150);
 * a **sprint** — one `StudySession`, already bounded by
   `session_card_limit` (cards per sitting) and `session_time_minutes`
   (5–10 min).
@@ -18,7 +18,8 @@ From these we derive, always from the append-only review log (never
 in-memory counters, matching the house style):
 
 ```
-cards_done_today   = non-undone review-log entries since local midnight
+cards_done_today   = distinct cards in the non-undone review log since
+                     local midnight (a learning-step repeat counts once)
 cards_remaining    = max(daily_goal_cards - cards_done_today, 0)
 sprints_remaining  = ceil(cards_remaining / session_card_limit)
 sprints_planned    = ceil(daily_goal_cards / session_card_limit)
@@ -59,8 +60,8 @@ dry before the goal is met.
 `daily_review_cards` in the queue math (`get_due_cards`):
 
 * `remaining_review = max(daily_goal_cards - cards_done_today, 0)` —
-  answers, not unique cards: learning-step repeats within a sprint count
-  toward the goal, which is correct for a "150 cards a day" contract.
+  distinct cards, not answers: a hard card repeating its learning steps
+  within a sprint counts toward "150 cards a day" once.
 * `daily_new_cards` keeps its current meaning — it paces how fast new
   material enters FSRS, which is orthogonal to the goal.
 * `daily_review_cards` is retired from queue-building (column stays for
@@ -140,7 +141,7 @@ allowlists (`storage.py:538, :554`) so the profile CLI can set them:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `daily_goal_cards` | INTEGER | 150 | Card answers per day; drives sprint count |
+| `daily_goal_cards` | INTEGER | 150 | Distinct cards per day; drives sprint count |
 | `study_ahead_days` | INTEGER | 1 | How far forward the ahead fill may reach |
 | `study_ahead_enabled` | INTEGER (bool) | 1 | Allow ahead fill + bonus sprints |
 
