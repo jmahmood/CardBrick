@@ -33,23 +33,57 @@ Pygame app        (cardbrick/app.py — state-driven child/parent UI on a
                    640x480 logical canvas, controller-first)
 ```
 
-Supporting modules: `cardbrick/audio.py` ([sound:...] playback, fails
-soft without an audio device), `cardbrick/settings.py` (JSON app
-settings), `cardbrick/textutil.py` (HTML stripping, wrapping), and
-`cardbrick/ui.py` (the original minimal prototype reviewer, kept
-working under `python main.py review`).
+Supporting modules: `cardbrick/audio.py` (pluggable playback backends —
+see below), `cardbrick/input_map.py` (semantic controller mapping +
+calibration persistence), `cardbrick/paths.py` (writable data-root
+resolution), `cardbrick/bootlog.py` (file logging + startup
+diagnostics), `cardbrick/smoke.py` (`--smoke-test`),
+`cardbrick/errors.py` (visible fatal-error screens),
+`cardbrick/settings.py` (JSON app settings), `cardbrick/textutil.py`
+(HTML stripping, wrapping), and `cardbrick/ui.py` (the original
+minimal prototype reviewer, kept working under `python main.py
+review`).
 
 ### Dependencies
 
-Only two, both pure-Python-installable on ARM:
+Minimal and pure-pip-installable on ARM64 — no Rust, no compilation,
+no private Anki APIs:
 
-| Library  | Role                                     |
-|----------|------------------------------------------|
-| `pygame` | display, input, audio                     |
-| `fsrs`   | py-fsrs, the FSRS spaced-repetition engine |
+| Library             | Role                                        |
+|---------------------|---------------------------------------------|
+| `pygame-ce`         | display, input, audio (classic `pygame`     |
+|                     | >= 2.1 also works — install one, not both)  |
+| `fsrs`              | py-fsrs, the FSRS spaced-repetition engine  |
+| `typing-extensions` | pulled in by fsrs                           |
 
-Everything else is the standard library. No Rust, no compilation beyond
-what pygame's prebuilt wheels provide, no private Anki APIs.
+Everything else is the standard library (`sqlite3`, `zipfile`, `json`,
+`datetime`, `logging`, `shutil`, ...).
+
+**Pick a Python with prebuilt wheels.** On a Python version that has no
+prebuilt wheel for your pygame flavour (e.g. classic `pygame` on
+3.13/3.14), pip silently compiles it from source, and the build will be
+missing whatever SDL satellite libraries weren't installed — typically
+`pygame.font` (SDL_ttf) and `pygame.mixer` (SDL_mixer). The symptom is
+a "partially initialized module 'pygame.font'" ImportError at first
+render. `--smoke-test` detects this and names the fix; the fix is
+`pip uninstall pygame && pip install pygame-ce`, or Python 3.11/3.12.
+Audio degrades gracefully (CLI players, incl. macOS `afplay`), but
+fonts are load-bearing for a text UI, so the app refuses to start with
+a clear message instead.
+
+### Audio backends
+
+`pygame.mixer` is an *optional* compiled pygame module that requires
+SDL_mixer, which cannot be guaranteed on handheld firmware. Playback
+therefore auto-selects the first working backend and logs the choice:
+
+1. `mixer` — pygame.mixer, if the module exists and initialises;
+2. `command` — an external CLI player found on PATH (`mpg123`,
+   `ogg123`, `aplay`, `paplay`, `ffplay`), launched non-blocking;
+3. `none` — logged no-op: the app runs silent, never crashes.
+
+Override with `CARDBRICK_AUDIO=auto|mixer|command|none` or point at an
+exact player with `CARDBRICK_AUDIO_CMD="mpg123 -q {file}"`.
 
 ## Usage
 
@@ -72,15 +106,24 @@ python main.py profile --categories all      # study every tag
 # Legacy prototype reviewer (no limits/undo/profiles)
 python main.py review [--deck NAME] [--fullscreen]
 python main.py decks                  # list decks + due counts
+
+# Deployment tooling (see deploy/knulli/ at the repo root)
+python main.py --smoke-test           # non-interactive sanity checks
+python main.py --input-diagnostic     # controller test + calibration
+python main.py --desktop|--knulli     # force platform mode
 ```
 
 No deck handy? Generate a test one:
 `python scripts/make_sample_apkg.py sample.apkg`
 
-Data lives in `./data/` next to `main.py` (override with `--data-dir`
-or the `CARDBRICK_DATA` env var): `cardbrick.db` (SQLite),
-`settings.json` (app settings, hand-editable), and `media/`. The whole
-application plus its data is a single copyable folder.
+The writable data root is resolved in this priority order and logged
+at startup: `--data-dir` → `CARD_BRICK_DATA_DIR` env → `CARDBRICK_DATA`
+env (legacy) → `/userdata/saves/cardbrick` on Knulli-style devices →
+`./data` next to `main.py`. It contains `cardbrick.db` (SQLite),
+`settings.json` and `input_mapping.json` (hand-editable JSON),
+`media/`, and `logs/cardbrick.log` (rotating). Nothing mutable is ever
+written into the app folder, so the app itself can live on a read-only
+mount.
 
 ## The daily loop
 
@@ -96,36 +139,153 @@ Press A to start!              B=Again Y=Hard A=Good X=Easy      session stats
 
 ### Controls (study)
 
-| Input   | Question side       | Answer side |
-|---------|---------------------|-------------|
-| D-pad   | Reveal answer       | —           |
-| A       | Reveal answer       | Good        |
-| B       | —                   | Again       |
-| X       | —                   | Easy        |
-| Y       | —                   | Hard        |
-| L       | Replay audio        | Replay audio|
-| R       | —                   | Bury until tomorrow |
-| SELECT  | Action menu (undo / bury / suspend / end) | same |
-| START   | Finish session      | same        |
+Buttons are addressed by *physical position*, never by A/B/X/Y labels
+(printed labels don't reliably match SDL indices on cheap handhelds):
+
+| Input          | Question side       | Answer side |
+|----------------|---------------------|-------------|
+| D-pad          | Reveal answer       | —           |
+| Bottom button  | Reveal answer       | Good        |
+| Right button   | —                   | Again       |
+| Left button    | —                   | Easy        |
+| Top button     | —                   | Hard        |
+| L1             | Replay audio        | Replay audio|
+| R1             | —                   | Bury until tomorrow |
+| SELECT         | Action menu (undo / bury / suspend / end) | same |
+| START          | Finish session      | same        |
+| SELECT + START held 2 s | Force exit to launcher | same |
 
 Keyboard fallback for desktop testing: arrows/Space reveal, `1/2/3/4` =
 Again/Hard/Good/Easy (or literal `A/B/X/Y` keys), `L` replay, `R` bury,
-`U` undo, `Tab` menu, `Esc` finish.
+`U` undo, `Tab` menu, `Esc` finish/quit.
 
-Gamepad button numbering differs between handhelds; remap without
-touching code via
-`CARDBRICK_JOYMAP="A=1,B=0,X=3,Y=2,L=4,R=5,SELECT=6,START=7"`.
-A font override is available the same way:
-`CARDBRICK_FONT=/path/to/font.ttf`.
+Raw button indices are mapped to semantic actions through
+`input_mapping.json` in the data folder, written by the in-app
+calibration screen (Parent Mode → *Controller test & setup*, or
+`python main.py --input-diagnostic`). The defaults match common
+Anbernic/Knulli ordering but are only a starting guess — calibrate on
+real hardware. A font override is available via
+`CARDBRICK_FONT=/path/to/font.ttf`; by default the bundled
+`assets/fonts/DejaVuSans.ttf` is used (full Spanish coverage:
+á é í ó ú ñ ü ¿ ¡). The legacy `review` prototype still honours the
+old `CARDBRICK_JOYMAP` env var.
+
+### Four-phase vocab cards
+
+Cards imported from the "Español MX (word + audio + example)" Anki note
+type (or an equivalent CSV — see below) use a different review flow
+from plain front/back cards, and the two types can be mixed freely in
+the same deck/queue:
+
+```
+Phase 0: word (+ audio, autoplays)
+Phase 1: + example sentence (headword highlighted, + its own audio)
+Phase 2: + image
+Phase 3: + gendered forms / definition / English translation
+```
+
+D-pad reveals the next phase; there are no separate rating buttons —
+pressing the **bottom button ("I know this")** rates the card by *how
+much you needed to see*:
+
+| Pressed at phase | Meaning | Rating |
+|---|---|---|
+| 0 (word only) | knew it instantly | Easy |
+| 1 (needed the sentence) | Good |
+| 2 (needed the image) | Hard |
+| 3 (needed the full definition) | Again |
+
+L1 replays the current phase's audio (word audio at phase 0, example
+audio from phase 1 on); R1 bury and SELECT menu work the same as
+regular cards. The header, definitions, and gendered forms are shown
+as plain text (HTML/CSS from the original card is not rendered — see
+Scope, below); the headword highlight inside the example sentence is
+reconstructed by a case-insensitive substring match rather than the
+original `<span>`.
+
+Import either from `.apkg` (the note type is detected by field names —
+`Word` first, an `Example ES` field present — not by a hardcoded model
+id) or from a CSV with the same columns:
+
+```bash
+python main.py import VocabDeck.apkg
+python main.py import vocab.csv --media-dir ./my_media --deck "Mi Vocabulario"
+```
+
+CSV audio/image cells accept a bare filename (`gato.mp3`) or an
+Anki-style tag (`[sound:gato.mp3]`, `<img src="gato.jpg">`) copied
+straight out of a spreadsheet. `--media-dir` points at a folder holding
+the referenced files (already-named); they're copied into the app's
+media folder. **A CSV card's identity is a hash of its `Word` field**
+(there is no Anki note id to key on) — keep that field unique and
+unedited across re-imports, or a rename will create a new card instead
+of updating the old one's progress.
 
 ### Parent mode
 
 `SELECT` on the start screen. From there: import `.apkg` files found in
 the data folder (or `data/import/`, or the app folder), choose active
-categories (Anki tags) for the child, set daily limits, review/restore
+**decks** (which imported decks are *assigned* to the child at all)
+and active **categories** (Anki tags — a second, independent filter;
+both must match for a card to appear), set daily limits, review/restore
 suspended cards, see a 7-day progress table, and flip the study
 direction (front-first / back-first). There is no PIN yet — the flows
 are separated, not locked.
+
+Decks and categories both default to "all" (`None` in the profile) and
+follow the same convention: selecting nothing explicitly means *no*
+cards match, rather than falling back to "everything." Set from the
+CLI too:
+
+```bash
+python main.py profile --decks "Español de México — Vocabulario"
+python main.py profile --decks all           # clear the deck filter
+python main.py profile --categories restaurant,greetings
+```
+
+### Child-facing deck picker
+
+Parent Mode's Decks screen decides which decks are *assigned* to the
+child at all; the child still picks which *one* of the assigned decks
+(or all of them combined) to study **this sitting**. If more than one
+deck is assigned, pressing the bottom button on the start screen opens
+a picker first — D-pad to choose, bottom button to confirm, right
+button to go back — showing each option's due-card count. If only one
+deck is assigned (or only one deck exists at all), the picker is
+skipped automatically and the session starts immediately: no extra tap
+when there's no real choice to make.
+
+### Stamp calendar
+
+A Brain Age-style calendar that stamps each day the child studied, with
+**the number of sessions logged that day inside the stamp** — sessions
+are meant to be repeated through the day, so the count is the point.
+Only sessions with at least one card actually reviewed earn a stamp
+(opening the app and backing out doesn't). Today is outlined; a
+subtitle sums the month ("36 sessions on 20 days"). Read-only, and
+reachable three ways: the **Top** button on the start screen, **Top**
+on the session-complete screen (the natural "you earned a stamp"
+moment), and Parent Mode → *Calendar (stamps)*. Navigate months with
+**L1/R1** (or D-pad left/right), **Bottom** jumps back to the current
+month, **SELECT** exits. Stamps are per-profile.
+
+### Admin commands (CLI only, destructive)
+
+```bash
+python main.py admin purge-decks              # purge every deck
+python main.py admin purge-decks --deck Spanish --deck French
+python main.py admin purge-decks --yes        # skip the confirmation prompt
+```
+
+Permanently deletes cards, their FSRS review state, review log entries,
+and vocab-card content (cascading deletes, scoped to the named decks or
+every deck if `--deck` is omitted). Child profiles and settings are
+untouched. Always backs up the database first, to
+`cardbrick.db.backup-purge-<timestamp>` next to the live database, and
+always asks `Type 'yes' to confirm:` unless `--yes` is passed — there's
+no undo button in the child-facing UI, so this is the one command in
+the app that discards data outright. This is an admin/CLI-only
+operation; it is deliberately not exposed in Parent Mode's on-device UI.
 
 ### Daily limits
 
@@ -181,16 +341,20 @@ temp directories, and no pygame.
 
 ## Deploying to a handheld
 
-1. Copy the `cardbrick-py/` folder to the device (SD card / SSH).
-2. Vendor the two dependencies next to the app so nothing needs
-   installing on-device:
-   `pip install --target vendor --platform manylinux2014_aarch64 --only-binary=:all: pygame fsrs`
-   and launch with `PYTHONPATH=vendor`. (Knulli and most Batocera-derived
-   firmwares already ship Python; many also ship pygame.)
-3. Add a Ports-style launcher script that runs
-   `python3 main.py study --fullscreen`.
-4. Import decks on your PC and copy the `data/` folder over, or drop the
-   `.apkg` in `data/` and import from parent mode on-device.
+Full instructions, launch-script template, package layout, and a
+manual pre-flight checklist live in **`deploy/knulli/`** at the repo
+root. The short version:
+
+1. On a PC, vendor the dependencies (no on-device pip, ever):
+   `pip install --target vendor --platform manylinux2014_aarch64
+   --only-binary=:all: -r requirements.txt`
+2. Copy `cardbrick-py/` + `vendor/` + the adapted
+   `deploy/knulli/launch_cardbrick_spanish.sh` to
+   `/userdata/roms/ports/CardBrickSpanish/`.
+3. Run `python3 main.py --knulli --smoke-test` (the launch script does
+   this automatically on first boot) and read
+   `/userdata/saves/cardbrick/logs/`.
+4. Calibrate the controller in Parent Mode before the first session.
 
 ## Scope (deliberately excluded)
 

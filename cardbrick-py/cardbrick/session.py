@@ -14,7 +14,12 @@ from .scheduler import iso
 
 
 class StudySession:
-    def __init__(self, storage, service, profile):
+    def __init__(self, storage, service, profile, deck_filter=None):
+        """``deck_filter`` overrides the profile's assigned decks for
+        just this sitting — e.g. a child picking one specific deck out
+        of several the parent has assigned (see app.py's DECK_SELECT
+        screen). None falls back to the profile's active_decks, same
+        convention as ReviewService.get_due_cards."""
         self.storage = storage
         self.service = service
         self.profile = profile
@@ -24,7 +29,8 @@ class StudySession:
             started_at=iso(self.started_at),
             category_filter=profile.get("active_categories"))
 
-        rows = service.get_due_cards(profile=profile)
+        rows = service.get_due_cards(profile=profile,
+                                     deck_filter=deck_filter)
         self.queue = deque(row["id"] for row in rows)
         self.planned_total = len(rows)
         self.finished = False

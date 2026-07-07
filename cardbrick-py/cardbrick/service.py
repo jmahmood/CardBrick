@@ -71,13 +71,19 @@ class ReviewService:
 
     # -- queue building --------------------------------------------------------
 
-    def get_due_cards(self, profile=None, category_filter=None, limits=None):
+    def get_due_cards(self, profile=None, category_filter=None,
+                      deck_filter=None, limits=None):
         """Build the capped review queue for a study session.
 
         Order: due review cards (most overdue first), then new cards.
         Suspended and buried cards never appear. Daily caps subtract
         work already logged today, so a backlog can never flood a child
         and restarting mid-day continues from where the day left off.
+
+        ``category_filter``/``deck_filter`` of None fall back to the
+        profile's ``active_categories``/``active_decks``; an explicit
+        [] means "none active" (an empty queue), same as the profile
+        field would.
 
         Returns a list of card rows (joined with review state).
         """
@@ -88,6 +94,8 @@ class ReviewService:
                     limits[key] = profile[key]
             if category_filter is None:
                 category_filter = profile.get("active_categories")
+            if deck_filter is None:
+                deck_filter = profile.get("active_decks")
 
         now = self.now()
         new_done, review_done, _ = self.storage.daily_counts(
@@ -97,13 +105,15 @@ class ReviewService:
             limits["daily_review_cards"] - review_done, 0)
 
         queue = []
-        for row in self.storage.queue_candidates(iso(now), new_cards=False):
+        for row in self.storage.queue_candidates(iso(now), new_cards=False,
+                                                 decks=deck_filter):
             if remaining_review <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
                 queue.append(row)
                 remaining_review -= 1
-        for row in self.storage.queue_candidates(iso(now), new_cards=True):
+        for row in self.storage.queue_candidates(iso(now), new_cards=True,
+                                                 decks=deck_filter):
             if remaining_new <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
@@ -113,9 +123,10 @@ class ReviewService:
         return queue[:limits["session_card_limit"]]
 
     def counts_for_queue(self, profile=None, category_filter=None,
-                         limits=None):
+                         deck_filter=None, limits=None):
         """(review, new) counts of what get_due_cards would return."""
-        queue = self.get_due_cards(profile, category_filter, limits)
+        queue = self.get_due_cards(profile, category_filter, deck_filter,
+                                   limits)
         new = sum(1 for row in queue if row["reps"] == 0)
         return len(queue) - new, new
 
@@ -212,3 +223,31 @@ class ReviewService:
             entry = per_day.get(day, {"reviews": set(), "new": set()})
             result.append((day, len(entry["reviews"]), len(entry["new"])))
         return result
+
+    def sessions_per_day(self, profile_id, year, month):
+        """{day-of-month: logged-session-count} for a local calendar month.
+
+        A "logged session" is one where at least one card was actually
+        reviewed, so merely opening the app and backing out earns no
+        stamp. Sessions are grouped by *local* day (started_at is stored
+        UTC); the DB window is padded a day on each side so a session
+        whose UTC timestamp sits just outside the month but whose local
+        day is inside it is still counted.
+        """
+        month_start = datetime(year, month, 1).astimezone()
+        next_month = (datetime(year + 1, 1, 1) if month == 12
+                      else datetime(year, month + 1, 1)).astimezone()
+        window_start = (month_start - timedelta(days=1)).astimezone(
+            timezone.utc)
+        window_end = (next_month + timedelta(days=1)).astimezone(
+            timezone.utc)
+
+        counts = {}
+        for row in self.storage.sessions_in_range(
+                profile_id, iso(window_start), iso(window_end)):
+            if not row["cards_reviewed"]:
+                continue
+            when = datetime.fromisoformat(row["started_at"]).astimezone()
+            if when.year == year and when.month == month:
+                counts[when.day] = counts.get(when.day, 0) + 1
+        return counts

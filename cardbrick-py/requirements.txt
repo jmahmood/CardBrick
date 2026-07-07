@@ -1,2 +1,9 @@
-pygame>=2.1
+# Runtime dependencies — deliberately minimal, all pure-pip-installable
+# on ARM64 with prebuilt wheels. No Anki, no Rust, no compilation.
+#
+# pygame-ce is the preferred flavour for handheld deployment (it is a
+# drop-in fork; the code runs on classic pygame >= 2.1 as well — install
+# one or the other, never both, since they share the `pygame` package).
+pygame-ce>=2.4
 fsrs>=6.0
+typing-extensions>=4.0

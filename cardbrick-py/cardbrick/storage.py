@@ -11,10 +11,14 @@ progress when opened by the CardBrick-style app.
 """
 
 import json
+import logging
 import os
+import shutil
 import sqlite3
 
-SCHEMA_VERSION = 2
+log = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -34,7 +38,25 @@ CREATE TABLE IF NOT EXISTS cards (
     suspended      INTEGER NOT NULL DEFAULT 0,
     buried_until   TEXT,
     created_at     TEXT,
-    updated_at     TEXT
+    updated_at     TEXT,
+    card_type      TEXT NOT NULL DEFAULT 'basic'
+);
+
+-- One row per 'vocab' card_type card: the four-phase word/example/image/
+-- definition layout (see cardbrick/vocab_card.py). Untouched for 'basic'
+-- cards, which use only front/back/audio_filename above.
+CREATE TABLE IF NOT EXISTS vocab_cards (
+    card_id         INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    word            TEXT NOT NULL,
+    word_jp         TEXT,
+    gendered_forms  TEXT,
+    definitions     TEXT,
+    image_filename  TEXT,
+    example_es      TEXT,
+    example_audio   TEXT,
+    example_en      TEXT,
+    example_jp      TEXT,
+    report_link     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS review_state (
@@ -85,6 +107,7 @@ CREATE TABLE IF NOT EXISTS child_profiles (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     name                 TEXT NOT NULL,
     active_categories    TEXT,
+    active_decks         TEXT,
     daily_new_cards      INTEGER NOT NULL DEFAULT 10,
     daily_review_cards   INTEGER NOT NULL DEFAULT 40,
     session_card_limit   INTEGER NOT NULL DEFAULT 50,
@@ -105,28 +128,79 @@ _CARD_UPGRADES = {
     "buried_until": "TEXT",
     "created_at": "TEXT",
     "updated_at": "TEXT",
+    "card_type": "TEXT NOT NULL DEFAULT 'basic'",
 }
 _STATE_UPGRADES = {
     "last_reviewed_at": "TEXT",
+}
+_PROFILE_UPGRADES = {
+    "active_decks": "TEXT",
 }
 
 
 class Storage:
     def __init__(self, db_path):
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        self._migrate()
+        self.db_path = db_path
+        try:
+            self.conn = sqlite3.connect(db_path)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error:
+            log.exception("cannot open database %s", db_path)
+            raise
+        try:
+            self._migrate()
+        except sqlite3.Error:
+            log.exception("migration failed for %s", db_path)
+            raise
+
+    def schema_version(self):
+        """Stored schema version, or None for a pre-versioned database."""
+        try:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()
+            return int(row["value"]) if row else None
+        except sqlite3.OperationalError:
+            return None  # no meta table yet
 
     def _migrate(self):
+        stored = self.schema_version()
+        has_cards = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND "
+            "name='cards'").fetchone() is not None
+        needs_upgrade = has_cards and (stored is None or
+                                       stored < SCHEMA_VERSION)
+        if needs_upgrade:
+            # An existing database is about to be altered: keep a
+            # one-shot backup so a bad migration is recoverable.
+            self._backup(stored)
         self._upgrade_table("cards", _CARD_UPGRADES)
         self._upgrade_table("review_state", _STATE_UPGRADES)
+        self._upgrade_table("child_profiles", _PROFILE_UPGRADES)
         self.conn.executescript(SCHEMA)
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES "
             "('schema_version', ?)", (str(SCHEMA_VERSION),))
         self.conn.commit()
+        if needs_upgrade:
+            log.info("database migrated: schema v%s -> v%s",
+                     stored if stored is not None else "pre-1",
+                     SCHEMA_VERSION)
+
+    def _backup(self, from_version):
+        label = f"v{from_version}" if from_version is not None else "pre1"
+        backup_path = f"{self.db_path}.backup-{label}"
+        if os.path.exists(backup_path):
+            return  # keep the oldest backup for this version jump
+        try:
+            shutil.copyfile(self.db_path, backup_path)
+            log.info("database backed up to %s before migration",
+                     backup_path)
+        except OSError as exc:
+            log.warning("could not back up database before migration: %s",
+                        exc)
 
     def _upgrade_table(self, table, upgrades):
         row = self.conn.execute(
@@ -150,20 +224,57 @@ class Storage:
     # -- import-side writes -------------------------------------------------
 
     def upsert_card(self, card_id, note_id, deck, front, back, tags,
-                    audio_filename=None, audio_side=None, now_iso=None):
+                    audio_filename=None, audio_side=None, now_iso=None,
+                    card_type="basic"):
         self.conn.execute(
             """INSERT INTO cards (id, note_id, deck, front, back, tags,
                                   audio_filename, audio_side,
-                                  created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  created_at, updated_at, card_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    note_id=excluded.note_id, deck=excluded.deck,
                    front=excluded.front, back=excluded.back,
                    tags=excluded.tags, audio_filename=excluded.audio_filename,
                    audio_side=excluded.audio_side,
-                   updated_at=excluded.updated_at""",
+                   updated_at=excluded.updated_at,
+                   card_type=excluded.card_type""",
             (card_id, note_id, deck, front, back, tags,
-             audio_filename, audio_side, now_iso, now_iso))
+             audio_filename, audio_side, now_iso, now_iso, card_type))
+
+    def upsert_vocab_card(self, card_id, word, word_jp, gendered_forms,
+                          definitions, image_filename, example_es,
+                          example_audio, example_en, example_jp,
+                          report_link):
+        """Insert or refresh the phase-content row for a 'vocab' card.
+
+        Re-importing updates the displayed content only; review_state
+        (FSRS progress) is untouched, same guarantee as basic cards.
+        """
+        self.conn.execute(
+            """INSERT INTO vocab_cards
+               (card_id, word, word_jp, gendered_forms, definitions,
+                image_filename, example_es, example_audio, example_en,
+                example_jp, report_link)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(card_id) DO UPDATE SET
+                   word=excluded.word, word_jp=excluded.word_jp,
+                   gendered_forms=excluded.gendered_forms,
+                   definitions=excluded.definitions,
+                   image_filename=excluded.image_filename,
+                   example_es=excluded.example_es,
+                   example_audio=excluded.example_audio,
+                   example_en=excluded.example_en,
+                   example_jp=excluded.example_jp,
+                   report_link=excluded.report_link""",
+            (card_id, word, word_jp, gendered_forms, definitions,
+             image_filename, example_es, example_audio, example_en,
+             example_jp, report_link))
+
+    def get_vocab_detail(self, card_id):
+        """The phase-content row for a 'vocab' card, or None."""
+        return self.conn.execute(
+            "SELECT * FROM vocab_cards WHERE card_id = ?",
+            (card_id,)).fetchone()
 
     def init_review_state(self, state):
         """Insert initial FSRS state for a card, unless one already exists.
@@ -200,23 +311,33 @@ class Storage:
             tags.update(row["tags"].split())
         return sorted(tags)
 
-    def queue_candidates(self, now_iso, new_cards=False):
+    def queue_candidates(self, now_iso, new_cards=False, decks=None):
         """Cards eligible for the review queue, before tag filtering.
 
         Excludes suspended cards and cards buried until later than now.
         ``new_cards`` selects never-reviewed cards (reps = 0) ordered by
         id; otherwise cards that are due now, most overdue first.
+        ``decks`` of None means every deck; otherwise a list of deck
+        names to restrict to (unlike tags, a card has exactly one deck,
+        so this filters in SQL rather than in Python).
         """
         base = """SELECT c.*, r.due, r.reps, r.lapses,
                          r.state AS fsrs_state, r.fsrs_json
                   FROM cards c JOIN review_state r ON r.card_id = c.id
                   WHERE c.suspended = 0
                     AND (c.buried_until IS NULL OR c.buried_until <= :now)"""
+        if decks is not None and len(decks) == 0:
+            return []  # explicitly "no decks active": nothing is due
+        params = {"now": now_iso}
+        if decks is not None:
+            placeholders = ",".join(f":deck{i}" for i in range(len(decks)))
+            base += f" AND c.deck IN ({placeholders})"
+            params.update({f"deck{i}": name for i, name in enumerate(decks)})
         if new_cards:
             query = base + " AND r.reps = 0 ORDER BY c.id"
         else:
             query = base + " AND r.reps > 0 AND r.due <= :now ORDER BY r.due"
-        return self.conn.execute(query, {"now": now_iso}).fetchall()
+        return self.conn.execute(query, params).fetchall()
 
     def suspended_cards(self):
         return self.conn.execute(
@@ -340,6 +461,17 @@ class Storage:
         return self.conn.execute(
             "SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
 
+    def sessions_in_range(self, profile_id, start_iso, end_iso):
+        """(started_at, cards_reviewed) for a profile's sessions whose
+        start falls in [start_iso, end_iso). Used by the stamp calendar;
+        callers group by local day and decide what counts as a "logged"
+        session (see ReviewService.sessions_per_day)."""
+        return self.conn.execute(
+            """SELECT started_at, cards_reviewed FROM sessions
+               WHERE profile_id = ? AND started_at >= ? AND started_at < ?
+               ORDER BY started_at""",
+            (profile_id, start_iso, end_iso)).fetchall()
+
     def session_counts(self, session_id):
         """Aggregate review counters for a session from the review log.
 
@@ -400,17 +532,16 @@ class Storage:
 
     # -- child profiles ---------------------------------------------------------
 
+    _PROFILE_LIST_FIELDS = ("active_categories", "active_decks")
+
     def create_profile(self, name, **fields):
-        allowed = {"active_categories", "daily_new_cards",
+        allowed = {"active_categories", "active_decks", "daily_new_cards",
                    "daily_review_cards", "session_card_limit",
                    "session_time_minutes", "study_direction"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")
-        if "active_categories" in fields and \
-                fields["active_categories"] is not None:
-            fields["active_categories"] = json.dumps(
-                fields["active_categories"])
+        self._serialize_profile_lists(fields)
         columns = ["name"] + list(fields)
         values = [name] + list(fields.values())
         cur = self.conn.execute(
@@ -420,21 +551,27 @@ class Storage:
         return cur.lastrowid
 
     def update_profile(self, profile_id, **fields):
-        allowed = {"name", "active_categories", "daily_new_cards",
-                   "daily_review_cards", "session_card_limit",
-                   "session_time_minutes", "study_direction"}
+        allowed = {"name", "active_categories", "active_decks",
+                   "daily_new_cards", "daily_review_cards",
+                   "session_card_limit", "session_time_minutes",
+                   "study_direction"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")
-        if "active_categories" in fields and \
-                fields["active_categories"] is not None:
-            fields["active_categories"] = json.dumps(
-                fields["active_categories"])
+        self._serialize_profile_lists(fields)
         sets = ", ".join(f"{k}=?" for k in fields)
         self.conn.execute(
             f"UPDATE child_profiles SET {sets} WHERE id=?",
             list(fields.values()) + [profile_id])
         self.conn.commit()
+
+    @classmethod
+    def _serialize_profile_lists(cls, fields):
+        """None means "everything active" and is stored as NULL; an
+        explicit list (including []) is JSON-encoded in place."""
+        for key in cls._PROFILE_LIST_FIELDS:
+            if key in fields and fields[key] is not None:
+                fields[key] = json.dumps(fields[key])
 
     def get_profile(self, profile_id):
         row = self.conn.execute(
@@ -454,11 +591,12 @@ class Storage:
         profile_id = self.create_profile(name)
         return self.get_profile(profile_id)
 
-    @staticmethod
-    def _profile_dict(row):
+    @classmethod
+    def _profile_dict(cls, row):
         profile = dict(row)
-        raw = profile.get("active_categories")
-        profile["active_categories"] = json.loads(raw) if raw else None
+        for key in cls._PROFILE_LIST_FIELDS:
+            raw = profile.get(key)
+            profile[key] = json.loads(raw) if raw else None
         return profile
 
     # -- legacy prototype queries (main.py review / decks) ------------------------
@@ -505,3 +643,42 @@ class Storage:
                FROM cards c JOIN review_state r ON r.card_id = c.id
                GROUP BY c.deck ORDER BY c.deck""",
             (now_iso,)).fetchall()
+
+    # -- admin (destructive) -----------------------------------------------------
+
+    def deck_names_list(self):
+        """Distinct deck names, regardless of due status."""
+        return [row["deck"] for row in self.conn.execute(
+            "SELECT DISTINCT deck FROM cards ORDER BY deck")]
+
+    def count_cards_in_decks(self, deck_names=None):
+        """Card count for the given decks, or every card if None."""
+        if deck_names is None:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM cards").fetchone()["n"]
+        placeholders = ",".join("?" for _ in deck_names)
+        return self.conn.execute(
+            f"SELECT COUNT(*) AS n FROM cards WHERE deck IN ({placeholders})",
+            deck_names).fetchone()["n"]
+
+    def purge_decks(self, deck_names=None):
+        """Permanently delete cards for the given decks (or all decks).
+
+        Relies on ON DELETE CASCADE (foreign_keys=ON, set at connect
+        time) to remove the matching review_state, review_log, and
+        vocab_cards rows along with each card. Child profiles, app
+        settings, and historical session rows are untouched. Returns
+        the number of cards deleted. Callers are responsible for
+        confirmation and backups (see main.py's admin command) —
+        this method does not ask twice.
+        """
+        count = self.count_cards_in_decks(deck_names)
+        if deck_names is None:
+            self.conn.execute("DELETE FROM cards")
+        else:
+            placeholders = ",".join("?" for _ in deck_names)
+            self.conn.execute(
+                f"DELETE FROM cards WHERE deck IN ({placeholders})",
+                deck_names)
+        self.conn.commit()
+        return count

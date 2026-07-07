@@ -3,37 +3,56 @@
 A state-driven pygame app aimed at children doing a short daily Spanish
 session on a handheld. Screens:
 
-    ChildStart -> Review (question/answer) -> SessionSummary -> ChildStart
-    ChildStart -> ParentMode (import / categories / limits / suspended /
-                              progress) -> ChildStart
+    ChildStart -> DeckSelect (only when >1 deck is assigned)
+              -> Review (question/answer) -> SessionSummary -> ChildStart
+    ChildStart / SessionSummary -> Calendar (stamp calendar) -> back
+    ChildStart -> ParentMode (import / decks / categories / limits /
+                              suspended / progress / calendar /
+                              controller setup) -> ChildStart
 
-Controller-first. Default roles (per the product spec):
+Parent Mode's Decks screen configures which decks are *assigned* to the
+child at all (child_profiles.active_decks); DeckSelect is the child's
+own per-sitting choice of which *one* assigned deck (or all of them
+combined) to study right now. A single assigned deck skips the picker
+entirely — no extra tap when there's no real choice to make.
 
-    D-pad          reveal answer
-    A              Good        B  Again
-    X              Easy        Y  Hard
-    L              replay audio
-    R              bury until tomorrow
-    SELECT         action menu / parent mode
-    START          finish session / back
+Controller-first and deployment-hardened for Knulli-style devices:
+
+- Input is translated to *semantic* actions (south_button, dpad_up,
+  start, ...) through a JSON mapping calibrated on-device — raw SDL
+  button indices are never trusted (see input_map.py). Face buttons are
+  labelled by physical position ("Bottom = Good"), not A/B/X/Y.
+- Everything renders on a fixed logical canvas (default 640x480, the
+  RG35XX SP panel) which is scaled — integer scaling when it fits — to
+  the real display.
+- The app has its own exit paths (START from summary quits; SELECT +
+  START held 2 s force-exits from anywhere; Esc on desktop) and never
+  relies on RetroArch hotkeys.
+- A bundled DejaVu Sans covers Spanish glyphs; font resolution and all
+  startup facts are logged (see bootlog.py).
 
 Keyboard fallback for desktop testing: arrows reveal, 1/2/3/4 =
 Again/Hard/Good/Easy (or literal A/B/X/Y keys), L replay, R bury,
-U undo, Tab menu, Esc finish.
-
-Everything renders on a fixed logical canvas (default 640x480, the
-RG35XX SP panel); pygame.SCALED stretches it to whatever display the
-device has.
+U undo, Tab menu, Esc finish/quit.
 """
 
+import calendar as _calendar
+import logging
 import os
+import time
 
 import pygame
 
+from . import __version__
+from .bootlog import (log_display_diagnostics, log_pygame_versions)
 from .importer import ApkgError, import_apkg
+from .input_map import (FACE_LABELS, InputMap, InputTranslator,
+                        STUDY_ACTIONS)
 from .scheduler import iso
 from .session import StudySession
 from .textutil import wrap_text
+
+log = logging.getLogger(__name__)
 
 FPS = 30
 
@@ -43,86 +62,112 @@ DIM = (140, 142, 148)
 ACCENT = (120, 180, 250)
 GOOD = (120, 210, 140)
 WARN = (240, 180, 100)
-BAD = (235, 120, 120)
 DIVIDER = (70, 72, 78)
 OVERLAY_BG = (36, 39, 45)
 
-# Physical gamepad button numbers vary between handhelds; remap without
-# touching code via CARDBRICK_JOYMAP="A=1,B=0,X=3,Y=2,L=4,R=5,SELECT=6,START=7"
-DEFAULT_JOYMAP = {0: "A", 1: "B", 2: "X", 3: "Y", 4: "L", 5: "R",
-                  6: "SELECT", 7: "START"}
+# Semantic face button -> FSRS rating. Position language, not A/B/X/Y:
+# bottom=Good, right=Again, left=Easy, top=Hard.
+RATING_FOR_SEMANTIC = {"east_button": 1, "north_button": 2,
+                       "south_button": 3, "west_button": 4}
 
-# Button role -> FSRS rating (spec: A=Good, B=Again, X=Easy, Y=Hard).
-RATING_FOR_BUTTON = {"B": 1, "Y": 2, "A": 3, "X": 4}
+DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
 
-KEYBOARD_MAP = {
-    pygame.K_UP: "UP", pygame.K_DOWN: "DOWN",
-    pygame.K_LEFT: "LEFT", pygame.K_RIGHT: "RIGHT",
-    pygame.K_RETURN: "A", pygame.K_SPACE: "A",
-    pygame.K_a: "A", pygame.K_b: "B",
-    pygame.K_x: "X", pygame.K_y: "Y",
-    pygame.K_1: "B", pygame.K_2: "Y",     # 1=Again 2=Hard
-    pygame.K_3: "A", pygame.K_4: "X",     # 3=Good  4=Easy
-    pygame.K_l: "L", pygame.K_r: "R",
-    pygame.K_u: "UNDO",
-    pygame.K_TAB: "SELECT",
-    pygame.K_ESCAPE: "START", pygame.K_q: "START",
-}
-
-DPAD = ("UP", "DOWN", "LEFT", "RIGHT")
+_BUNDLED_FONT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "fonts")
 
 FONT_CANDIDATES = [
     os.environ.get("CARDBRICK_FONT", ""),
-    os.path.join(os.path.dirname(__file__), "..", "assets", "fonts",
-                 "main.ttf"),
+    os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
+
+_font_path_logged = False
+
+
+def resolve_font_path():
+    """First existing font candidate, or None for the builtin fallback."""
+    for path in FONT_CANDIDATES:
+        if path and os.path.exists(path):
+            return path
+    return None
 
 
 def _load_font(size):
-    for path in FONT_CANDIDATES:
-        if path and os.path.exists(path):
-            try:
-                return pygame.font.Font(path, size)
-            except pygame.error:
-                continue
+    global _font_path_logged
+    path = resolve_font_path()
+    if path:
+        try:
+            return pygame.font.Font(path, size)
+        except pygame.error as exc:
+            log.error("could not load font %s: %s", path, exc)
+    if not _font_path_logged:
+        _font_path_logged = True
+        log.warning("no bundled/system font found — using pygame builtin "
+                    "(Spanish accents may render poorly)")
     return pygame.font.Font(None, size + 6)  # pygame default runs small
 
 
-def _parse_joymap():
-    raw = os.environ.get("CARDBRICK_JOYMAP")
-    if not raw:
-        return dict(DEFAULT_JOYMAP)
-    joymap = {}
-    for pair in raw.split(","):
-        name, _, num = pair.strip().partition("=")
-        if num.isdigit():
-            joymap[int(num)] = name.strip().upper()
-    return joymap or dict(DEFAULT_JOYMAP)
-
-
 class QuitApp(Exception):
-    """Raised when the window is closed; unwinds any screen loop."""
+    """Raised to unwind any screen loop and exit cleanly."""
+
+
+class DisplayInitError(Exception):
+    """Display could not be initialised; main() shows/logs the error."""
+
+
+class FontSupportError(Exception):
+    """This pygame build has no usable font module (SDL_ttf missing)."""
+
+
+def ensure_font_support():
+    """Fail fast, with an actionable message, on font-less pygame builds.
+
+    pygame.font is optional: a from-source build without SDL_ttf (the
+    usual outcome of `pip install pygame` on a Python version that has
+    no prebuilt wheel, e.g. classic pygame on 3.13+) leaves pygame.font
+    as a stub that raises on first use. A text UI cannot limp along
+    without fonts, so turn that into a clear diagnosis up front.
+    """
+    try:
+        pygame.font.init()
+        pygame.font.Font(None, 12)  # exercises the real module
+    except Exception as exc:
+        raise FontSupportError(
+            "This pygame build has no font support (SDL_ttf was missing "
+            "when it was compiled). Install pygame-ce "
+            "(`pip uninstall pygame; pip install pygame-ce`) or use a "
+            f"Python version with prebuilt wheels. Underlying error: {exc}"
+        ) from exc
 
 
 class CardBrickApp:
-    def __init__(self, storage, service, audio, settings, fullscreen=None):
+    def __init__(self, storage, service, audio, settings, paths=None,
+                 fullscreen=None, initial_state=None):
         self.storage = storage
         self.service = service
         self.audio = audio
         self.settings = settings
-        self.joymap = _parse_joymap()
+        self.paths = paths
+        self.initial_state = initial_state
+
+        self.input_map = InputMap(paths.input_map_path if paths else None)
+        self._image_cache = {}  # vocab card images, decoded once per file
+        self._session_deck_filter = None  # child's per-sitting deck pick
+        self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
+        self.input = InputTranslator(self.input_map)
 
         pygame.init()
-        width = int(settings.get("logical_width", 640))
-        height = int(settings.get("logical_height", 480))
-        self.w, self.h = width, height
+        log_pygame_versions()
+        ensure_font_support()
+        self.w = int(settings.get("logical_width", 640))
+        self.h = int(settings.get("logical_height", 480))
         if fullscreen is None:
             fullscreen = bool(settings.get("fullscreen"))
-        flags = pygame.SCALED | (pygame.FULLSCREEN if fullscreen else 0)
-        self.screen = pygame.display.set_mode((width, height), flags)
+        self.fullscreen = fullscreen
+        self._init_display()
         pygame.display.set_caption("CardBrick — Spanish Practice")
         pygame.mouse.set_visible(False)
         for i in range(pygame.joystick.get_count()):
@@ -133,9 +178,69 @@ class CardBrickApp:
         self.font_small = _load_font(18)
         self.clock = pygame.time.Clock()
 
+        log_display_diagnostics(self.display.get_size(), (self.w, self.h),
+                                self.fullscreen, resolve_font_path())
+
         # Crash recovery: close sessions that never got an end stamp.
-        self.storage.close_dangling_sessions(iso(self.service.now()))
+        recovered = self.storage.close_dangling_sessions(
+            iso(self.service.now()))
+        if recovered:
+            log.info("recovered %d interrupted session(s): %s",
+                     len(recovered), recovered)
         self.profile = self._boot_profile()
+
+    # -- display / scaling -------------------------------------------------------
+
+    def _init_display(self):
+        """Logical canvas + real display; scaling computed once."""
+        try:
+            if self.fullscreen:
+                self.display = pygame.display.set_mode(
+                    (0, 0), pygame.FULLSCREEN)
+                if self.display.get_size() < (self.w, self.h):
+                    log.warning("display %s smaller than logical %s",
+                                self.display.get_size(), (self.w, self.h))
+            else:
+                self.display = pygame.display.set_mode((self.w, self.h))
+        except pygame.error as exc:
+            log.error("display init failed: %s (SDL_VIDEODRIVER=%s)",
+                      exc, os.environ.get("SDL_VIDEODRIVER", "auto"))
+            raise DisplayInitError(str(exc)) from exc
+
+        dw, dh = self.display.get_size()
+        if (dw, dh) == (0, 0):  # dummy driver corner case
+            self.display = pygame.display.set_mode((self.w, self.h))
+            dw, dh = self.w, self.h
+
+        self.canvas = pygame.Surface((self.w, self.h))
+        self.screen = self.canvas  # all drawing targets the canvas
+        if (dw, dh) == (self.w, self.h):
+            self._scaled = None  # fast path: blit 1:1
+            log.info("scaling: none (display matches logical size)")
+        else:
+            if self.settings.get("integer_scaling", True):
+                factor = max(min(dw // self.w, dh // self.h), 1)
+                tw, th = self.w * factor, self.h * factor
+                log.info("scaling: integer x%d -> %dx%d", factor, tw, th)
+            else:
+                ratio = min(dw / self.w, dh / self.h)
+                tw, th = int(self.w * ratio), int(self.h * ratio)
+                log.info("scaling: aspect-fit -> %dx%d", tw, th)
+            self._scaled = pygame.Surface((tw, th))
+            self._scale_offset = ((dw - tw) // 2, (dh - th) // 2)
+            self.display.fill((0, 0, 0))  # letterbox borders
+
+    def present(self):
+        """Blit the logical canvas to the display and flip."""
+        if self._scaled is None:
+            self.display.blit(self.canvas, (0, 0))
+        else:
+            pygame.transform.scale(self.canvas,
+                                   self._scaled.get_size(), self._scaled)
+            self.display.blit(self._scaled, self._scale_offset)
+        pygame.display.flip()
+
+    # -- boot ------------------------------------------------------------------------
 
     def _boot_profile(self):
         profile_id = self.settings.get("current_child_profile_id")
@@ -143,82 +248,120 @@ class CardBrickApp:
         if profile is None:
             profile = self.storage.ensure_default_profile()
             self.settings.set("current_child_profile_id", profile["id"])
+            log.info("using default profile %r (id=%s)", profile["name"],
+                     profile["id"])
+        if profile["active_categories"] == []:
+            log.warning("profile %r has an EMPTY category list — the "
+                        "child will see no cards until a parent fixes it",
+                        profile["name"])
         return profile
 
     def _reload_profile(self):
         self.profile = self.storage.get_profile(self.profile["id"])
 
+    def _card_count(self):
+        return self.storage.conn.execute(
+            "SELECT COUNT(*) AS n FROM cards").fetchone()["n"]
+
     # -- main state machine ------------------------------------------------------
 
     def run(self):
-        state = "CHILD_START"
+        if self.initial_state:
+            state = self.initial_state
+        elif self._card_count() == 0:
+            # Nothing imported yet: route straight to setup/parent mode.
+            log.warning("no cards in database — starting in parent mode")
+            state = "PARENT_MENU"
+        else:
+            state = "CHILD_START"
         handlers = {
             "CHILD_START": self.screen_child_start,
+            "DECK_SELECT": self.screen_deck_select,
             "REVIEW": self.screen_review,
             "SUMMARY": self.screen_summary,
+            "CALENDAR": self.screen_calendar,
             "PARENT_MENU": self.screen_parent_menu,
             "PARENT_IMPORT": self.screen_parent_import,
             "PARENT_CATEGORIES": self.screen_parent_categories,
+            "PARENT_DECKS": self.screen_parent_decks,
             "PARENT_LIMITS": self.screen_parent_limits,
             "PARENT_SUSPENDED": self.screen_parent_suspended,
             "PARENT_PROGRESS": self.screen_parent_progress,
+            "INPUT_DIAG": self.screen_input_diagnostic,
+            "CALIBRATE": self.screen_calibrate,
         }
         try:
             while state != "QUIT":
                 state = handlers[state]()
         except QuitApp:
-            pass
+            log.info("exit requested")
         finally:
             pygame.quit()
+            log.info("shut down cleanly")
 
     # -- input ---------------------------------------------------------------------
 
     def poll(self):
-        """Next logical button press, or None.
+        """Next semantic action, or None.
 
         Consumes exactly one meaningful event per call so rapid inputs
-        queued between frames are never dropped.
+        queued between frames are never dropped. Also services joystick
+        hot-plug and the SELECT+START force-exit gesture.
         """
         while True:
             event = pygame.event.poll()
             if event.type == pygame.NOEVENT:
+                if self.input.force_exit_held():
+                    log.info("SELECT+START held — force exit")
+                    raise QuitApp
                 return None
             if event.type == pygame.QUIT:
                 raise QuitApp
-            if event.type == pygame.KEYDOWN:
-                action = KEYBOARD_MAP.get(event.key)
-                if action:
-                    return action
-            elif event.type == pygame.JOYBUTTONDOWN:
-                return self.joymap.get(event.button, "OTHER")
-            elif event.type == pygame.JOYHATMOTION:
-                x, y = event.value
-                if y == 1:
-                    return "UP"
-                if y == -1:
-                    return "DOWN"
-                if x == -1:
-                    return "LEFT"
-                if x == 1:
-                    return "RIGHT"
+            if event.type == pygame.JOYDEVICEADDED:
+                joy = pygame.joystick.Joystick(event.device_index)
+                joy.init()
+                log.info("joystick connected: %r", joy.get_name())
+                continue
+            if event.type == pygame.JOYDEVICEREMOVED:
+                log.warning("joystick disconnected")
+                continue
+            action = self.input.translate(event)
+            if action:
+                return action
 
     # -- child start -----------------------------------------------------------------
 
+    def _resolve_available_decks(self):
+        """Decks the parent has assigned to this profile: every deck if
+        active_decks is None, else that explicit (possibly empty) list."""
+        active = self.profile["active_decks"]
+        return self.storage.deck_names_list() if active is None \
+            else list(active)
+
     def screen_child_start(self):
+        self._session_deck_filter = None  # cleared each time we land here
         review_n, new_n = self.service.counts_for_queue(profile=self.profile)
         total = review_n + new_n
+        available_decks = self._resolve_available_decks()
         categories = self.profile["active_categories"]
         cat_label = "All categories" if categories is None else \
-            ", ".join(categories) if categories else "No categories!"
+            ", ".join(categories) if categories else "No categories set"
+        decks = self.profile["active_decks"]
+        deck_label = "All decks" if decks is None else \
+            ", ".join(decks) if decks else "No decks set"
 
         while True:
             action = self.poll()
-            if action == "START":
+            if action == "start":
                 return "QUIT"
-            if action == "SELECT":
+            if action == "select":
                 return "PARENT_MENU"
-            if action in ("A", "OTHER") and total > 0:
-                return "REVIEW"
+            if action == "north_button":
+                self._calendar_return = "CHILD_START"
+                return "CALENDAR"
+            if action in ("south_button", "unmapped") and total > 0:
+                return "DECK_SELECT" if len(available_decks) > 1 \
+                    else "REVIEW"
 
             self.screen.fill(BG)
             self._center(self.font_small.render("SPANISH PRACTICE", True,
@@ -226,6 +369,7 @@ class CardBrickApp:
             self._center(self.font_big.render(self.profile["name"], True,
                                               FG), 80)
             self._center(self.font.render(cat_label, True, ACCENT), 150)
+            self._center(self.font_small.render(deck_label, True, DIM), 182)
             if total > 0:
                 due_text = f"{total} cards today"
                 detail = f"{review_n} to review  +  {new_n} new"
@@ -236,17 +380,66 @@ class CardBrickApp:
                               f"{self.profile['session_time_minutes']} min")
                 self._center(self.font_small.render(limit_line, True, DIM),
                              305)
-                self._center(self.font.render("Press A to start!", True,
-                                              GOOD), 360)
+                self._center(self.font.render(
+                    "Press the bottom button to start!", True, GOOD), 360)
             else:
                 self._center(self.font_big.render("All done for today!",
                                                   True, GOOD), 230)
                 self._center(self.font.render("Come back tomorrow.", True,
                                               DIM), 285)
-            self._footer("A = Start   SELECT = Parent mode   START = Quit"
-                         if total else
-                         "SELECT = Parent mode   START = Quit")
-            pygame.display.flip()
+            self._footer(
+                "Bottom = Start    Top = Calendar" if total else
+                "Top = Calendar",
+                "SELECT = Parent    START = Quit")
+            self.present()
+            self.clock.tick(FPS)
+
+    def screen_deck_select(self):
+        """Child-facing deck picker: shown only when the parent has
+        assigned more than one deck (screen_child_start skips straight
+        to REVIEW otherwise, keeping the fast path fast). Lets the
+        child choose one specific assigned deck, or all of them
+        combined, for just this sitting."""
+        available = self._resolve_available_decks()
+        entries = [("All assigned decks", None)] + \
+            [(name, [name]) for name in available]
+        # Due/new counts computed once up front, not per frame — this
+        # screen redraws every tick like the other menus, and querying
+        # the DB per entry per frame would not be free on a big deck.
+        counts = [self.service.counts_for_queue(profile=self.profile,
+                                                deck_filter=decks)
+                 for _label, decks in entries]
+        index = 0
+
+        while True:
+            action = self.poll()
+            if action in ("start", "east_button", "select"):
+                return "CHILD_START"
+            if action == "dpad_up":
+                index = (index - 1) % len(entries)
+            elif action == "dpad_down":
+                index = (index + 1) % len(entries)
+            elif action == "south_button":
+                self._session_deck_filter = entries[index][1]
+                return "REVIEW"
+
+            self.screen.fill(BG)
+            self._center(self.font_big.render("Choose a Deck", True, FG),
+                         40)
+            self._center(self.font_small.render(
+                "Which deck do you want to study?", True, DIM), 90)
+            y = 140
+            for i, (label, _decks) in enumerate(entries):
+                due, new = counts[i]
+                color = ACCENT if i == index else FG
+                prefix = "> " if i == index else "   "
+                text = f"{prefix}{label}   ({due + new} due)"
+                self.screen.blit(self.font.render(text, True, color),
+                                (60, y))
+                y += 44
+            self._footer("Up/Down = Choose   Bottom = Select   "
+                         "Right = Back")
+            self.present()
             self.clock.tick(FPS)
 
     # -- review ----------------------------------------------------------------------
@@ -255,15 +448,50 @@ class CardBrickApp:
                     "Suspend card (parent will check)", "End session",
                     "Cancel")
 
+    # Four-phase vocab cards (word -> example -> image -> definition):
+    # the phase reached when "I know this" is pressed *is* the rating.
+    # No separate Again/Hard/Good/Easy buttons for these cards.
+    VOCAB_MAX_PHASE = 3
+    VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
+
     def screen_review(self):
-        session = StudySession(self.storage, self.service, self.profile)
+        session = StudySession(self.storage, self.service, self.profile,
+                               deck_filter=self._session_deck_filter)
+        log.info("session %d started: %d cards queued (deck filter: %s)",
+                 session.session_id, session.planned_total,
+                 self._session_deck_filter)
+        try:
+            return self._review_loop(session)
+        finally:
+            if not session.finished:
+                session.finish()  # force exit / window close: still stamped
+            log.info("session %d finished: %s", session.session_id,
+                     {k: v for k, v in session.summary().items()
+                      if not k.startswith("avg")})
+
+    def _review_loop(self, session):
         reversed_mode = self.profile.get("study_direction") == "reversed"
         auto_play = bool(self.settings.get("auto_play_audio", True))
 
         flipped = False
+        phase = 0            # vocab cards only: 0..VOCAB_MAX_PHASE
+        vocab_detail = None  # vocab cards only: the vocab_cards row
         shown_at = None
         audio_status = None
         menu = None  # action-menu overlay index, or None when closed
+        needs_draw = True
+        heartbeat = 0
+
+        def play_vocab():
+            """Replay whatever audio belongs to the current phase: the
+            word at phase 0, the example sentence from phase 1 on."""
+            nonlocal audio_status
+            filename = card["audio_filename"] if phase == 0 else (
+                vocab_detail["example_audio"] if vocab_detail else None)
+            if not filename:
+                return
+            audio_status = "playing" if self.audio.play(filename) \
+                else "missing"
 
         def audio_for(card, side):
             """Audio filename if the card's audio belongs on this side
@@ -285,15 +513,19 @@ class CardBrickApp:
                 else "missing"
 
         def begin_card(card):
-            nonlocal flipped, shown_at, audio_status
+            nonlocal flipped, phase, vocab_detail, shown_at, audio_status
             flipped = False
+            phase = 0
+            vocab_detail = self.storage.get_vocab_detail(card["id"]) \
+                if card["card_type"] == "vocab" else None
             shown_at = self.service.now()
             audio_status = None
             if card["audio_filename"] and not self.audio.available(
                     card["audio_filename"]):
                 audio_status = "missing"
             if auto_play:
-                play(card, "front")
+                play_vocab() if vocab_detail is not None else \
+                    play(card, "front")
 
         def advance():
             """Fetch the next card after the current one was consumed.
@@ -323,14 +555,16 @@ class CardBrickApp:
                 return end_session()
 
             action = self.poll()
+            if action:
+                needs_draw = True
             if menu is not None:
-                if action == "UP":
+                if action == "dpad_up":
                     menu = (menu - 1) % len(self.MENU_ENTRIES)
-                elif action == "DOWN":
+                elif action == "dpad_down":
                     menu = (menu + 1) % len(self.MENU_ENTRIES)
-                elif action in ("B", "SELECT", "START"):
+                elif action in ("east_button", "select", "start"):
                     menu = None
-                elif action == "A":
+                elif action == "south_button":
                     choice, menu = self.MENU_ENTRIES[menu], None
                     if choice.startswith("Undo"):
                         restored = session.undo()
@@ -345,42 +579,67 @@ class CardBrickApp:
                         advance()
                     elif choice == "End session":
                         return end_session()
-            elif action == "START":
+            elif action == "start":
                 return end_session()
-            elif action == "SELECT":
+            elif action == "select":
                 menu = 0
-            elif action == "L":
-                play(card, "back" if flipped else "front", forced=True)
-            elif action == "UNDO":
+            elif action == "l1":
+                if vocab_detail is not None:
+                    play_vocab()
+                else:
+                    play(card, "back" if flipped else "front", forced=True)
+            elif action == "undo":
                 restored = session.undo()
                 if restored is not None:
                     card = restored
                     begin_card(card)
+            elif vocab_detail is not None:
+                if action in DPAD:
+                    if phase < self.VOCAB_MAX_PHASE:
+                        phase += 1
+                        if auto_play:
+                            play_vocab()
+                elif action == "south_button":
+                    elapsed = int((self.service.now() -
+                                   shown_at).total_seconds() * 1000)
+                    session.answer(self.VOCAB_PHASE_RATING[phase],
+                                   elapsed_ms=elapsed)
+                    advance()
+                    continue
+                elif action == "r1":
+                    session.bury_current()
+                    advance()
+                    continue
             elif not flipped:
-                if action in DPAD or action in ("A", "OTHER"):
+                if action in DPAD or action in ("south_button", "unmapped"):
                     flipped = True
                     if auto_play:
                         play(card, "back")
-            elif action in RATING_FOR_BUTTON:
+            elif action in RATING_FOR_SEMANTIC:
                 elapsed = int((self.service.now() -
                                shown_at).total_seconds() * 1000)
-                session.answer(RATING_FOR_BUTTON[action], elapsed_ms=elapsed)
+                session.answer(RATING_FOR_SEMANTIC[action],
+                               elapsed_ms=elapsed)
                 advance()
                 continue
-            elif action == "R":
+            elif action == "r1":
                 session.bury_current()
                 advance()
                 continue
 
-            self._draw_review(session, card, flipped, audio_status, menu)
+            # The screen is static between inputs: redraw only when
+            # something happened (plus a 1 s heartbeat as a safety net).
+            heartbeat += 1
+            if needs_draw or heartbeat >= FPS:
+                self._draw_review(session, card, flipped, audio_status,
+                                  menu, phase=phase, vocab=vocab_detail)
+                needs_draw = False
+                heartbeat = 0
             self.clock.tick(FPS)
 
-    def _draw_review(self, session, card, flipped, audio_status, menu):
+    def _draw_review(self, session, card, flipped, audio_status, menu,
+                     phase=0, vocab=None):
         self.screen.fill(BG)
-        reversed_mode = self.profile.get("study_direction") == "reversed"
-        front, back = (card["back"], card["front"]) if reversed_mode \
-            else (card["front"], card["back"])
-
         header = card["deck"]
         if card["tags"]:
             header += "  ·  " + " ".join(card["tags"].split()[:3])
@@ -389,6 +648,26 @@ class CardBrickApp:
         surf = self.font_small.render(left, True, DIM)
         self.screen.blit(surf, (self.w - surf.get_width() - 16, 12))
         pygame.draw.line(self.screen, DIVIDER, (16, 40), (self.w - 16, 40))
+
+        if vocab is not None:
+            self._draw_vocab_phases(card, vocab, phase, audio_status,
+                                    top=60)
+            if phase < self.VOCAB_MAX_PHASE:
+                self._footer("D-pad = Reveal more   Bottom = I know this",
+                             "L1 = Replay audio   R1 = Bury   "
+                             "SELECT = Menu")
+            else:
+                self._footer("Bottom = I know this",
+                             "L1 = Replay audio   R1 = Bury   "
+                             "SELECT = Menu   START = Finish")
+            if menu is not None:
+                self._draw_menu_overlay(menu)
+            self.present()
+            return
+
+        reversed_mode = self.profile.get("study_direction") == "reversed"
+        front, back = (card["back"], card["front"]) if reversed_mode \
+            else (card["front"], card["back"])
 
         margin = 36
         max_width = self.w - 2 * margin
@@ -399,8 +678,8 @@ class CardBrickApp:
             self._center(self.font_small.render("(no audio)", True, WARN),
                          y + 6)
         elif card["audio_filename"]:
-            self._center(self.font_small.render("♪  L = replay", True, DIM),
-                         y + 6)
+            self._center(self.font_small.render("♪  L1 = replay", True,
+                                                DIM), y + 6)
 
         if flipped:
             div_y = max(y + 34, 210)
@@ -408,15 +687,126 @@ class CardBrickApp:
                              (self.w - margin, div_y))
             self._block(back, self.font, ACCENT, top=div_y + 18,
                         max_width=max_width)
-            self._footer("B=Again  Y=Hard  A=Good  X=Easy   "
-                         "R=Bury  SELECT=Menu  START=Finish")
+            self._footer("Bottom=Good  Right=Again  Left=Easy  Top=Hard",
+                         "R1=Bury   SELECT=Menu   START=Finish")
         else:
-            self._footer("D-pad = Show answer   L = Replay audio   "
+            self._footer("D-pad = Show answer   L1 = Replay audio   "
                          "START = Finish")
 
         if menu is not None:
             self._draw_menu_overlay(menu)
-        pygame.display.flip()
+        self.present()
+
+    def _draw_vocab_phases(self, card, vocab, phase, audio_status, top):
+        """Phase 0: word. 1: +example (headword highlighted). 2: +image.
+        3: +gendered forms/definitions/translation. Each phase's content
+        stays on screen as later phases are revealed underneath it."""
+        margin = 36
+        max_width = self.w - 2 * margin
+        y = self._block(vocab["word"], self.font_big, FG, top=top,
+                        max_width=max_width)
+
+        if card["audio_filename"]:
+            hint, color = (("(no audio)", WARN) if audio_status == "missing"
+                          else ("♪  L1 = replay", DIM))
+            self._center(self.font_small.render(hint, True, color), y + 4)
+        y += 26
+
+        if phase >= 1:
+            pygame.draw.line(self.screen, DIVIDER, (margin, y),
+                             (self.w - margin, y))
+            y += 14
+            y = self._draw_highlighted_block(
+                vocab["example_es"] or "(no example sentence)",
+                vocab["word"], self.font, top=y, max_width=max_width)
+            y += 8
+
+        if phase >= 2:
+            image = self._vocab_image_surface(vocab["image_filename"])
+            if image is not None:
+                rect = image.get_rect()
+                rect.centerx = self.w // 2
+                rect.top = y
+                self.screen.blit(image, rect)
+                y = rect.bottom + 10
+            else:
+                self._center(self.font_small.render("(no image)", True,
+                                                    DIM), y)
+                y += 26
+
+        if phase >= 3:
+            pygame.draw.line(self.screen, DIVIDER, (margin, y),
+                             (self.w - margin, y))
+            y += 12
+            text = vocab["definitions"] or "(no definition)"
+            if vocab["gendered_forms"]:
+                text = vocab["gendered_forms"] + "\n" + text
+            if vocab["example_en"]:
+                text += "\n" + vocab["example_en"]
+            self._block(text, self.font_small, ACCENT, top=y,
+                       max_width=max_width)
+
+    def _vocab_image_surface(self, filename, max_height=140):
+        """Loaded + scaled image surface, cached by filename so it is
+        decoded once per card rather than every frame."""
+        if not filename:
+            return None
+        key = (filename, max_height)
+        if key in self._image_cache:
+            return self._image_cache[key]
+        surf = None
+        path = os.path.join(self.audio.media_dir, os.path.basename(filename))
+        if os.path.exists(path):
+            try:
+                raw = pygame.image.load(path)
+                try:
+                    raw = raw.convert_alpha()
+                except pygame.error:
+                    raw = raw.convert()
+                if raw.get_height() > max_height:
+                    scale = max_height / raw.get_height()
+                    raw = pygame.transform.smoothscale(
+                        raw, (max(1, int(raw.get_width() * scale)),
+                             max_height))
+                surf = raw
+            except pygame.error as exc:
+                log.warning("could not load image %s: %s", path, exc)
+        else:
+            log.warning("missing media file: %s", path)
+        self._image_cache[key] = surf
+        return surf
+
+    def _draw_highlighted_block(self, text, word, font, top, max_width):
+        """Like _block, but the headword is rendered in ACCENT wherever
+        it occurs (case-insensitively) — a plain-text stand-in for the
+        original card's HTML/CSS yellow-highlight span."""
+        word_lower = (word or "").lower()
+        y = top
+        for line in wrap_text(font, text, max_width):
+            if y > self.h - 80:
+                break
+            idx = line.lower().find(word_lower) if word_lower else -1
+            if idx == -1:
+                surf = font.render(line, True, FG)
+                self.screen.blit(surf, ((self.w - surf.get_width()) // 2, y))
+            else:
+                self._blit_split_highlight(line, idx, len(word_lower),
+                                           font, y)
+            y += font.get_linesize()
+        return y
+
+    def _blit_split_highlight(self, line, start, length, font, y):
+        pre, match, post = (line[:start], line[start:start + length],
+                            line[start + length:])
+        surf_pre = font.render(pre, True, FG)
+        surf_match = font.render(match, True, ACCENT)
+        surf_post = font.render(post, True, FG)
+        total_w = (surf_pre.get_width() + surf_match.get_width() +
+                  surf_post.get_width())
+        x = (self.w - total_w) // 2
+        for surf in (surf_pre, surf_match, surf_post):
+            self.screen.blit(surf, (x, y))
+            x += surf.get_width()
 
     def _draw_menu_overlay(self, index):
         entries = self.MENU_ENTRIES
@@ -462,9 +852,13 @@ class CardBrickApp:
 
         while True:
             action = self.poll()
-            if action == "START":
+            if action == "start":
                 return "QUIT"
-            if action in ("A", "B", "OTHER", "SELECT"):
+            if action == "north_button":
+                self._calendar_return = "CHILD_START"
+                return "CALENDAR"
+            if action in ("south_button", "east_button", "unmapped",
+                          "select"):
                 return "CHILD_START"
 
             self.screen.fill(BG)
@@ -476,9 +870,113 @@ class CardBrickApp:
             for text, color in lines:
                 self._center(self.font.render(text, True, color), y)
                 y += 44
-            self._footer("A = Done   START = Quit")
-            pygame.display.flip()
+            self._footer("Bottom = Done    Top = Calendar",
+                         "START = Quit")
+            self.present()
             self.clock.tick(FPS)
+
+    # -- stamp calendar ---------------------------------------------------------------
+
+    STAMP_COLORS = ((236, 108, 96), (120, 180, 250), (120, 210, 140),
+                    (240, 180, 100), (200, 140, 230))
+
+    def screen_calendar(self):
+        """Brain Age-style stamp calendar: one stamp per day the child
+        studied, with the number of sessions logged that day inside it
+        (they can study repeatedly). Read-only; reachable from the child
+        start screen (Top), the session summary (Top), and Parent Mode.
+        Shows the current profile's sessions, one month at a time."""
+        today = self.service.now().astimezone().date()
+        year, month = today.year, today.month
+
+        def load(y, m):
+            return self.service.sessions_per_day(self.profile["id"], y, m)
+
+        counts = load(year, month)
+
+        def step_month(delta):
+            nonlocal year, month, counts
+            m0 = (year * 12 + (month - 1)) + delta
+            year, month = m0 // 12, m0 % 12 + 1
+            counts = load(year, month)
+
+        while True:
+            action = self.poll()
+            if action in ("start", "select", "east_button"):
+                return self._calendar_return
+            if action in ("dpad_left", "l1"):
+                step_month(-1)
+            elif action in ("dpad_right", "r1"):
+                step_month(1)
+            elif action == "south_button":
+                year, month = today.year, today.month
+                counts = load(year, month)
+
+            self._draw_calendar(year, month, counts, today)
+            self.present()
+            self.clock.tick(FPS)
+
+    def _draw_calendar(self, year, month, counts, today):
+        self.screen.fill(BG)
+        # Title: ◀  MONTH YEAR  ▶
+        title = f"◀   {_calendar.month_name[month].upper()} {year}   " \
+                f"▶"
+        self._center(self.font_big.render(title, True, FG), 14)
+        total = sum(counts.values())
+        active = len(counts)
+        subtitle = (f"{total} session{'s' if total != 1 else ''} on "
+                    f"{active} day{'s' if active != 1 else ''}"
+                    if total else "No sessions this month yet")
+        self._center(self.font_small.render(subtitle, True, DIM), 62)
+
+        margin = 16
+        grid_w = self.w - 2 * margin
+        cell_w = grid_w / 7
+        grid_top = 106
+        cell_h = 49
+
+        weekdays = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+        for col, name in enumerate(weekdays):
+            surf = self.font_small.render(name, True, DIM)
+            cx = margin + col * cell_w + (cell_w - surf.get_width()) / 2
+            self.screen.blit(surf, (int(cx), grid_top - 22))
+
+        weeks = _calendar.Calendar(firstweekday=6).monthdayscalendar(
+            year, month)
+        for row, week in enumerate(weeks):
+            for col, day in enumerate(week):
+                if day == 0:
+                    continue
+                self._draw_day_cell(
+                    day, counts.get(day, 0),
+                    is_today=(year == today.year and month == today.month
+                              and day == today.day),
+                    x=int(margin + col * cell_w), y=grid_top + row * cell_h,
+                    w=int(cell_w), h=cell_h)
+
+        self._footer("L1/R1 = Month    Bottom = Today",
+                     "SELECT = Back")
+
+    def _draw_day_cell(self, day, count, is_today, x, y, w, h):
+        if is_today:
+            pygame.draw.rect(self.screen, ACCENT, (x + 2, y, w - 4, h - 2),
+                             2, border_radius=6)
+        # Day number, top-left corner.
+        num = self.font_small.render(str(day), True,
+                                     FG if count else DIM)
+        self.screen.blit(num, (x + 6, y + 3))
+        if count <= 0:
+            return
+        # Stamp: a filled circle with the session count inside it. Colour
+        # varies with the count so busier days pop a little.
+        color = self.STAMP_COLORS[min(count - 1, len(self.STAMP_COLORS) - 1)]
+        cx, cy = x + w // 2, y + h // 2 + 6
+        radius = min(h // 2 - 4, 18)
+        pygame.draw.circle(self.screen, color, (cx, cy), radius)
+        pygame.draw.circle(self.screen, BG, (cx, cy), radius, 2)
+        label = self.font.render(str(count), True, BG)
+        self.screen.blit(label, (cx - label.get_width() // 2,
+                                 cy - label.get_height() // 2))
 
     # -- parent mode -----------------------------------------------------------------
 
@@ -486,25 +984,32 @@ class CardBrickApp:
         direction = self.profile.get("study_direction", "normal")
         entries = [
             ("Import deck (.apkg)", "PARENT_IMPORT"),
+            ("Decks", "PARENT_DECKS"),
             ("Categories", "PARENT_CATEGORIES"),
             ("Daily limits", "PARENT_LIMITS"),
             ("Suspended cards", "PARENT_SUSPENDED"),
             ("Progress", "PARENT_PROGRESS"),
+            ("Calendar (stamps)", "CALENDAR"),
+            ("Controller test & setup", "INPUT_DIAG"),
             (f"Direction: "
              f"{'Reversed (back first)' if direction == 'reversed' else 'Normal (front first)'}",
              "TOGGLE_DIRECTION"),
             ("Back to study", "CHILD_START"),
         ]
         index = 0
+        notice = None
+        if self._card_count() == 0:
+            notice = "No decks yet — copy an .apkg to the data folder " \
+                     "and use Import."
         while True:
             action = self.poll()
-            if action in ("START", "B", "SELECT"):
+            if action in ("start", "east_button", "select"):
                 return "CHILD_START"
-            if action == "UP":
+            if action == "dpad_up":
                 index = (index - 1) % len(entries)
-            elif action == "DOWN":
+            elif action == "dpad_down":
                 index = (index + 1) % len(entries)
-            elif action == "A":
+            elif action == "south_button":
                 target = entries[index][1]
                 if target == "TOGGLE_DIRECTION":
                     new = "normal" if direction == "reversed" else "reversed"
@@ -512,22 +1017,33 @@ class CardBrickApp:
                                                 study_direction=new)
                     self._reload_profile()
                     return "PARENT_MENU"
+                if target == "CALENDAR":
+                    self._calendar_return = "PARENT_MENU"
                 return target
 
             self.screen.fill(BG)
-            self._center(self.font_big.render("Parent Mode", True, FG), 44)
+            self._center(self.font_big.render("Parent Mode", True, FG), 40)
             self._center(self.font_small.render(
-                f"Profile: {self.profile['name']}", True, DIM), 96)
-            y = 140
+                f"Profile: {self.profile['name']}", True, DIM), 90)
+            y = 124
             for i, (label, _) in enumerate(entries):
                 color = ACCENT if i == index else FG
                 prefix = "> " if i == index else "   "
                 self.screen.blit(self.font.render(prefix + label, True,
                                                   color), (90, y))
-                y += 42
-            self._footer("Up/Down = Choose   A = Select   B = Back")
-            pygame.display.flip()
+                y += 40
+            if notice:
+                for line in wrap_text(self.font_small, notice, self.w - 80):
+                    self._center(self.font_small.render(line, True, WARN),
+                                 y + 6)
+                    y += 22
+            self._footer("Up/Down = Choose   Bottom = Select   "
+                         "Right = Back")
+            self.present()
             self.clock.tick(FPS)
+
+    def settings_dir(self):
+        return os.path.dirname(os.path.abspath(self.settings.path))
 
     def _scan_apkg_files(self):
         """Places a parent might drop an .apkg: the data dir, an
@@ -548,35 +1064,34 @@ class CardBrickApp:
                         found.append(path)
         return found
 
-    def settings_dir(self):
-        return os.path.dirname(os.path.abspath(self.settings.path))
-
     def screen_parent_import(self):
         files = self._scan_apkg_files()
         index = 0
         message = None
         while True:
             action = self.poll()
-            if action in ("START", "B", "SELECT"):
+            if action in ("start", "east_button", "select"):
                 return "PARENT_MENU"
-            if files and action == "UP":
+            if files and action == "dpad_up":
                 index = (index - 1) % len(files)
-            elif files and action == "DOWN":
+            elif files and action == "dpad_down":
                 index = (index + 1) % len(files)
-            elif files and action == "A":
+            elif files and action == "south_button":
                 self._draw_import(files, index, "Importing…")
-                pygame.display.flip()
+                self.present()
                 try:
                     stats = import_apkg(
                         files[index], self.storage,
                         self.service.scheduler,
                         os.path.join(self.settings_dir(), "media"))
                     message = stats.summary()
+                    log.info("import %s: %s", files[index], message)
                 except (ApkgError, OSError) as exc:
                     message = f"Import failed: {exc}"
+                    log.error("import %s failed: %s", files[index], exc)
 
             self._draw_import(files, index, message)
-            pygame.display.flip()
+            self.present()
             self.clock.tick(FPS)
 
     def _draw_import(self, files, index, message):
@@ -601,50 +1116,66 @@ class CardBrickApp:
             for line in wrap_text(self.font_small, message, self.w - 80):
                 self._center(self.font_small.render(line, True, WARN), y)
                 y += 24
-        self._footer("A = Import   B = Back")
+        self._footer("Bottom = Import   Right = Back")
 
     def screen_parent_categories(self):
-        tags = self.storage.all_tags()
-        active = self.profile["active_categories"]
+        return self._screen_multi_select(
+            title="Categories", subtitle="Choose what the child studies",
+            all_label="[ All categories ]", items=self.storage.all_tags(),
+            profile_field="active_categories",
+            empty_message="No tags found — import a deck first.")
+
+    def screen_parent_decks(self):
+        return self._screen_multi_select(
+            title="Decks", subtitle="Choose which decks the child studies",
+            all_label="[ All decks ]", items=self.storage.deck_names_list(),
+            profile_field="active_decks",
+            empty_message="No decks found — import one first.")
+
+    def _screen_multi_select(self, title, subtitle, all_label, items,
+                             profile_field, empty_message):
+        """Shared toggle-list UI behind Categories and Decks: a
+        "[ All ... ]" entry plus one per item, with the active subset
+        persisted to the profile (None means "all active")."""
+        active = self.profile[profile_field]
         selected = None if active is None else set(active)
         index = 0
-        entries = ["[ All categories ]"] + tags
+        entries = [all_label] + items
         top = 0
         visible = 7
 
         def save():
             self.storage.update_profile(
                 self.profile["id"],
-                active_categories=(None if selected is None
-                                   else sorted(selected)))
+                **{profile_field: (None if selected is None
+                                  else sorted(selected))})
             self._reload_profile()
 
         while True:
             action = self.poll()
-            if action in ("START", "B", "SELECT"):
+            if action in ("start", "east_button", "select"):
                 save()
                 return "PARENT_MENU"
-            if action == "UP":
+            if action == "dpad_up":
                 index = (index - 1) % len(entries)
-            elif action == "DOWN":
+            elif action == "dpad_down":
                 index = (index + 1) % len(entries)
-            elif action == "A":
+            elif action == "south_button":
                 if index == 0:
                     selected = None
                 else:
-                    tag = entries[index]
+                    item = entries[index]
                     if selected is None:
-                        selected = {tag}
-                    elif tag in selected:
-                        selected.discard(tag)
+                        selected = {item}
+                    elif item in selected:
+                        selected.discard(item)
                     else:
-                        selected.add(tag)
+                        selected.add(item)
             top = min(max(top, index - visible + 1), index)
 
             self.screen.fill(BG)
-            self._center(self.font_big.render("Categories", True, FG), 36)
-            self._center(self.font_small.render(
-                "Choose what the child studies", True, DIM), 86)
+            self._center(self.font_big.render(title, True, FG), 36)
+            self._center(self.font_small.render(subtitle, True, DIM), 86)
             y = 120
             for i in range(top, min(top + visible, len(entries))):
                 label = entries[i]
@@ -658,11 +1189,11 @@ class CardBrickApp:
                 self.screen.blit(self.font.render(
                     f"{prefix}{mark} {label}", True, color), (80, y))
                 y += 40
-            if not tags:
-                self._center(self.font.render(
-                    "No tags found — import a deck first.", True, DIM), 200)
-            self._footer("A = Toggle   B = Save & back")
-            pygame.display.flip()
+            if not items:
+                self._center(self.font.render(empty_message, True, DIM),
+                            200)
+            self._footer("Bottom = Toggle   Right = Save & back")
+            self.present()
             self.clock.tick(FPS)
 
     def screen_parent_limits(self):
@@ -676,17 +1207,17 @@ class CardBrickApp:
         index = 0
         while True:
             action = self.poll()
-            if action in ("START", "B", "SELECT"):
+            if action in ("start", "east_button", "select"):
                 self.storage.update_profile(self.profile["id"], **values)
                 self._reload_profile()
                 return "PARENT_MENU"
-            if action == "UP":
+            if action == "dpad_up":
                 index = (index - 1) % len(fields)
-            elif action == "DOWN":
+            elif action == "dpad_down":
                 index = (index + 1) % len(fields)
-            elif action in ("LEFT", "RIGHT"):
+            elif action in ("dpad_left", "dpad_right"):
                 label, key, lo, hi = fields[index]
-                step = -1 if action == "LEFT" else 1
+                step = -1 if action == "dpad_left" else 1
                 values[key] = min(max(values[key] + step, lo), hi)
 
             self.screen.fill(BG)
@@ -700,8 +1231,8 @@ class CardBrickApp:
                 value = self.font.render(str(values[key]), True, color)
                 self.screen.blit(value, (self.w - 120, y))
                 y += 52
-            self._footer("Left/Right = Adjust   B = Save & back")
-            pygame.display.flip()
+            self._footer("Left/Right = Adjust   Right btn = Save & back")
+            self.present()
             self.clock.tick(FPS)
 
     def screen_parent_suspended(self):
@@ -709,14 +1240,14 @@ class CardBrickApp:
         cards = self.storage.suspended_cards()
         while True:
             action = self.poll()
-            if action in ("START", "B", "SELECT"):
+            if action in ("start", "east_button", "select"):
                 return "PARENT_MENU"
             if cards:
-                if action == "UP":
+                if action == "dpad_up":
                     index = (index - 1) % len(cards)
-                elif action == "DOWN":
+                elif action == "dpad_down":
                     index = (index + 1) % len(cards)
-                elif action == "A":
+                elif action == "south_button":
                     self.service.unsuspend_card(cards[index]["id"])
                     cards = self.storage.suspended_cards()
                     index = max(index - 1, 0)
@@ -740,18 +1271,17 @@ class CardBrickApp:
                 self.screen.blit(self.font.render(prefix + text, True,
                                                   color), (60, y))
                 y += 40
-            self._footer("A = Unsuspend   B = Back")
-            pygame.display.flip()
+            self._footer("Bottom = Unsuspend   Right = Back")
+            self.present()
             self.clock.tick(FPS)
 
     def screen_parent_progress(self):
         totals = self.service.recent_daily_totals(7)
         suspended = len(self.storage.suspended_cards())
-        total_cards = self.storage.conn.execute(
-            "SELECT COUNT(*) AS n FROM cards").fetchone()["n"]
+        total_cards = self._card_count()
         while True:
             action = self.poll()
-            if action in ("START", "A", "B", "SELECT"):
+            if action in ("start", "south_button", "east_button", "select"):
                 return "PARENT_MENU"
 
             self.screen.fill(BG)
@@ -769,9 +1299,195 @@ class CardBrickApp:
                 row = f"{label:<14} {reviews:>7} {new:>6}"
                 self.screen.blit(self.font.render(row, True, FG), (150, y))
                 y += 38
-            self._footer("B = Back")
-            pygame.display.flip()
+            self._footer("Right = Back")
+            self.present()
             self.clock.tick(FPS)
+
+    # -- input diagnostic / calibration ------------------------------------------------
+
+    def screen_input_diagnostic(self):
+        """Raw-event viewer: shows what the device actually sends and
+        how the current mapping interprets it. Hold any single gamepad
+        button ~3 s (or press C on a keyboard) to start calibration —
+        that works even when the current mapping is completely wrong."""
+        events = []          # newest-first (raw text, semantic, study)
+        held_since = {}      # raw button index -> monotonic time
+        HOLD_SECONDS = 3.0
+
+        while True:
+            calibrate = False
+            exit_screen = False
+            event = pygame.event.poll()
+            while event.type != pygame.NOEVENT:
+                raw, semantic = None, None
+                if event.type == pygame.QUIT:
+                    raise QuitApp
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_c:
+                        calibrate = True
+                    if event.key in (pygame.K_ESCAPE, pygame.K_q):
+                        exit_screen = True
+                    raw = f"key {pygame.key.name(event.key)}"
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    raw = f"button {event.button}"
+                    held_since[event.button] = time.monotonic()
+                elif event.type == pygame.JOYBUTTONUP:
+                    held_since.pop(event.button, None)
+                elif event.type == pygame.JOYHATMOTION:
+                    raw = f"hat {event.hat} value={event.value}"
+                elif event.type == pygame.JOYAXISMOTION:
+                    if abs(event.value) > 0.5:
+                        raw = f"axis {event.axis} value={event.value:+.2f}"
+                elif event.type == pygame.JOYDEVICEADDED:
+                    pygame.joystick.Joystick(event.device_index).init()
+                    raw = "joystick connected"
+                if raw is not None:
+                    semantic = self.input.translate(event)
+                    study = STUDY_ACTIONS.get(semantic, "—")
+                    events.insert(0, (raw, semantic or "—", study))
+                    del events[10:]
+                    if semantic == "start":
+                        exit_screen = True
+                event = pygame.event.poll()
+
+            now = time.monotonic()
+            if any(now - t >= HOLD_SECONDS for t in held_since.values()):
+                calibrate = True
+            if calibrate:
+                return "CALIBRATE"
+            if exit_screen:
+                return "PARENT_MENU" if self.initial_state != "INPUT_DIAG" \
+                    else "QUIT"
+
+            self.screen.fill(BG)
+            self._center(self.font_big.render("Controller Test", True, FG),
+                         24)
+            n_joy = pygame.joystick.get_count()
+            names = ", ".join(
+                pygame.joystick.Joystick(i).get_name()
+                for i in range(n_joy)) or "none detected"
+            self._center(self.font_small.render(
+                f"Joysticks: {n_joy} ({names})", True, DIM), 74)
+            y = 108
+            header = self.font_small.render(
+                f"{'raw event':<26}{'semantic':<16}study action", True, DIM)
+            self.screen.blit(header, (48, y))
+            y += 26
+            for raw, semantic, study in events:
+                line = f"{raw:<26}{semantic:<16}{study}"
+                self.screen.blit(self.font_small.render(line, True, FG),
+                                 (48, y))
+                y += 24
+            if not events:
+                self._center(self.font.render(
+                    "Press buttons to see events…", True, DIM), 220)
+            self._footer("Hold any button 3s = remap buttons",
+                         "START (mapped) or Esc = back")
+            self.present()
+            self.clock.tick(FPS)
+
+    CALIBRATION_STEPS = (
+        ("south_button", "the BOTTOM face button"),
+        ("east_button", "the RIGHT face button"),
+        ("west_button", "the LEFT face button"),
+        ("north_button", "the TOP face button"),
+        ("l1", "the LEFT shoulder button (L1)"),
+        ("r1", "the RIGHT shoulder button (R1)"),
+        ("select", "SELECT"),
+        ("start", "START"),
+    )
+
+    def screen_calibrate(self):
+        """Assign physical buttons to semantic slots, one prompt at a
+        time, then persist the mapping to JSON. D-pads that report as
+        hats/axes need no calibration; ones that report as buttons get
+        picked up here too (extra optional steps)."""
+        steps = list(self.CALIBRATION_STEPS) + [
+            ("dpad_up", "D-pad UP (auto-skips if it moved earlier)"),
+            ("dpad_down", "D-pad DOWN"),
+            ("dpad_left", "D-pad LEFT"),
+            ("dpad_right", "D-pad RIGHT"),
+        ]
+        new_map = InputMap(None)
+        new_map.buttons = {}
+        new_map.path = self.input_map.path
+        step = 0
+        message = None
+        dpad_is_hat = False
+
+        while step < len(steps):
+            semantic, prompt = steps[step]
+            if dpad_is_hat and semantic.startswith("dpad_"):
+                break  # hat d-pad confirmed: no button mapping needed
+
+            event = pygame.event.poll()
+            if event.type == pygame.QUIT:
+                raise QuitApp
+            if event.type == pygame.KEYDOWN and event.key in (
+                    pygame.K_ESCAPE, pygame.K_q):
+                log.info("calibration cancelled")
+                return "INPUT_DIAG"
+            if event.type == pygame.JOYDEVICEADDED:
+                pygame.joystick.Joystick(event.device_index).init()
+            if event.type == pygame.JOYHATMOTION and \
+                    event.value != (0, 0):
+                if semantic.startswith("dpad_"):
+                    dpad_is_hat = True
+                    continue
+                message = "That was the D-pad — press " + prompt
+            if event.type == pygame.JOYBUTTONDOWN:
+                if event.button in new_map.buttons:
+                    already = new_map.buttons[event.button]
+                    message = (f"Button {event.button} is already "
+                               f"{already} — press a different one")
+                else:
+                    new_map.set_button(event.button, semantic)
+                    log.info("calibrated %s = button %d", semantic,
+                             event.button)
+                    step += 1
+                    message = None
+                    continue
+
+            self.screen.fill(BG)
+            self._center(self.font_big.render("Controller Setup", True,
+                                              FG), 40)
+            self._center(self.font_small.render(
+                f"Step {step + 1} of {len(steps)}", True, DIM), 100)
+            self._center(self.font.render("Press " + prompt, True, ACCENT),
+                         190)
+            if message:
+                self._center(self.font_small.render(message, True, WARN),
+                             250)
+            done = ", ".join(
+                f"{FACE_LABELS.get(s, s)}={b}"
+                for b, s in sorted(new_map.buttons.items()))
+            if done:
+                y = 300
+                for line in wrap_text(self.font_small,
+                                      "So far: " + done, self.w - 80):
+                    self._center(self.font_small.render(line, True, DIM),
+                                 y)
+                    y += 22
+            self._footer("Esc = cancel (keyboard)")
+            self.present()
+            self.clock.tick(FPS)
+
+        self.input_map.buttons = dict(new_map.buttons)
+        try:
+            self.input_map.save()
+            message = "Saved!"
+        except OSError as exc:
+            log.error("could not save input mapping: %s", exc)
+            message = f"Could not save mapping: {exc}"
+        self.input = InputTranslator(self.input_map)
+
+        self.screen.fill(BG)
+        self._center(self.font_big.render("Controller Setup", True, FG),
+                     40)
+        self._center(self.font.render(message, True, GOOD), 200)
+        self.present()
+        pygame.time.wait(1200)
+        return "INPUT_DIAG"
 
     # -- drawing helpers ----------------------------------------------------------------
 
@@ -788,9 +1504,14 @@ class CardBrickApp:
             y += font.get_linesize()
         return y
 
-    def _footer(self, text):
-        pygame.draw.line(self.screen, DIVIDER, (16, self.h - 44),
-                         (self.w - 16, self.h - 44))
+    def _footer(self, text, second_line=None):
+        top = self.h - (64 if second_line else 44)
+        pygame.draw.line(self.screen, DIVIDER, (16, top),
+                         (self.w - 16, top))
         surf = self.font_small.render(text, True, DIM)
         self.screen.blit(surf, ((self.w - surf.get_width()) // 2,
-                                self.h - 33))
+                                top + 10))
+        if second_line:
+            surf2 = self.font_small.render(second_line, True, DIM)
+            self.screen.blit(surf2, ((self.w - surf2.get_width()) // 2,
+                                     top + 34))
