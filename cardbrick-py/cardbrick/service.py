@@ -83,7 +83,7 @@ class ReviewService:
                       deck_filter=None, limits=None, bonus=False):
         """Build the queue for one sprint.
 
-        The day is a card goal (``daily_goal_cards`` answers) chipped
+        The day is a card goal (``daily_goal_cards`` distinct cards) chipped
         away in short sprints; each call returns the next sprint's
         worth, at most ``session_card_limit`` cards and never more than
         what's left of the goal. Order: due review cards (most overdue
@@ -119,10 +119,10 @@ class ReviewService:
 
         now = self.now()
         day_start = iso(local_day_start(now))
-        new_done, _review_done, _ = self.storage.daily_counts(day_start)
-        answers_done = self.storage.daily_answer_count(day_start)
+        new_done, review_done, _ = self.storage.daily_counts(day_start)
+        cards_done = new_done + review_done  # distinct cards, not answers
         remaining_new = max(limits["daily_new_cards"] - new_done, 0)
-        goal_left = max(limits["daily_goal_cards"] - answers_done, 0)
+        goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
         budget = limits["session_card_limit"] if bonus \
             else min(goal_left, limits["session_card_limit"])
 
@@ -172,7 +172,8 @@ class ReviewService:
         survive restarts, crashes, and undo.
 
         Returns a dict:
-            cards_done         answers logged today
+            cards_done         distinct cards answered today (a card
+                               repeating a learning step counts once)
             goal               daily_goal_cards in effect
             cards_remaining    what's left of the goal
             sprints_planned    ceil(goal / sprint size)
@@ -188,7 +189,9 @@ class ReviewService:
                 if profile.get(key) is not None:
                     limits[key] = profile[key]
         now = self.now()
-        done = self.storage.daily_answer_count(iso(local_day_start(now)))
+        new_done, review_done, _ = self.storage.daily_counts(
+            iso(local_day_start(now)))
+        done = new_done + review_done
         goal = limits["daily_goal_cards"]
         sprint_size = max(limits["session_card_limit"], 1)
         remaining = max(goal - done, 0)

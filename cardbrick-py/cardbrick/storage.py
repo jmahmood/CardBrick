@@ -472,18 +472,6 @@ class Storage:
             (day_start_iso,))}
         return len(new_ids), len(all_ids - new_ids), new_ids
 
-    def daily_answer_count(self, day_start_iso):
-        """Total not-undone answers logged since the local day start.
-
-        Unlike daily_counts this counts every answer — including
-        learning-step repeats of the same card — which is the unit of
-        the daily goal ("150 cards a day").
-        """
-        return self.conn.execute(
-            """SELECT COUNT(*) AS n FROM review_log
-               WHERE undone = 0 AND reviewed_at >= ?""",
-            (day_start_iso,)).fetchone()["n"]
-
     def daily_history(self, since_iso):
         """Raw (reviewed_at, was_new, card_id) tuples for progress views."""
         return self.conn.execute(

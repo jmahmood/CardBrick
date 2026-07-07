@@ -293,7 +293,8 @@ operation; it is deliberately not exposed in Parent Mode's on-device UI.
 
 The day is a card goal chipped away in short sprints, not one sitting.
 Per child profile: `daily_goal_cards` (default 150) is the day's goal
-in card answers; each sprint is bounded by `session_card_limit`
+in distinct cards (a card repeating a learning step counts once); each
+sprint is bounded by `session_card_limit`
 (default 20) and `session_time_minutes` (10, 0 = off), so the child
 always knows how many sprints they still owe ("3 sprints to go today").
 Doing sprints back-to-back — "going ahead" — burns the count down just

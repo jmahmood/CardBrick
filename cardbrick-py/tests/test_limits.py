@@ -86,19 +86,18 @@ def test_daily_cap_counts_work_already_done_today(storage, service, clock):
     assert len(new_ids) == 4
 
 
-def test_goal_counts_every_answer_not_unique_cards(storage, service, clock):
-    # Two answers on the same card (a learning-step repeat) both count
-    # toward the goal: the contract is "N cards answered", not "N
-    # distinct cards".
+def test_goal_counts_distinct_cards_not_answers(storage, service, clock):
+    # A learning-step repeat is the same card, so it consumes the goal
+    # once: the contract is "N distinct cards", and a hard card that
+    # comes back three times doesn't eat three cards' worth of goal.
     seed_card(storage, service, 1)
     seed_card(storage, service, 2, reps=1,
               due=clock.now() - timedelta(days=1))
     limits = _limits(daily_goal_cards=2, daily_new_cards=10)
     service.answer_card(1, 1)  # Again: the card comes back...
-    service.answer_card(1, 3)  # ...and the repeat is a second answer.
-    # Card 2 is due, but the goal budget is already spent; per-unique-
-    # card accounting would have left room for it.
-    assert service.get_due_cards(limits=limits) == []
+    service.answer_card(1, 3)  # ...but the repeat counts it only once.
+    queue = service.get_due_cards(limits=limits)
+    assert [row["id"] for row in queue] == [2]  # room for one more card
 
 
 def test_daily_budgets_reset_at_local_midnight(storage, service, clock):
