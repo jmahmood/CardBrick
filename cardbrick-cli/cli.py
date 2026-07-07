@@ -182,7 +182,7 @@ def status(ctx):
             daemon_status = result.stdout.strip()
             status_icon = "✓" if daemon_status == "active" else "❌"
             click.echo(f"Sync daemon: {status_icon} {daemon_status}")
-        except:
+        except Exception:
             click.echo("Sync daemon: Status unknown")
             
     except Exception as e:

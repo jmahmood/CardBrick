@@ -14,7 +14,6 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 
 import pandas as pd
-import markdown
 
 logger = logging.getLogger(__name__)
 
@@ -138,8 +137,6 @@ class CSVImporter:
     
     def _detect_csv_format(self, columns: List[str]) -> Tuple[str, str, Optional[str]]:
         """Detect CSV format and return column mappings"""
-        col_map = {col: col for col in columns}
-        
         # Common front/back mappings
         front_mappings = {
             'front': ['front', 'question', 'term', 'word', 'prompt'],
@@ -284,10 +281,6 @@ class MarkdownImporter:
     def _parse_header_qa(self, content: str) -> List[Card]:
         """Parse Q&A pairs using markdown headers"""
         cards = []
-        
-        # Convert to HTML and parse
-        md = markdown.Markdown()
-        html = md.convert(content)
         
         # Simple parsing - look for header patterns
         lines = content.split('\n')
