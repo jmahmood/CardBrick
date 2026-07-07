@@ -4,6 +4,8 @@ use crate::storage::db::progress_path;
 use chrono::Utc;
 use rusqlite::Connection;
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::Path;
 
 // Daily card limits
 const DEFAULT_NEW_CARDS_PER_DAY: usize = 10;
@@ -43,7 +45,7 @@ impl Session {
     /// Create a new session from a KARTA deck
     pub fn new(deck: KartaDeck) -> anyhow::Result<Self> {
         let db_path = progress_path();
-        let db_conn = Connection::open(&db_path)?;
+        let db_conn = Self::open_db(&db_path)?;
 
         // Initialize database schema
         Self::init_db(&db_conn)?;
@@ -104,6 +106,14 @@ impl Session {
             card_ids_to_internal,
             next_internal_id,
         })
+    }
+
+    fn open_db(db_path: &Path) -> anyhow::Result<Connection> {
+        if let Some(parent) = db_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        Ok(Connection::open(db_path)?)
     }
 
     /// Get cards that are due today or are new
