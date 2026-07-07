@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # quick-xml is pulled transitively through eframe/winit's Linux desktop
+    # accessibility and Wayland support. Fixing this requires a coordinated
+    # desktop UI stack upgrade rather than a small lockfile-only update.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
