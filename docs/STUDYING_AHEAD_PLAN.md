@@ -110,7 +110,7 @@ date out past the horizon, so back-to-back sprints drain it naturally.
 * Progress line: "72 / 150 cards" (a simple bar fits the existing
   drawing helpers).
 * Detail: "next sprint: ~20 cards, up to 7 min".
-* Bottom button always starts the next sprint while
+* A always starts the next sprint while
   `sprints_remaining > 0` — never a dead end mid-goal.
 * Goal met (`cards_remaining == 0`): celebrate — "Goal reached! 🎉
   8 sprints done" — and offer a **bonus sprint** from the ahead pool if
@@ -121,8 +121,8 @@ date out past the horizon, so back-to-back sprints drain it naturally.
 
 * "Sprint done! **4 sprints to go** today" instead of the generic
   session-complete banner (keep the stats lines).
-* Bottom button = **next sprint now** (straight into `REVIEW`, reusing
-  the deck filter from this sitting); east button = done for now (back to
+* A = **next sprint now** (straight into `REVIEW`, reusing
+  the deck filter from this sitting); B = done for now (back to
   start screen). A child with momentum never bounces through a menu.
 * After the last sprint: goal celebration + bonus-sprint offer, same as
   the start screen.

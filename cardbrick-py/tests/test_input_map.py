@@ -63,8 +63,20 @@ def test_unknown_semantics_in_file_are_ignored(tmp_path):
 
 def test_translate_mapped_button(tmp_path):
     translator = InputTranslator(InputMap(str(tmp_path / "m.json")))
-    assert translator.translate(joy_button(0)) == "south_button"
+    assert translator.translate(joy_button(0)) == "east_button"
+    assert translator.translate(joy_button(1)) == "south_button"
     assert translator.translate(joy_button(7)) == "start"
+
+
+def test_keyboard_a_and_enter_are_confirm_semantics(tmp_path):
+    translator = InputTranslator(InputMap(str(tmp_path / "m.json")))
+    a = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a)
+    enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)
+    b = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_b)
+
+    assert translator.translate(a) == "east_button"
+    assert translator.translate(enter) == "east_button"
+    assert translator.translate(b) == "south_button"
 
 
 def test_unknown_joystick_event_does_not_crash(tmp_path):

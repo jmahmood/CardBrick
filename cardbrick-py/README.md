@@ -143,16 +143,15 @@ Press A to start!              B=Again Y=Hard A=Good X=Easy      session stats
 
 ### Controls (study)
 
-Buttons are addressed by *physical position*, never by A/B/X/Y labels
-(printed labels don't reliably match SDL indices on cheap handhelds):
+Buttons use this fixed face layout:
 
 | Input          | Question side       | Answer side |
 |----------------|---------------------|-------------|
 | D-pad          | Reveal answer       | —           |
-| Bottom button  | Reveal answer       | Good        |
-| Right button   | —                   | Again       |
-| Left button    | —                   | Easy        |
-| Top button     | —                   | Hard        |
+| B              | Reveal answer       | Again       |
+| A              | —                   | Good        |
+| Y              | —                   | Easy        |
+| X              | —                   | Hard        |
 | L1             | Replay audio        | Replay audio|
 | R1             | —                   | Bury until tomorrow |
 | SELECT         | Action menu (undo / bury / suspend / end) | same |
@@ -189,7 +188,7 @@ Phase 3: + gendered forms / definition / English translation
 ```
 
 D-pad reveals the next phase; there are no separate rating buttons —
-pressing the **bottom button ("I know this")** rates the card by *how
+pressing **A ("I know this")** rates the card by *how
 much you needed to see*:
 
 | Pressed at phase | Meaning | Rating |
@@ -252,9 +251,9 @@ python main.py profile --categories restaurant,greetings
 Parent Mode's Decks screen decides which decks are *assigned* to the
 child at all; the child still picks which *one* of the assigned decks
 (or all of them combined) to study **this sitting**. If more than one
-deck is assigned, pressing the bottom button on the start screen opens
-a picker first — D-pad to choose, bottom button to confirm, right
-button to go back — showing each option's due-card count. If only one
+deck is assigned, pressing A on the start screen opens
+a picker first — D-pad to choose, A to confirm, B
+to go back — showing each option's due-card count. If only one
 deck is assigned (or only one deck exists at all), the picker is
 skipped automatically and the session starts immediately: no extra tap
 when there's no real choice to make.
@@ -281,11 +280,11 @@ are meant to be repeated through the day, so the count is the point.
 Only sessions with at least one card actually reviewed earn a stamp
 (opening the app and backing out doesn't). Today is outlined; a
 subtitle sums the month ("36 sessions on 20 days"). Read-only, and
-reachable three ways: the **Top** button on the start screen, **Top**
+reachable three ways: **X** on the start screen, **X**
 on the session-complete screen (the natural "you earned a stamp"
 moment), and Parent Mode → *Calendar (stamps)*. Navigate months with
-**L1/R1** (or D-pad left/right), **Bottom** jumps back to the current
-month, **SELECT** exits. Stamps are per-profile.
+**L1/R1** (or D-pad left/right), **A** jumps back to the current
+month, **B** or **SELECT** exits. Stamps are per-profile.
 
 ### Admin commands (CLI only, destructive)
 

@@ -1,7 +1,7 @@
 """Controller input mapping with semantic actions.
 
 Cheap handhelds expose gamepad buttons in inconsistent SDL orders, and
-the printed A/B/X/Y labels do not reliably match indices. The app
+the raw SDL indices vary by device. The app
 therefore never reasons about raw button numbers or vendor labels:
 
     raw pygame event
@@ -14,9 +14,8 @@ device's numbering is ever hardcoded as final truth. The defaults below
 match the common SDL ordering on Anbernic/Knulli devices, but they are
 only a starting point.
 
-Semantic face buttons are named by physical position (south = bottom,
-east = right, west = left, north = top), and the child UI labels them
-the same way ("Bottom = Good"), sidestepping Xbox/Nintendo naming.
+Semantic face buttons are named by the fixed face-button layout used by
+this app: south = B, east = A, west = Y, north = X.
 """
 
 import json
@@ -32,17 +31,17 @@ SEMANTIC_ACTIONS = (
 )
 
 FACE_LABELS = {
-    "south_button": "Bottom",
-    "east_button": "Right",
-    "west_button": "Left",
-    "north_button": "Top",
+    "south_button": "B",
+    "east_button": "A",
+    "west_button": "Y",
+    "north_button": "X",
 }
 
 # Semantic action -> study action (documentation of intent; the UI
 # interprets semantics per screen but follows this table for review).
 STUDY_ACTIONS = {
-    "south_button": "rate_good",
-    "east_button": "rate_again",
+    "south_button": "rate_again",
+    "east_button": "rate_good",
     "west_button": "rate_easy",
     "north_button": "rate_hard",
     "l1": "replay_audio",
@@ -55,10 +54,11 @@ STUDY_ACTIONS = {
     "dpad_right": "reveal_answer",
 }
 
-# Starting-point guess for unmapped devices (common SDL order on
-# Anbernic under Knulli). The calibration screen overwrites this.
+# Starting-point guess for unmapped devices: Knulli handhelds label the
+# right/east face button as A and the bottom/south face button as B.
+# The calibration screen overwrites this.
 DEFAULT_BUTTONS = {
-    0: "south_button", 1: "east_button", 2: "west_button",
+    0: "east_button", 1: "south_button", 2: "west_button",
     3: "north_button", 4: "l1", 5: "r1", 6: "select", 7: "start",
 }
 
@@ -67,18 +67,18 @@ DEFAULT_BUTTONS = {
 KEYBOARD_SEMANTICS = {
     "up": "dpad_up", "down": "dpad_down",
     "left": "dpad_left", "right": "dpad_right",
-    "return": "south_button", "space": "south_button",
-    "a": "south_button", "b": "east_button",
+    "return": "east_button", "space": "east_button",
+    "a": "east_button", "b": "south_button",
     "x": "west_button", "y": "north_button",
-    "1": "east_button",   # Again
+    "1": "south_button",  # Again
     "2": "north_button",  # Hard
-    "3": "south_button",  # Good
+    "3": "east_button",   # Good
     "4": "west_button",   # Easy
     "l": "l1", "r": "r1",
     "tab": "select",
     "escape": "start", "q": "start",
     "u": "undo",
-    "backspace": "east_button",
+    "backspace": "south_button",
 }
 
 AXIS_THRESHOLD = 0.6

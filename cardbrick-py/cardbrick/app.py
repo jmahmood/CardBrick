@@ -31,7 +31,8 @@ Controller-first and deployment-hardened for Knulli-style devices:
 - Input is translated to *semantic* actions (south_button, dpad_up,
   start, ...) through a JSON mapping calibrated on-device — raw SDL
   button indices are never trusted (see input_map.py). Face buttons are
-  labelled by physical position ("Bottom = Good"), not A/B/X/Y.
+  labelled with the fixed layout used by this app (A = right, B = bottom,
+  X = top, Y = left).
 - Everything renders on a fixed logical canvas (default 640x480, the
   RG35XX SP panel) which is scaled — integer scaling when it fits — to
   the real display.
@@ -73,12 +74,12 @@ WARN = (240, 180, 100)
 DIVIDER = (70, 72, 78)
 OVERLAY_BG = (36, 39, 45)
 
-# Semantic face button -> FSRS rating. Position language, not A/B/X/Y:
-# bottom=Good, right=Again, left=Easy, top=Hard.
+# Semantic face button -> FSRS rating. Fixed face layout:
+# A/right=Good, B/bottom=Again, Y/left=Easy, X/top=Hard.
 RATING_FOR_SEMANTIC = {
-    "east_button": 1,
+    "east_button": 3,
     "north_button": 2,
-    "south_button": 3,
+    "south_button": 1,
     "west_button": 4,
 }
 
@@ -313,7 +314,7 @@ class CardBrickApp:
             # frequently wrong for a given device's raw SDL button
             # order. Landing in Parent Menu with a wrong guess strands
             # the child/parent on a screen that doesn't respond to any
-            # button — calibration has to come first so south_button
+            # button — calibration has to come first so face-button
             # (etc.) actually means something. Keyboard-only setups
             # (desktop testing) skip this: KEYBOARD_SEMANTICS is fixed
             # and never needs calibration.
@@ -453,7 +454,7 @@ class CardBrickApp:
             if action == "north_button":
                 self._calendar_return = "CHILD_START"
                 return "CALENDAR"
-            if action in ("south_button", "unmapped") and (startable or bonus):
+            if action in ("east_button", "unmapped") and (startable or bonus):
                 self._session_bonus = bonus
                 return (
                     "DECK_SELECT"
@@ -509,7 +510,7 @@ class CardBrickApp:
                 )
                 self._center(self.font_small.render(sprint_line, True, DIM), 305)
                 self._center(
-                    self.font.render("Press the bottom button to start!", True, GOOD),
+                    self.font.render("Press the A button to start!", True, GOOD),
                     360,
                 )
             elif bonus:
@@ -536,7 +537,7 @@ class CardBrickApp:
                 )
                 self._center(
                     self.font.render(
-                        "Bottom button = bonus sprint (totally optional!)", True, GOOD
+                        "A button = bonus sprint (totally optional!)", True, GOOD
                     ),
                     360,
                 )
@@ -546,9 +547,9 @@ class CardBrickApp:
                 )
                 self._center(self.font.render("Come back tomorrow.", True, DIM), 285)
             self._footer(
-                "Bottom = Start    Top = Calendar"
+                "A = Start    X = Calendar"
                 if (startable or bonus)
-                else "Top = Calendar",
+                else "X = Calendar",
                 "SELECT = Parent    START = Quit",
             )
             self.present()
@@ -579,13 +580,13 @@ class CardBrickApp:
 
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 return "CHILD_START"
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
             elif action == "dpad_down":
                 index = (index + 1) % len(entries)
-            elif action == "south_button":
+            elif action == "east_button":
                 self._session_deck_filter = entries[index][1]
                 return self._next_after_deck_choice()
             top = min(max(top, index - visible + 1), index)
@@ -607,7 +608,7 @@ class CardBrickApp:
                 )
                 self.screen.blit(self.font.render(text, True, color), (60, y))
                 y += 44
-            self._footer("Up/Down = Choose   Bottom = Select   Right = Back")
+            self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
 
@@ -634,18 +635,21 @@ class CardBrickApp:
             for _label, cats in entries
         ]
         index = 0
+        top = 0
+        visible = 6
 
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 return "CHILD_START"
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
             elif action == "dpad_down":
                 index = (index + 1) % len(entries)
-            elif action == "south_button":
+            elif action == "east_button":
                 self._session_category_filter = entries[index][1]
                 return "REVIEW"
+            top = min(max(top, index - visible + 1), index)
 
             self.screen.fill(BG)
             self._center(self.font_big.render("Choose a Topic", True, FG), 40)
@@ -656,7 +660,8 @@ class CardBrickApp:
                 90,
             )
             y = 140
-            for i, (label, _cats) in enumerate(entries):
+            for i in range(top, min(top + visible, len(entries))):
+                label = entries[i][0]
                 due, new = counts[i]
                 color = ACCENT if i == index else FG
                 prefix = "> " if i == index else "   "
@@ -665,7 +670,7 @@ class CardBrickApp:
                 )
                 self.screen.blit(self.font.render(text, True, color), (60, y))
                 y += 44
-            self._footer("Up/Down = Choose   Bottom = Select   Right = Back")
+            self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
 
@@ -820,9 +825,9 @@ class CardBrickApp:
                     menu = (menu - 1) % len(self.MENU_ENTRIES)
                 elif action == "dpad_down":
                     menu = (menu + 1) % len(self.MENU_ENTRIES)
-                elif action in ("east_button", "select", "start"):
+                elif action in ("south_button", "select", "start"):
                     menu = None
-                elif action == "south_button":
+                elif action == "east_button":
                     choice, menu = self.MENU_ENTRIES[menu], None
                     if choice.startswith("Undo"):
                         restored = session.undo()
@@ -857,7 +862,7 @@ class CardBrickApp:
                         phase += 1
                         if auto_play:
                             play_vocab()
-                elif action == "south_button":
+                elif action == "east_button":
                     elapsed = int(
                         (self.service.now() - shown_at).total_seconds() * 1000
                     )
@@ -869,7 +874,7 @@ class CardBrickApp:
                     advance()
                     continue
             elif not flipped:
-                if action in DPAD or action in ("south_button", "unmapped"):
+                if action in DPAD or action in ("east_button", "unmapped"):
                     flipped = True
                     if auto_play:
                         play(card, "back")
@@ -928,12 +933,12 @@ class CardBrickApp:
             self._draw_vocab_phases(card, vocab, phase, audio_status, top=60)
             if phase < self.VOCAB_MAX_PHASE:
                 self._footer(
-                    "D-pad = Reveal more   Bottom = I know this",
+                    "D-pad = Reveal more   A = I know this",
                     "L1 = Replay audio   R1 = Bury   SELECT = Menu",
                 )
             else:
                 self._footer(
-                    "Bottom = I know this",
+                    "A = I know this",
                     "L1 = Replay audio   R1 = Bury   SELECT = Menu   START = Finish",
                 )
             if menu is not None:
@@ -964,7 +969,7 @@ class CardBrickApp:
             )
             self._block(back, self.font, ACCENT, top=div_y + 18, max_width=max_width)
             self._footer(
-                "Bottom=Good  Right=Again  Left=Easy  Top=Hard",
+                "A=Good  B=Again  Y=Easy  X=Hard",
                 "R1=Bury   SELECT=Menu   START=Finish",
             )
         else:
@@ -1174,11 +1179,11 @@ class CardBrickApp:
             )
 
         if more:
-            go_label = "Bottom = Next sprint now    Right = Done for now"
+            go_label = "A = Next sprint now    B = Done for now"
         elif bonus:
-            go_label = "Bottom = Bonus sprint    Right = Done for now"
+            go_label = "A = Bonus sprint    B = Done for now"
         else:
-            go_label = "Bottom = Done"
+            go_label = "A = Done"
 
         while True:
             action = self.poll()
@@ -1187,14 +1192,14 @@ class CardBrickApp:
             if action == "north_button":
                 self._calendar_return = "CHILD_START"
                 return "CALENDAR"
-            if action in ("south_button", "unmapped"):
+            if action in ("east_button", "unmapped"):
                 # "Going ahead": roll straight into the next sprint —
                 # spare time now means fewer sprints owed later.
                 if more or bonus:
                     self._session_bonus = bonus
                     return "REVIEW"
                 return "CHILD_START"
-            if action in ("east_button", "select"):
+            if action in ("south_button", "select"):
                 return "CHILD_START"
 
             self.screen.fill(BG)
@@ -1204,7 +1209,7 @@ class CardBrickApp:
             for text, color in lines:
                 self._center(self.font.render(text, True, color), y)
                 y += 44
-            self._footer(go_label, "Top = Calendar   START = Quit")
+            self._footer(go_label, "X = Calendar   START = Quit")
             self.present()
             self.clock.tick(FPS)
 
@@ -1222,7 +1227,7 @@ class CardBrickApp:
         """Brain Age-style stamp calendar: one stamp per day the child
         studied, with the number of sessions logged that day inside it
         (they can study repeatedly). Read-only; reachable from the child
-        start screen (Top), the session summary (Top), and Parent Mode.
+        start screen (X), the session summary (X), and Parent Mode.
         Shows the current profile's sessions, one month at a time."""
         today = self.service.now().astimezone().date()
         year, month = today.year, today.month
@@ -1240,13 +1245,13 @@ class CardBrickApp:
 
         while True:
             action = self.poll()
-            if action in ("start", "select", "east_button"):
+            if action in ("start", "select", "south_button"):
                 return self._calendar_return
             if action in ("dpad_left", "l1"):
                 step_month(-1)
             elif action in ("dpad_right", "r1"):
                 step_month(1)
-            elif action == "south_button":
+            elif action == "east_button":
                 year, month = today.year, today.month
                 counts = load(year, month)
 
@@ -1298,7 +1303,7 @@ class CardBrickApp:
                     h=cell_h,
                 )
 
-        self._footer("L1/R1 = Month    Bottom = Today", "SELECT = Back")
+        self._footer("L1/R1 = Month    A = Today", "SELECT = Back")
 
     def _draw_day_cell(self, day, count, is_today, x, y, w, h):
         if is_today:
@@ -1351,13 +1356,13 @@ class CardBrickApp:
         visible = 6 if notice else 7
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 return "CHILD_START"
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
             elif action == "dpad_down":
                 index = (index + 1) % len(entries)
-            elif action == "south_button":
+            elif action == "east_button":
                 target = entries[index][1]
                 if target == "TOGGLE_DIRECTION":
                     new = "normal" if direction == "reversed" else "reversed"
@@ -1386,7 +1391,7 @@ class CardBrickApp:
                 for line in wrap_text(self.font_small, notice, self.w - 80):
                     self._center(self.font_small.render(line, True, WARN), y + 6)
                     y += 22
-            self._footer("Up/Down = Choose   Bottom = Select   Right = Back")
+            self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
 
@@ -1420,13 +1425,13 @@ class CardBrickApp:
         message = None
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 return "PARENT_MENU"
             if files and action == "dpad_up":
                 index = (index - 1) % len(files)
             elif files and action == "dpad_down":
                 index = (index + 1) % len(files)
-            elif files and action == "south_button":
+            elif files and action == "east_button":
                 self._draw_import(files, index, "Importing…")
                 self.present()
                 try:
@@ -1472,7 +1477,7 @@ class CardBrickApp:
             for line in wrap_text(self.font_small, message, self.w - 80):
                 self._center(self.font_small.render(line, True, WARN), y)
                 y += 24
-        self._footer("Bottom = Import   Right = Back")
+        self._footer("A = Import   B = Back")
 
     def screen_parent_categories(self):
         return self._screen_multi_select(
@@ -1516,14 +1521,14 @@ class CardBrickApp:
 
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 save()
                 return "PARENT_MENU"
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
             elif action == "dpad_down":
                 index = (index + 1) % len(entries)
-            elif action == "south_button":
+            elif action == "east_button":
                 if index == 0:
                     selected = None
                 else:
@@ -1556,7 +1561,7 @@ class CardBrickApp:
                 y += 40
             if not items:
                 self._center(self.font.render(empty_message, True, DIM), 200)
-            self._footer("Bottom = Toggle   Right = Save & back")
+            self._footer("A = Toggle   B = Save & back")
             self.present()
             self.clock.tick(FPS)
 
@@ -1574,7 +1579,7 @@ class CardBrickApp:
         index = 0
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 self.storage.update_profile(self.profile["id"], **values)
                 self._reload_profile()
                 return "PARENT_MENU"
@@ -1605,7 +1610,7 @@ class CardBrickApp:
                 value = self.font.render(str(values[key]), True, color)
                 self.screen.blit(value, (self.w - 120, y))
                 y += 52
-            self._footer("Left/Right = Adjust   L1/R1 = ±10   Right btn = Save & back")
+            self._footer("D-pad = Adjust   L1/R1 = +/-10   B = Save & back")
             self.present()
             self.clock.tick(FPS)
 
@@ -1614,14 +1619,14 @@ class CardBrickApp:
         cards = self.storage.suspended_cards()
         while True:
             action = self.poll()
-            if action in ("start", "east_button", "select"):
+            if action in ("start", "south_button", "select"):
                 return "PARENT_MENU"
             if cards:
                 if action == "dpad_up":
                     index = (index - 1) % len(cards)
                 elif action == "dpad_down":
                     index = (index + 1) % len(cards)
-                elif action == "south_button":
+                elif action == "east_button":
                     self.service.unsuspend_card(cards[index]["id"])
                     cards = self.storage.suspended_cards()
                     index = max(index - 1, 0)
@@ -1642,7 +1647,7 @@ class CardBrickApp:
                 prefix = "> " if i == index else "   "
                 self.screen.blit(self.font.render(prefix + text, True, color), (60, y))
                 y += 40
-            self._footer("Bottom = Unsuspend   Right = Back")
+            self._footer("A = Unsuspend   B = Back")
             self.present()
             self.clock.tick(FPS)
 
@@ -1675,7 +1680,7 @@ class CardBrickApp:
                 row = f"{label:<14} {reviews:>7} {new:>6}"
                 self.screen.blit(self.font.render(row, True, FG), (150, y))
                 y += 38
-            self._footer("Right = Back")
+            self._footer("B = Back")
             self.present()
             self.clock.tick(FPS)
 
@@ -1765,10 +1770,10 @@ class CardBrickApp:
             self.clock.tick(FPS)
 
     CALIBRATION_STEPS = (
-        ("south_button", "the BOTTOM face button"),
-        ("east_button", "the RIGHT face button"),
-        ("west_button", "the LEFT face button"),
-        ("north_button", "the TOP face button"),
+        ("south_button", "the B face button"),
+        ("east_button", "the A face button"),
+        ("west_button", "the Y face button"),
+        ("north_button", "the X face button"),
         ("l1", "the LEFT shoulder button (L1)"),
         ("r1", "the RIGHT shoulder button (R1)"),
         ("select", "SELECT"),

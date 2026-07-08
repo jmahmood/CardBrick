@@ -86,8 +86,8 @@ or on-device: Parent Mode → *Controller test & setup*. The screen shows
 every raw event (button/hat/axis index) next to the semantic action and
 study action the current mapping produces. **Hold any single button ~3
 seconds to start calibration** — that works even when the current
-mapping is completely wrong. Calibration prompts for each physical
-button by position ("press the BOTTOM face button…") and saves to
+mapping is completely wrong. Calibration prompts for each face label
+("press the B face button...") and saves to
 `input_mapping.json`. Raw SDL button numbers are never trusted as
 final truth; the defaults are only a starting guess.
 
