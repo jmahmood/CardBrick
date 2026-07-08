@@ -1,0 +1,8 @@
+# Versions for the pygame-ce squashfs runtime.
+#
+# This exact pair (Python 3.12.8 + pygame-ce 2.5.6) is the combination
+# validated by the upstream pygame-ce-runtime project on an Anbernic
+# RG35XX-H running Knulli — the same Allwinner H700 family as the
+# RG35XX SP. Bump them together and re-run the smoke test on hardware.
+PYTHON_VERSION=3.12.8
+PYGAME_VERSION=2.5.6

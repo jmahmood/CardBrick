@@ -12,3 +12,7 @@ test_cache/
 CLAUDE.md
 venv-syncd
 workspace
+
+# Knulli packaging outputs (deploy/knulli)
+deploy/knulli/dist/
+deploy/knulli/runtime-build/build/

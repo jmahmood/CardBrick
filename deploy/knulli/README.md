@@ -1,5 +1,12 @@
 # CardBrick Spanish — Knulli / RG35XX SP Deployment
 
+> **Start with [`PACKAGING.md`](PACKAGING.md).** It documents the
+> recommended pipeline — a self-contained pygame-ce SquashFS runtime
+> (built the [viniciusfs/pygame-ce-runtime](https://github.com/viniciusfs/pygame-ce-runtime)
+> way) plus `make package` / `make deploy-sd` / `make deploy-ssh`
+> automation. This file describes the underlying app behaviour on the
+> device and the older vendored-wheels fallback.
+
 How to put the CardBrick-style Spanish study appliance on a Knulli
 (Batocera-derived) handheld. Read `package_layout.md` for the exact
 file tree and `smoke_test_checklist.md` for the pre-flight list.

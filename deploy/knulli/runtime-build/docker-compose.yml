@@ -1,0 +1,22 @@
+# ARM64 builder for the CardBrick pygame-ce squashfs runtime.
+# Derived from https://github.com/viniciusfs/pygame-ce-runtime
+#
+# Run via ../scripts/build_runtime.sh (or `docker compose up` in this
+# directory). On an x86 host you need binfmt/qemu for linux/arm64 —
+# the wrapper script checks and tells you how to enable it.
+services:
+  runtime_builder:
+    image: python:3.12.8-bookworm
+    platform: linux/arm64
+    command:
+      - "/bin/bash"
+      - "-lc"
+      - "/local/build-runtime.sh 2>&1"
+    env_file:
+      - build-config
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: .
+        target: /local

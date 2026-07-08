@@ -1,0 +1,8 @@
+# Extra Python dependencies baked INTO the squashfs runtime, on top of
+# pygame-ce (which build-runtime.sh compiles from source so that it
+# links the device's own SDL2 — that is what makes the `mali` video
+# driver work on Knulli).
+#
+# Keep this in sync with cardbrick-py/requirements.txt, minus pygame-ce.
+fsrs>=6.0
+typing-extensions>=4.0
