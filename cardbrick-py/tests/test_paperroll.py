@@ -212,6 +212,57 @@ def test_non_reveal_surface_behaves_like_regular_feed():
     assert roll._items[-1].reveal_progress == 1.0
 
 
+def test_manual_scroll_moves_view_without_changing_print_target():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    for _ in range(8):
+        roll.feed(None, h=40)
+    settle(roll)
+    print_target = roll._target
+
+    roll.scroll(-80)
+    assert roll.busy
+    assert not roll.printing_busy
+    settle(roll)
+
+    assert roll.offset == print_target - 80
+    assert roll._target == print_target
+
+
+def test_scroll_to_print_position_returns_to_live_print_point():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    for _ in range(8):
+        roll.feed(None, h=40)
+    settle(roll)
+    print_target = roll._target
+    roll.scroll(-80)
+    settle(roll)
+
+    roll.scroll_to_print_position()
+    assert roll.busy
+    settle(roll)
+
+    assert roll.offset == print_target
+    assert roll.at_print_position
+
+
+def test_feed_after_manual_scroll_returns_home_before_printing_more():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    for _ in range(8):
+        roll.feed(None, h=40)
+    settle(roll)
+    roll.scroll(-100)
+    settle(roll)
+
+    roll.feed(None, h=30)
+    settle(roll)
+
+    assert roll.offset == roll._target
+    assert roll.at_print_position
+
+
 def test_rewind_page_rolls_back_to_previous_page_start():
     roll = make_roll(reduced_motion=True)
     roll.feed_page(perf=False)

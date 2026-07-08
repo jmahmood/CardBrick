@@ -66,6 +66,7 @@ class PaperRoll:
         self._total = 0.0  # roll coordinate of the write point
         self.offset = -float(print_y)  # roll coordinate of screen y=0
         self._target = self.offset
+        self._view_target = self.offset
         self._active_reveal = None
         # Roll coordinate + committed-item index where each page's
         # content begins (right after its perforation group).
@@ -91,15 +92,18 @@ class PaperRoll:
                 reveal=reveal,
             )
         )
+        self.scroll_to_print_position()
         self._maybe_snap()
 
     def feed_gap(self, h):
         self._queue.append(_Item("gap", None, h))
+        self.scroll_to_print_position()
         self._maybe_snap()
 
     def feed_perf(self):
         """A lone perforation (tear line) without starting a new page."""
         self._queue.append(_Item("perf", None, PERF_H))
+        self.scroll_to_print_position()
         self._maybe_snap()
 
     def feed_page(self, perf=True, tear=False):
@@ -115,6 +119,7 @@ class PaperRoll:
             self._queue.append(_Item(kind, None, PERF_H, event="page"))
             self._queue.append(_Item("gap", None, PAGE_GAP))
         self._queue.append(_Item("page-start", None, 0))
+        self.scroll_to_print_position()
         self._maybe_snap()
 
     def rewind_page(self):
@@ -133,6 +138,7 @@ class PaperRoll:
         del self._pages[-2:]
         self._total = coord
         self._target = self._total - self.print_y
+        self.scroll_to_print_position()
         self._maybe_snap()
         return True
 
@@ -142,9 +148,48 @@ class PaperRoll:
     def busy(self):
         return (
             bool(self._queue)
-            or abs(self._target - self.offset) > SNAP_PX
+            or abs(self._view_target - self.offset) > SNAP_PX
             or self._active_reveal is not None
         )
+
+    @property
+    def printing_busy(self):
+        """True for automatic printing/reveal motion, not manual scroll."""
+        return (
+            bool(self._queue)
+            or self._active_reveal is not None
+            or (
+                abs(self._view_target - self._target) <= SNAP_PX
+                and abs(self._target - self.offset) > SNAP_PX
+            )
+        )
+
+    @property
+    def at_print_position(self):
+        return (
+            abs(self._target - self.offset) <= SNAP_PX
+            and abs(self._view_target - self._target) <= SNAP_PX
+        )
+
+    def scroll(self, delta):
+        """Move the viewport over already-printed paper.
+
+        Negative deltas look upward to older content; positive deltas
+        return toward the live print position. The print target itself
+        is not changed, so feeding can resume from the same write point.
+        """
+        lo = self._scroll_min()
+        hi = self._target
+        if lo > hi:
+            lo = hi
+        self._view_target = min(max(self._view_target + delta, lo), hi)
+        if self.reduced_motion:
+            self.offset = self._view_target
+
+    def scroll_to_print_position(self):
+        self._view_target = self._target
+        if self.reduced_motion:
+            self.offset = self._view_target
 
     def finish(self):
         """Snap to the fully-printed state (input interruption or
@@ -154,6 +199,7 @@ class PaperRoll:
         for item in self._items:
             item.reveal_progress = 1.0
         self._active_reveal = None
+        self._view_target = self._target
         self.offset = self._target
         self._prune()
 
@@ -174,9 +220,9 @@ class PaperRoll:
                 self._commit(item, notify=True)
                 if item.kind not in ("gap", "page-start"):
                     break
-        self.offset += (self._target - self.offset) * EASE
-        if abs(self._target - self.offset) <= SNAP_PX:
-            self.offset = self._target
+        self.offset += (self._view_target - self.offset) * EASE
+        if abs(self._view_target - self.offset) <= SNAP_PX:
+            self.offset = self._view_target
         self._prune()
         return self.busy
 
@@ -190,6 +236,7 @@ class PaperRoll:
                 item.reveal_progress = 0.0
                 self._active_reveal = item
         self._target = self._total - self.print_y
+        self._view_target = self._target
         if notify and self.on_feed:
             if item.kind == "surf":
                 self.on_feed("line")
@@ -218,6 +265,10 @@ class PaperRoll:
             dropped += 1
         if dropped:
             self._pages = [(coord, idx - dropped) for coord, idx in self._pages]
+        self._view_target = min(max(self._view_target, self._scroll_min()), self._target)
+
+    def _scroll_min(self):
+        return self._base - 12
 
     # -- drawing -----------------------------------------------------------------
 

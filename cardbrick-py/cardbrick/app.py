@@ -972,6 +972,23 @@ class CardBrickApp:
         roll = self._new_roll()
         printed_phase = 0  # vocab: highest phase already on the paper
         max_width = self.content_x1 - self.content_x0 - 12
+        scroll_step = 58
+
+        def can_scroll_card():
+            if menu is not None or roll.printing_busy:
+                return False
+            if vocab_detail is not None:
+                return known_confirmation is not None or phase >= self.VOCAB_MAX_PHASE
+            return flipped
+
+        def scroll_card(action):
+            if action not in ("dpad_up", "dpad_down") or not can_scroll_card():
+                return False
+            roll.scroll(-scroll_step if action == "dpad_up" else scroll_step)
+            return True
+
+        def prepare_for_next_print():
+            roll.scroll_to_print_position()
 
         def print_block(text, font, color):
             for line in wrap_text(font, text, max_width):
@@ -1146,6 +1163,7 @@ class CardBrickApp:
                 if not mistake
                 else 1
             )
+            prepare_for_next_print()
             print_stamp(rating)
             session.answer(rating, elapsed_ms=known_confirmation["elapsed_ms"])
             advance()
@@ -1168,6 +1186,7 @@ class CardBrickApp:
                 session.suspend_current()
             else:
                 session.bury_current()
+            prepare_for_next_print()
             print_small_stamp(stamp_text)
             tear_next_page = True
             advance()
@@ -1189,7 +1208,7 @@ class CardBrickApp:
             action = self.poll()
             if action:
                 needs_draw = True
-                if roll.busy:
+                if roll.printing_busy:
                     # Golden rule: never make the child wait. Any input
                     # snaps the feed to its end, then applies normally.
                     roll.finish()
@@ -1233,6 +1252,8 @@ class CardBrickApp:
                     card = restored
                     begin_card(card, new_page=not rewound)
             elif vocab_detail is not None:
+                if scroll_card(action):
+                    continue
                 if known_confirmation is not None:
                     if action == "east_button":
                         confirm_known()
@@ -1254,6 +1275,7 @@ class CardBrickApp:
                         (self.service.now() - shown_at).total_seconds() * 1000
                     )
                     if phase >= self.VOCAB_MAX_PHASE:
+                        prepare_for_next_print()
                         print_stamp(self.VOCAB_PHASE_RATING[phase])
                         session.answer(self.VOCAB_PHASE_RATING[phase], elapsed_ms=elapsed)
                         advance()
@@ -1275,8 +1297,11 @@ class CardBrickApp:
                     print_back()
                     if auto_play:
                         play(card, "back")
+            elif scroll_card(action):
+                continue
             elif action in RATING_FOR_SEMANTIC:
                 elapsed = int((self.service.now() - shown_at).total_seconds() * 1000)
+                prepare_for_next_print()
                 print_stamp(RATING_FOR_SEMANTIC[action])
                 session.answer(RATING_FOR_SEMANTIC[action], elapsed_ms=elapsed)
                 advance()
@@ -1315,7 +1340,7 @@ class CardBrickApp:
             if known_confirmation is not None:
                 self._footer(
                     "A = Yes, I knew it   B = I made a mistake",
-                    "START = Menu",
+                    "D-pad up/down = Scroll   START = Menu",
                 )
             elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
@@ -1325,12 +1350,12 @@ class CardBrickApp:
             else:
                 self._footer(
                     "A = Go to next card",
-                    "L1 = Replay audio   R1 = Bury   START = Menu",
+                    "D-pad=Scroll   L1=Replay   R1=Bury   START=Menu",
                 )
         elif flipped:
             self._footer(
                 "A=Good  B=Again  Y=Easy  X=Hard",
-                "R1=Bury   START=Menu   SELECT=Finish",
+                "D-pad=Scroll   R1=Bury   START=Menu   SELECT=Finish",
             )
         else:
             self._footer("D-pad/A = Show answer   START = Menu   SELECT = Finish")
