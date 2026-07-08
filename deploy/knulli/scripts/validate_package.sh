@@ -53,9 +53,11 @@ do
     fi
 done
 
-if find "$STAGE" \( -name '__pycache__' -o -name '*.pyc' -o -path '*/tests/*' \) \
-        -print -quit 2>/dev/null | grep -q .; then
-    fail "bundle contains __pycache__/.pyc/tests files (should be excluded)"
+STRAY="$(find "$STAGE" \( -name '__pycache__' -o -name '*.pyc' -o -path '*/tests/*' \) \
+        -print 2>/dev/null | head -n 5)"
+if [ -n "$STRAY" ]; then
+    fail "bundle contains __pycache__/.pyc/tests files (should be excluded):"
+    echo "$STRAY" | sed 's/^/       /'
 else
     pass "no __pycache__/.pyc/tests in bundle"
 fi

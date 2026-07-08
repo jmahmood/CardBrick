@@ -60,13 +60,23 @@ echo "Staging CardBrick v${VERSION} -> ${STAGE}"
 rm -rf "$STAGE" "${DIST}/CardBrick.sh"
 mkdir -p "$STAGE"
 
-# Copy the app verbatim, then strip what the device never needs. Filter
-# AFTER copying rather than via `tar --exclude`: GNU tar and macOS's
-# bsdtar disagree on whether an unslashed exclude pattern prunes nested
-# directories, so relying on it silently ships __pycache__/tests on some
-# hosts. find+rm behaves identically everywhere.
-( cd "${REPO_ROOT}" && tar cf - cardbrick-py ) | ( cd "$STAGE" && tar xf - )
-rm -rf "${STAGE}/cardbrick-py/tests" "${STAGE}/cardbrick-py/data"
+# Copy an ALLOWLIST of what actually ships (matches the tree documented
+# in package_layout.md), rather than the whole cardbrick-py/ directory
+# minus excludes. A denylist misses local dev cruft that doesn't have a
+# fixed name or location — most commonly a virtualenv created inside
+# cardbrick-py/ (.venv, venv, env), whose installed packages routinely
+# bundle their own nested tests/ and __pycache__ dirs. Copying only the
+# known app paths makes that class of leak structurally impossible.
+mkdir -p "${STAGE}/cardbrick-py"
+cp "${APP_SRC}/main.py" "${STAGE}/cardbrick-py/"
+[ -f "${APP_SRC}/requirements.txt" ] && cp "${APP_SRC}/requirements.txt" "${STAGE}/cardbrick-py/"
+[ -f "${APP_SRC}/README.md" ] && cp "${APP_SRC}/README.md" "${STAGE}/cardbrick-py/"
+for d in cardbrick assets scripts; do
+    [ -d "${APP_SRC}/${d}" ] || continue
+    ( cd "${APP_SRC}" && tar cf - "$d" ) | ( cd "${STAGE}/cardbrick-py" && tar xf - )
+done
+# Belt-and-suspenders: strip any cache dirs that did come from a tracked
+# path above (e.g. a stray __pycache__ committed by accident).
 find "${STAGE}/cardbrick-py" \
     \( -type d -name '__pycache__' -o -type d -name '.pytest_cache' \) \
     -exec rm -rf {} +
