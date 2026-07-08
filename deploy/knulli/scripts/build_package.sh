@@ -6,6 +6,10 @@
 #   ├── CardBrick/                   # goes to /userdata/roms/ports/
 #   │   ├── cardbrick-py/            # the app, verbatim (no tests/caches)
 #   │   ├── runtime/pygame-ce_*.squashfs
+#   │   ├── seed-data/                   # OPTIONAL: pre-imported deck(s),
+#   │   │   ├── cardbrick.db             # copied into place by CardBrick.sh
+#   │   │   ├── media/                   # on first boot (only if no db
+#   │   │   └── SEED_INFO                # exists yet in the data dir)
 #   │   ├── VERSION  BUILD_INFO  PACKAGE_MANIFEST.sha256
 #   └── CardBrick-knulli-v<ver>.zip  # same content, zipped for SD card
 #
@@ -15,6 +19,18 @@
 #   scripts/build_package.sh --no-runtime    # app-only (fast re-deploys of
 #                                            # code onto a device that
 #                                            # already has the runtime)
+#   scripts/build_package.sh --deck a.apkg --deck b.apkg
+#                                            # bake deck(s) in: CardBrick.sh
+#                                            # installs them into the data
+#                                            # dir on the device's first
+#                                            # boot, no on-device import
+#                                            # step needed. Repeatable. With
+#                                            # no --deck flag, every *.apkg
+#                                            # / *.csv in deploy/knulli/decks/
+#                                            # is used automatically (empty
+#                                            # or absent -> no seed data,
+#                                            # same as before this option
+#                                            # existed).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,13 +39,31 @@ REPO_ROOT="$(cd "${KNULLI_DIR}/../.." && pwd)"
 APP_SRC="${REPO_ROOT}/cardbrick-py"
 DIST="${KNULLI_DIR}/dist"
 STAGE="${DIST}/CardBrick"
+DECKS_DIR="${KNULLI_DIR}/decks"
 
 WITH_RUNTIME=1
-for arg in "$@"; do
-    case "$arg" in
+DECK_FILES=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
         --no-runtime) WITH_RUNTIME=0 ;;
-        *) echo "unknown option: $arg" >&2; exit 2 ;;
+        --deck)
+            [ "$#" -ge 2 ] || { echo "ERROR: --deck requires a path" >&2; exit 2; }
+            DECK_FILES+=("$2")
+            shift ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
+    shift
+done
+
+# No explicit --deck? Fall back to whatever is sitting in decks/.
+if [ "${#DECK_FILES[@]}" -eq 0 ] && [ -d "$DECKS_DIR" ]; then
+    while IFS= read -r -d '' f; do
+        DECK_FILES+=("$f")
+    done < <(find "$DECKS_DIR" -maxdepth 1 -type f \
+                  \( -iname '*.apkg' -o -iname '*.csv' \) -print0 | sort -z)
+fi
+for f in "${DECK_FILES[@]+"${DECK_FILES[@]}"}"; do
+    [ -f "$f" ] || { echo "ERROR: deck file not found: $f" >&2; exit 1; }
 done
 
 [ -f "${APP_SRC}/main.py" ] || { echo "ERROR: ${APP_SRC}/main.py missing" >&2; exit 1; }
@@ -89,6 +123,60 @@ if [ -n "$RUNTIME_FILE" ]; then
     cp "$RUNTIME_FILE" "${STAGE}/runtime/"
     RUNTIME_MANIFEST="$(dirname "$RUNTIME_FILE")/runtime-manifest.txt"
     [ -f "$RUNTIME_MANIFEST" ] && cp "$RUNTIME_MANIFEST" "${STAGE}/runtime/"
+fi
+
+# --------------------------------------------------------- seed deck(s)
+# Import the requested .apkg/.csv file(s) into a scratch data dir on
+# THIS machine (main.py's "import" command needs only fsrs — no pygame,
+# no ARM64 runtime — so this runs directly on the host) and ship the
+# resulting database as seed-data/. CardBrick.sh copies it into place
+# on the device's first boot, so the deck(s) are already installed with
+# no on-device import step. Imports are additive (see PACKAGING.md), so
+# multiple files just accumulate into one database.
+if [ "${#DECK_FILES[@]}" -gt 0 ]; then
+    DECK_PY="python3"
+    if ! "$DECK_PY" -c "import fsrs" >/dev/null 2>&1; then
+        VENV_DIR="${HERE}/.deckbuild-venv"
+        if [ ! -x "${VENV_DIR}/bin/python3" ]; then
+            echo "Setting up a local venv for deck import (needs fsrs)..."
+            python3 -m venv "$VENV_DIR"
+            "${VENV_DIR}/bin/pip" install -q --upgrade pip
+            "${VENV_DIR}/bin/pip" install -q fsrs typing-extensions
+        fi
+        DECK_PY="${VENV_DIR}/bin/python3"
+    fi
+
+    SEED_TMP="$(mktemp -d)"
+    trap '[ -n "${SEED_TMP:-}" ] && rm -rf "$SEED_TMP"' EXIT
+    echo "Seeding ${#DECK_FILES[@]} deck file(s):"
+    for f in "${DECK_FILES[@]}"; do
+        echo "  - $(basename "$f")"
+        "$DECK_PY" -B "${STAGE}/cardbrick-py/main.py" \
+            --data-dir "$SEED_TMP" import "$f"
+    done
+
+    mkdir -p "${STAGE}/seed-data"
+    cp "${SEED_TMP}/cardbrick.db" "${STAGE}/seed-data/"
+    if [ -d "${SEED_TMP}/media" ] && [ -n "$(ls -A "${SEED_TMP}/media" 2>/dev/null)" ]; then
+        cp -R "${SEED_TMP}/media" "${STAGE}/seed-data/"
+    fi
+    {
+        echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        for f in "${DECK_FILES[@]}"; do echo "source=$(basename "$f")"; done
+        echo "----"
+        "$DECK_PY" -B "${STAGE}/cardbrick-py/main.py" --data-dir "$SEED_TMP" decks
+    } > "${STAGE}/seed-data/SEED_INFO"
+
+    rm -rf "$SEED_TMP"
+    trap - EXIT
+
+    # -B should already have prevented this, but running main.py against
+    # the staged tree is exactly the situation that class of leak comes
+    # from — re-run the cleanup so a bytecode cache never survives into
+    # the checksum/zip regardless.
+    find "${STAGE}/cardbrick-py" -type d -name '__pycache__' -exec rm -rf {} +
+
+    echo "Seed data staged: ${STAGE}/seed-data"
 fi
 
 echo "$VERSION" > "${STAGE}/VERSION"

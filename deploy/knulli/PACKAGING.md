@@ -31,10 +31,11 @@ deploy/knulli/
 │   └── requirements.txt      # extra deps baked into the runtime (fsrs, …)
 ├── scripts/
 │   ├── build_runtime.sh      # host wrapper for the Docker build
-│   ├── build_package.sh      # stage dist/ + zip
+│   ├── build_package.sh      # stage dist/ + zip (+ optional deck seeding)
 │   ├── validate_package.sh   # pre-deploy checks ([PASS]/[WARN]/[FAIL])
 │   ├── deploy_sdcard.sh      # copy to a mounted SD card
 │   └── deploy_ssh.sh         # push over SSH (+ on-device smoke test)
+├── decks/                    # drop .apkg/.csv here to bake into the package
 └── dist/                     # build output (gitignored)
 ```
 
@@ -98,6 +99,39 @@ During development, `make package-fast` builds an app-only package
 (no runtime inside) — pair it with `deploy_ssh.sh`, which never
 re-uploads a runtime the device already has.
 
+## 2b. Bake deck(s) into the package (no on-device import)
+
+To ship a package where the deck(s) are already installed — nothing to
+do on the device — either drop files in `decks/` or pass them
+explicitly:
+
+```sh
+cp ~/Downloads/Spanish101.apkg decks/
+make package                                  # auto-loads decks/*.apkg, *.csv
+
+# or, without touching decks/:
+make package DECKS="~/Decks/A.apkg ~/Decks/B.apkg"
+scripts/build_package.sh --deck ~/Decks/A.apkg --deck ~/Decks/B.apkg
+```
+
+What happens: `build_package.sh` runs `main.py import` for each file
+**on the PC** (the import code only needs the pure-Python `fsrs`
+library, not pygame or the ARM64 runtime, so it runs directly on the
+host — a throwaway local venv is created automatically at
+`scripts/.deckbuild-venv` the first time, if `fsrs` isn't already
+importable), producing a database staged as `CardBrick/seed-data/`.
+`CardBrick.sh` copies it into `$CARD_BRICK_DATA_DIR` the **first time
+the app runs on a given device** — i.e. only when no `cardbrick.db`
+exists there yet — so redeploying an updated package later never
+overwrites review progress that has since accumulated on the device.
+Multiple deck files are imported one after another into the same
+database (imports are additive, per §5 of `README.md`).
+
+`validate_package.sh` checks the seeded database's integrity and
+prints the card count; a 0-card result usually means the `.apkg` needs
+re-exporting from Anki with "Support older Anki versions" checked (see
+`README.md` §5 for why).
+
 ## 3a. Deploy by SD card
 
 Either unzip `dist/CardBrick-knulli-v*.zip` into the card's
@@ -141,6 +175,7 @@ line per subsystem (display, font, DB, scheduler, controller, audio).
 /userdata/roms/ports/CardBrick/
 ├── cardbrick-py/                        # the app, read-only
 ├── runtime/pygame-ce_*.squashfs         # mounted at /tmp/cardbrick-runtime
+├── seed-data/cardbrick.db, media/       # OPTIONAL, only if built with --deck
 ├── VERSION  BUILD_INFO  PACKAGE_MANIFEST.sha256
 
 /userdata/saves/cardbrick/               # ALL mutable data (auto-created)
@@ -151,8 +186,9 @@ line per subsystem (display, font, DB, scheduler, controller, audio).
 The launch script mounts the newest `runtime/*.squashfs`, exports
 `PYTHONHOME`/`PYTHONPATH`/`LD_LIBRARY_PATH` into it, keeps `.pyc`
 files in the data dir (`PYTHONPYCACHEPREFIX` — the app tree stays
-read-only), runs a one-time smoke test on first boot, and unmounts on
-exit. Run it manually over SSH for diagnostics:
+read-only), installs `seed-data/` on first boot if present (§2b), runs
+a one-time smoke test on first boot, and unmounts on exit. Run it
+manually over SSH for diagnostics:
 
 ```sh
 bash /userdata/roms/ports/CardBrick.sh --smoke-test
@@ -169,6 +205,8 @@ bash /userdata/roms/ports/CardBrick.sh --input-diagnostic
 | Smoke test WARN on joystick/audio over SSH | Normal when ES owns the controller or audio is busy; verify from the Ports menu launch. |
 | Ports menu doesn't list CardBrick | Update Gamelists (Start → Games Settings) or reboot. |
 | Wrong/laggy buttons | Parent Mode → Controller test & setup; hold any button ~3 s to force calibration. |
+| Baked-in deck(s) didn't appear | Seeding is first-boot-only (never overwrites an existing `cardbrick.db`). Check `launch.log` for "installing seeded deck(s)"/"seed install OK". On a device that's already been booted once, either `rm /userdata/saves/cardbrick/cardbrick.db` (loses any progress since) or import manually via Parent Mode. |
+| `validate_package.sh` reports 0 cards in seed-data | The `.apkg` needs "Support older Anki versions" checked at export (`README.md` §5) — the new zstd format is rejected. |
 
 ## Relationship to the older vendored-wheels docs
 
