@@ -15,6 +15,12 @@ def test_fullscreen_640x480_keeps_native_logical_size():
     ) == (640, 480)
 
 
+def test_fullscreen_1024x768_uses_native_logical_size():
+    assert _resolve_logical_size(
+        (640, 480), display_size=(1024, 768), fullscreen=True
+    ) == (1024, 768)
+
+
 def test_windowed_mode_keeps_configured_size():
     assert _resolve_logical_size(
         (640, 480), display_size=(720, 480), fullscreen=False

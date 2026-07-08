@@ -42,9 +42,9 @@ Controller-first and deployment-hardened for Knulli-style devices:
   button indices are never trusted (see input_map.py). Face buttons are
   labelled with the fixed layout used by this app (A = right, B = bottom,
   X = top, Y = left).
-- Everything renders on a native handheld logical canvas (640x480 or
-  720x480 when detected) which is scaled — integer scaling when it
-  fits — to the real display.
+- Everything renders on a native handheld logical canvas (640x480,
+  720x480 or 1024x768 when detected) which is scaled — integer scaling
+  when it fits — to the real display.
 - The app has its own exit path (SELECT quits/finishes) and never
   relies on RetroArch hotkeys.
 - A bundled Unicode font covers Spanish/Japanese glyphs when present;
@@ -84,6 +84,7 @@ DEFAULT_LOGICAL_SIZE = (640, 480)
 NATIVE_FULLSCREEN_SIZES = {
     (640, 480),  # RG35XX Plus and similar 4:3 panels
     (720, 480),  # RG34XX SP widescreen panel
+    (1024, 768),  # TrimUI Brick 3.2" 4:3 panel
 }
 
 # "Paper & Ink" palette: the whole UI is warm paper printed with ink,
