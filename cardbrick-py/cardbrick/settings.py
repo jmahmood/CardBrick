@@ -13,6 +13,9 @@ log = logging.getLogger(__name__)
 DEFAULTS = {
     "current_child_profile_id": None,
     "auto_play_audio": True,
+    # http(s) URL of a deck server: either a direct link to an .apkg or
+    # a JSON deck list — see cardbrick/deck_download.py for the format.
+    "deck_server_url": None,
     "fullscreen": False,
     "logical_width": 640,
     "logical_height": 480,

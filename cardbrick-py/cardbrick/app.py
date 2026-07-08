@@ -9,8 +9,8 @@ day (see ReviewService.sprint_status), never one long sitting. Screens:
                  -> Review again ("going ahead": the next sprint now)
                  -> or back to ChildStart
     ChildStart / SessionSummary -> Calendar (stamp calendar) -> back
-    ChildStart -> ParentMode (import / decks / categories / limits /
-                              suspended / progress / calendar /
+    ChildStart -> ParentMode (import / download / decks / categories /
+                              limits / suspended / progress / calendar /
                               controller setup) -> ChildStart
 
 Parent Mode's Decks screen configures which decks are *assigned* to the
@@ -286,6 +286,7 @@ class CardBrickApp:
             "CALENDAR": self.screen_calendar,
             "PARENT_MENU": self.screen_parent_menu,
             "PARENT_IMPORT": self.screen_parent_import,
+            "PARENT_DOWNLOAD": self.screen_parent_download,
             "PARENT_CATEGORIES": self.screen_parent_categories,
             "PARENT_DECKS": self.screen_parent_decks,
             "PARENT_LIMITS": self.screen_parent_limits,
@@ -1055,6 +1056,7 @@ class CardBrickApp:
         direction = self.profile.get("study_direction", "normal")
         entries = [
             ("Import deck (.apkg)", "PARENT_IMPORT"),
+            ("Download decks (WiFi)", "PARENT_DOWNLOAD"),
             ("Decks", "PARENT_DECKS"),
             ("Categories", "PARENT_CATEGORIES"),
             ("Daily goal & sprints", "PARENT_LIMITS"),
@@ -1193,6 +1195,111 @@ class CardBrickApp:
                 self._center(self.font_small.render(line, True, WARN), y)
                 y += 24
         self._footer("Bottom = Import   Right = Back")
+
+    def screen_parent_download(self):
+        """Fetch the deck list from the configured server, download the
+        chosen deck into the import folder, and import it right away.
+        Network calls block the loop like importing does — a redraw
+        callback keeps a progress line moving during the transfer."""
+        from .deck_download import (DownloadError, download_deck,
+                                    fetch_deck_list, format_size)
+        server_url = (self.settings.get("deck_server_url") or "").strip()
+        dest_dir = self.paths.import_dir if self.paths else \
+            os.path.join(self.settings_dir(), "import")
+
+        decks, message = [], None
+        if not server_url:
+            message = ('No server set. Add "deck_server_url" to '
+                       'settings.json in the data folder on the SD '
+                       'card, e.g. "http://192.168.1.10:8000/decks.json"')
+        else:
+            self._draw_download([], 0, f"Connecting to {server_url} …",
+                                server_url)
+            self.present()
+            try:
+                decks = fetch_deck_list(server_url)
+            except DownloadError as exc:
+                message = str(exc)
+                log.error("deck list from %s failed: %s", server_url, exc)
+
+        index = 0
+        while True:
+            action = self.poll()
+            if action in ("start", "east_button", "select"):
+                return "PARENT_MENU"
+            if decks and action == "dpad_up":
+                index = (index - 1) % len(decks)
+            elif decks and action == "dpad_down":
+                index = (index + 1) % len(decks)
+            elif decks and action == "south_button":
+                entry = decks[index]
+                last_drawn = [0.0]
+
+                def progress(received, total):
+                    if time.time() - last_drawn[0] < 0.1:
+                        return
+                    last_drawn[0] = time.time()
+                    if total:
+                        note = f"{received * 100 // total}% of " \
+                               f"{format_size(total)}"
+                    else:
+                        note = format_size(received)
+                    self._draw_download(decks, index,
+                                        f"Downloading {entry['name']} … "
+                                        f"{note}", server_url)
+                    self.present()
+                    pygame.event.pump()  # keep the window responsive
+
+                self._draw_download(decks, index,
+                                    f"Downloading {entry['name']} …",
+                                    server_url)
+                self.present()
+                try:
+                    path = download_deck(entry["url"], dest_dir,
+                                         progress=progress,
+                                         name=entry["name"])
+                    self._draw_download(decks, index, "Importing …",
+                                        server_url)
+                    self.present()
+                    stats = import_apkg(
+                        path, self.storage, self.service.scheduler,
+                        os.path.join(self.settings_dir(), "media"))
+                    message = stats.summary()
+                    log.info("download+import %s: %s", entry["url"],
+                             message)
+                except (DownloadError, ApkgError, OSError) as exc:
+                    message = f"Failed: {exc}"
+                    log.error("download %s failed: %s", entry["url"], exc)
+
+            self._draw_download(decks, index, message, server_url)
+            self.present()
+            self.clock.tick(FPS)
+
+    def _draw_download(self, decks, index, message, server_url=None):
+        from .deck_download import format_size
+        self.screen.fill(BG)
+        self._center(self.font_big.render("Download Decks", True, FG), 40)
+        if server_url:
+            self._center(self.font_small.render(server_url, True, DIM), 90)
+        if decks:
+            visible = 6
+            top = min(max(0, index - visible + 1), index)
+            y = 116
+            for i in range(top, min(top + visible, len(decks))):
+                entry = decks[i]
+                color = ACCENT if i == index else FG
+                prefix = "> " if i == index else "   "
+                size = format_size(entry["size"])
+                label = entry["name"] + (f"  ({size})" if size else "")
+                self.screen.blit(self.font.render(prefix + label, True,
+                                                  color), (70, y))
+                y += 38
+        if message:
+            y = self.h - 170
+            for line in wrap_text(self.font_small, message, self.w - 80):
+                self._center(self.font_small.render(line, True, WARN), y)
+                y += 24
+        self._footer("Bottom = Download + Import   Right = Back")
 
     def screen_parent_categories(self):
         return self._screen_multi_select(
