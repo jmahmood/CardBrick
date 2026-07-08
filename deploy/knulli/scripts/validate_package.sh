@@ -44,6 +44,8 @@ for f in \
     "cardbrick-py/cardbrick/paths.py" \
     "cardbrick-py/cardbrick/smoke.py" \
     "cardbrick-py/assets/fonts/DejaVuSans.ttf" \
+    "cardbrick-py/assets/fonts/NotoSansJP-Regular.otf" \
+    "cardbrick-py/assets/fonts/NotoSans-OFL.txt" \
     "VERSION" "BUILD_INFO" "PACKAGE_MANIFEST.sha256"
 do
     if [ -e "${STAGE}/${f}" ]; then

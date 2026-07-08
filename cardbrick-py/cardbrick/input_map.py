@@ -46,8 +46,8 @@ STUDY_ACTIONS = {
     "north_button": "rate_hard",
     "l1": "replay_audio",
     "r1": "bury_card",
-    "select": "open_action_menu",
-    "start": "finish_session",
+    "select": "quit",
+    "start": "open_action_menu",
     "dpad_up": "reveal_answer",
     "dpad_down": "reveal_answer",
     "dpad_left": "reveal_answer",
@@ -75,8 +75,8 @@ KEYBOARD_SEMANTICS = {
     "3": "east_button",   # Good
     "4": "west_button",   # Easy
     "l": "l1", "r": "r1",
-    "tab": "select",
-    "escape": "start", "q": "start",
+    "tab": "start",
+    "escape": "select", "q": "select",
     "u": "undo",
     "backspace": "south_button",
 }
@@ -143,43 +143,27 @@ class InputMap:
 class InputTranslator:
     """Turns pygame events into semantic actions, one per call.
 
-    Also tracks held SELECT+START for the force-exit gesture, and
-    debounces analog-stick axes into d-pad semantics.
+    Also debounces analog-stick axes into d-pad semantics.
     """
 
-    FORCE_EXIT_SECONDS = 2.0
-
-    def __init__(self, input_map, now_fn=None):
+    def __init__(self, input_map):
         self.map = input_map
-        self._held = {}          # semantic -> monotonic time pressed
         self._axis_state = {}    # axis index -> -1/0/1
-        import time
-        self._monotonic = now_fn or time.monotonic
 
     def translate(self, event):
         """Semantic action for one pygame event, or None."""
         import pygame
         if event.type == pygame.KEYDOWN:
             name = pygame.key.name(event.key)
-            semantic = KEYBOARD_SEMANTICS.get(name)
-            if semantic:
-                self._held[semantic] = self._monotonic()
-            return semantic
+            return KEYBOARD_SEMANTICS.get(name)
         if event.type == pygame.KEYUP:
-            semantic = KEYBOARD_SEMANTICS.get(pygame.key.name(event.key))
-            if semantic:
-                self._held.pop(semantic, None)
             return None
         if event.type == pygame.JOYBUTTONDOWN:
             semantic = self.map.semantic_for_button(event.button)
             if semantic:
-                self._held[semantic] = self._monotonic()
                 return semantic
             return "unmapped"
         if event.type == pygame.JOYBUTTONUP:
-            semantic = self.map.semantic_for_button(event.button)
-            if semantic:
-                self._held.pop(semantic, None)
             return None
         if event.type == pygame.JOYHATMOTION:
             x, y = event.value
@@ -209,11 +193,3 @@ class InputTranslator:
         if event.axis == 0:
             return "dpad_right" if direction > 0 else "dpad_left"
         return "dpad_down" if direction > 0 else "dpad_up"
-
-    def force_exit_held(self):
-        """True when SELECT and START have both been held >= 2 s."""
-        now = self._monotonic()
-        return all(
-            semantic in self._held and
-            now - self._held[semantic] >= self.FORCE_EXIT_SECONDS
-            for semantic in ("select", "start"))

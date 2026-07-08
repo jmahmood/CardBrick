@@ -17,6 +17,16 @@ log = logging.getLogger(__name__)
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 
 
+def _renders_distinct_glyphs(pygame, font, text):
+    """True when different characters do not all render as the same box."""
+    encoded = set()
+    image_to_bytes = getattr(pygame.image, "tobytes", pygame.image.tostring)
+    for char in text:
+        surf = font.render(char, True, (255, 255, 255))
+        encoded.add(image_to_bytes(surf, "RGBA"))
+    return len(encoded) > 1
+
+
 class SmokeResult:
     def __init__(self):
         self.checks = []  # (status, name, detail)
@@ -174,6 +184,7 @@ def run_smoke_test(paths):
             font_path = resolve_font_path()
             font = _load_font(24)
             spanish = "áéíóúñü¿¡"
+            japanese = "\u65e5\u672c\u8a9e"
             width = font.size(spanish)[0]
             if font_path and width > 0:
                 result.add(PASS, "font (Spanish glyphs)", font_path)
@@ -183,6 +194,12 @@ def run_smoke_test(paths):
             else:
                 result.add(FAIL, "font (Spanish glyphs)",
                             "cannot render Spanish characters")
+            if _renders_distinct_glyphs(pygame, font, japanese):
+                result.add(PASS, "font (Japanese glyphs)",
+                            font_path or "pygame builtin fallback")
+            else:
+                result.add(FAIL, "font (Japanese glyphs)",
+                            "Japanese text renders as missing-glyph boxes")
         except FontSupportError as exc:
             result.add(FAIL, "font support", str(exc))
         except Exception as exc:  # noqa: BLE001

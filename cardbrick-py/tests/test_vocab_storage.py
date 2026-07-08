@@ -19,7 +19,8 @@ def test_vocab_card_round_trips(storage):
                         audio_filename="gato.mp3", audio_side="front",
                         card_type="vocab")
     storage.upsert_vocab_card(
-        card_id=1, word="gato", word_jp="猫", gendered_forms="la gata",
+        card_id=1, word="gato", word_en="cat", word_jp="猫",
+        gendered_forms="la gata",
         definitions="Animal doméstico felino.", image_filename="gato.jpg",
         example_es="El gato duerme.", example_audio="ex1.mp3",
         example_en="The cat sleeps.", example_jp="猫は眠る。",
@@ -32,6 +33,7 @@ def test_vocab_card_round_trips(storage):
     assert card["card_type"] == "vocab"
     detail = storage.get_vocab_detail(1)
     assert detail["word"] == "gato"
+    assert detail["word_en"] == "cat"
     assert detail["gendered_forms"] == "la gata"
     assert detail["image_filename"] == "gato.jpg"
     assert detail["example_audio"] == "ex1.mp3"
@@ -56,7 +58,8 @@ def test_reimporting_vocab_card_updates_content_not_review_state(storage,
 
     # Re-import: content changes, review progress must not reset.
     storage.upsert_vocab_card(
-        card_id=1, word="gato", word_jp=None, gendered_forms="",
+        card_id=1, word="gato", word_en="cat", word_jp=None,
+        gendered_forms="",
         definitions="v2 (corrected)", image_filename=None, example_es="",
         example_audio=None, example_en="", example_jp=None,
         report_link=None)
@@ -111,3 +114,36 @@ def test_migration_adds_vocab_support_to_old_database(tmp_path):
     storage.commit()
     assert storage.get_vocab_detail(2)["word"] == "perro"
     storage.close()
+
+
+def test_migration_adds_word_en_to_existing_vocab_table(tmp_path):
+    db = str(tmp_path / "v7.db")
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO meta VALUES ('schema_version', '7');
+        CREATE TABLE cards (
+            id INTEGER PRIMARY KEY, note_id INTEGER NOT NULL,
+            deck TEXT NOT NULL, front TEXT NOT NULL, back TEXT NOT NULL,
+            tags TEXT NOT NULL DEFAULT '', audio_filename TEXT,
+            audio_side TEXT, suspended INTEGER NOT NULL DEFAULT 0,
+            buried_until TEXT, created_at TEXT, updated_at TEXT,
+            card_type TEXT NOT NULL DEFAULT 'basic');
+        CREATE TABLE vocab_cards (
+            card_id INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+            word TEXT NOT NULL, word_jp TEXT, gendered_forms TEXT,
+            definitions TEXT, image_filename TEXT, example_es TEXT,
+            example_audio TEXT, example_en TEXT, example_jp TEXT,
+            report_link TEXT);
+    """)
+    conn.commit()
+    conn.close()
+
+    storage = Storage(db)
+    try:
+        assert storage.schema_version() == SCHEMA_VERSION
+        columns = {row["name"] for row in
+                   storage.conn.execute("PRAGMA table_info(vocab_cards)")}
+        assert "word_en" in columns
+    finally:
+        storage.close()

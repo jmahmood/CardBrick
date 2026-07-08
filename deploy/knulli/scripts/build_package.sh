@@ -109,6 +109,17 @@ for d in cardbrick assets scripts; do
     [ -d "${APP_SRC}/${d}" ] || continue
     ( cd "${APP_SRC}" && tar cf - "$d" ) | ( cd "${STAGE}/cardbrick-py" && tar xf - )
 done
+ROOT_FONT_DIR="${REPO_ROOT}/assets/font"
+if [ -d "$ROOT_FONT_DIR" ]; then
+    mkdir -p "${STAGE}/cardbrick-py/assets/fonts"
+    for font in NotoSansJP-Regular.otf NotoSansCJK-Regular.ttc; do
+        [ -f "${ROOT_FONT_DIR}/${font}" ] || continue
+        cp "${ROOT_FONT_DIR}/${font}" "${STAGE}/cardbrick-py/assets/fonts/"
+    done
+    [ -f "${REPO_ROOT}/LICENSES/NotoSans-OFL.txt" ] && \
+        cp "${REPO_ROOT}/LICENSES/NotoSans-OFL.txt" \
+           "${STAGE}/cardbrick-py/assets/fonts/"
+fi
 # Belt-and-suspenders: strip any cache dirs that did come from a tracked
 # path above (e.g. a stray __pycache__ committed by accident).
 find "${STAGE}/cardbrick-py" \

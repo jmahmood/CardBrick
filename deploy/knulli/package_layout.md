@@ -34,8 +34,8 @@ find . -name '__pycache__' -type d -exec rm -rf {} +
 ├── cardbrick-py/
 │   ├── main.py
 │   ├── cardbrick/            # code
-│   ├── assets/fonts/         # DejaVuSans.ttf + license (REQUIRED —
-│   │                         # Spanish á é í ó ú ñ ü ¿ ¡ coverage)
+│   ├── assets/fonts/         # Noto Sans JP/CJK + DejaVu fallback
+│   │                         # (Spanish + Japanese glyph coverage)
 │   └── scripts/              # optional (sample deck generator)
 ├── vendor/                   # pygame-ce, fsrs, typing-extensions
 └── runtime/                  # optional portable Python

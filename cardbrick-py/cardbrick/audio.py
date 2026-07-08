@@ -15,6 +15,7 @@ Overrides via environment:
     CARDBRICK_AUDIO=auto|mixer|command|none   force a backend
     CARDBRICK_AUDIO_CMD="mpg123 -q {file}"    exact player command
                                               ({file} = media path)
+    CARDBRICK_EXTRA_MEDIA_DIRS=/path:/path     read-only fallback media dirs
 
 Every failure path is logged so the on-device log explains silent
 sessions, and playback never blocks the review loop.
@@ -174,8 +175,14 @@ def _pick_backend(choice, custom_cmd):
 
 
 class AudioPlayer:
-    def __init__(self, media_dir, backend=None):
+    def __init__(self, media_dir, backend=None, extra_media_dirs=None):
         self.media_dir = media_dir
+        if extra_media_dirs is None:
+            extra_media_dirs = os.environ.get("CARDBRICK_EXTRA_MEDIA_DIRS", "")
+            extra_media_dirs = [
+                path for path in extra_media_dirs.split(os.pathsep) if path
+            ]
+        self.media_dirs = [media_dir] + list(extra_media_dirs)
         self._missing_logged = set()
         if backend is None:
             backend = _pick_backend(
@@ -184,23 +191,34 @@ class AudioPlayer:
         self.backend = backend
         self.enabled = backend.name != "none"
         log.info("audio backend: %s", backend.name)
+        if len(self.media_dirs) > 1:
+            log.info("media search dirs: %s", ", ".join(self.media_dirs))
+
+    def resolve(self, filename):
+        if not filename:
+            return None
+        basename = os.path.basename(filename)
+        for media_dir in self.media_dirs:
+            path = os.path.join(media_dir, basename)
+            if os.path.exists(path):
+                return path
+        return None
 
     def available(self, filename):
         """True if the media file exists locally (missing-audio check)."""
-        if not filename:
-            return False
-        return os.path.exists(
-            os.path.join(self.media_dir, os.path.basename(filename)))
+        return self.resolve(filename) is not None
 
     def play(self, filename):
         """Play a media file by its imported name. Returns True if played."""
         if not self.enabled or not filename:
             return False
-        path = os.path.join(self.media_dir, os.path.basename(filename))
-        if not os.path.exists(path):
+        path = self.resolve(filename)
+        if path is None:
             if filename not in self._missing_logged:
                 self._missing_logged.add(filename)
-                log.warning("missing media file: %s", path)
+                log.warning("missing media file: %s",
+                            os.path.join(self.media_dir,
+                                         os.path.basename(filename)))
             return False
         return self.backend.play(path)
 

@@ -109,20 +109,20 @@ def test_axis_emits_once_per_threshold_crossing(tmp_path):
     assert translator.translate(axis(3, 0.9)) is None    # not a stick axis
 
 
-def test_force_exit_requires_both_held_two_seconds(tmp_path):
-    fake_time = [0.0]
-    translator = InputTranslator(InputMap(str(tmp_path / "m.json")),
-                                 now_fn=lambda: fake_time[0])
-    translator.translate(joy_button(6))   # select down
-    translator.translate(joy_button(7))   # start down
-    assert not translator.force_exit_held()
-    fake_time[0] = 2.5
-    assert translator.force_exit_held()
-    translator.translate(joy_button(7, down=False))  # start released
-    assert not translator.force_exit_held()
+def test_select_quits_and_start_opens_menu(tmp_path):
+    translator = InputTranslator(InputMap(str(tmp_path / "m.json")))
+    escape = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
+    tab = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB)
+
+    assert translator.translate(joy_button(6)) == "select"
+    assert translator.translate(joy_button(7)) == "start"
+    assert translator.translate(escape) == "select"
+    assert translator.translate(tab) == "start"
 
 
 def test_every_semantic_has_a_study_action():
     from cardbrick.input_map import SEMANTIC_ACTIONS
     for semantic in SEMANTIC_ACTIONS:
         assert semantic in STUDY_ACTIONS
+    assert STUDY_ACTIONS["select"] == "quit"
+    assert STUDY_ACTIONS["start"] == "open_action_menu"

@@ -39,9 +39,9 @@ the device. Every automated step also writes to
       exists in the data folder afterwards.
 - [ ] 11. Study one real session: audio plays automatically, L1
       replays, D-pad reveals, four face buttons rate, R1 buries,
-      SELECT menu can undo/suspend.
-- [ ] 12. START → summary shows sane numbers → START quits back to the
-      launcher. SELECT+START held 2 s force-exits mid-review.
+      START menu can undo/suspend.
+- [ ] 12. SELECT finishes/quits; START opens the menu or parent-mode
+      actions.
 - [ ] 13. Pull the battery (or hard power-off) mid-session, reboot,
       relaunch: the app opens, the interrupted session is closed, and
       already-answered cards did not come back.

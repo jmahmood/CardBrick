@@ -42,14 +42,13 @@ Controller-first and deployment-hardened for Knulli-style devices:
   button indices are never trusted (see input_map.py). Face buttons are
   labelled with the fixed layout used by this app (A = right, B = bottom,
   X = top, Y = left).
-- Everything renders on a fixed logical canvas (default 640x480, the
-  RG35XX SP panel) which is scaled — integer scaling when it fits — to
-  the real display.
-- The app has its own exit paths (START from summary quits; SELECT +
-  START held 2 s force-exits from anywhere; Esc on desktop) and never
+- Everything renders on a native handheld logical canvas (640x480 or
+  720x480 when detected) which is scaled — integer scaling when it
+  fits — to the real display.
+- The app has its own exit path (SELECT quits/finishes) and never
   relies on RetroArch hotkeys.
-- A bundled DejaVu Sans covers Spanish glyphs; font resolution and all
-  startup facts are logged (see bootlog.py).
+- A bundled Unicode font covers Spanish/Japanese glyphs when present;
+  font resolution and all startup facts are logged (see bootlog.py).
 
 Keyboard fallback for desktop testing: arrows reveal, 1/2/3/4 =
 Again/Hard/Good/Easy (or literal A/B/X/Y keys), L replay, R bury,
@@ -74,6 +73,11 @@ from .textutil import wrap_text
 log = logging.getLogger(__name__)
 
 FPS = 30
+DEFAULT_LOGICAL_SIZE = (640, 480)
+NATIVE_FULLSCREEN_SIZES = {
+    (640, 480),  # RG35XX Plus and similar 4:3 panels
+    (720, 480),  # RG34XX SP widescreen panel
+}
 
 # "Paper & Ink" palette: the whole UI is warm paper printed with ink,
 # one vermillion stamp-red accent, and a dark printer-chassis bar.
@@ -109,16 +113,49 @@ DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
 _BUNDLED_FONT_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts"
 )
+_ROOT_FONT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "assets",
+    "font",
+)
 
 FONT_CANDIDATES = [
     os.environ.get("CARDBRICK_FONT", ""),
-    os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    os.path.join(_BUNDLED_FONT_DIR, "NotoSansJP-Regular.otf"),
+    os.path.join(_BUNDLED_FONT_DIR, "NotoSansCJK-Regular.ttc"),
+    os.path.join(_ROOT_FONT_DIR, "NotoSansJP-Regular.otf"),
+    os.path.join(_ROOT_FONT_DIR, "NotoSansCJK-Regular.ttc"),
+    os.path.join(_ROOT_FONT_DIR, "PixelMplus10-Regular.ttf"),
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.otf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    "/System/Library/Fonts/\u30d2\u30e9\u30ae\u30ce\u89d2\u30b4\u30b7\u30c3\u30af W3.ttc",
+    "C:/Windows/Fonts/msgothic.ttc",
+    "C:/Windows/Fonts/meiryo.ttc",
+    os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 
 _font_path_logged = False
+
+
+def _resolve_logical_size(configured_size, display_size=None, fullscreen=False):
+    """Choose the canvas size for the current display.
+
+    The saved/default logical size remains the portable 640x480 layout.
+    In fullscreen on known handheld panels, use the physical panel size
+    as the logical canvas so 720x480 devices do not get pillarboxed.
+    """
+    if (
+        fullscreen
+        and configured_size == DEFAULT_LOGICAL_SIZE
+        and display_size in NATIVE_FULLSCREEN_SIZES
+    ):
+        return display_size
+    return configured_size
 
 
 def resolve_font_path():
@@ -141,7 +178,7 @@ def _load_font(size):
         _font_path_logged = True
         log.warning(
             "no bundled/system font found — using pygame builtin "
-            "(Spanish accents may render poorly)"
+            "(Spanish/Japanese glyphs may render poorly)"
         )
     return pygame.font.Font(None, size + 6)  # pygame default runs small
 
@@ -210,8 +247,8 @@ class CardBrickApp:
         pygame.init()
         log_pygame_versions()
         ensure_font_support()
-        self.w = int(settings.get("logical_width", 640))
-        self.h = int(settings.get("logical_height", 480))
+        self.w = int(settings.get("logical_width", DEFAULT_LOGICAL_SIZE[0]))
+        self.h = int(settings.get("logical_height", DEFAULT_LOGICAL_SIZE[1]))
         if fullscreen is None:
             fullscreen = bool(settings.get("fullscreen"))
         self.fullscreen = fullscreen
@@ -249,15 +286,10 @@ class CardBrickApp:
 
     def _init_display(self):
         """Logical canvas + real display; scaling computed once."""
+        configured_size = (self.w, self.h)
         try:
             if self.fullscreen:
                 self.display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                if self.display.get_size() < (self.w, self.h):
-                    log.warning(
-                        "display %s smaller than logical %s",
-                        self.display.get_size(),
-                        (self.w, self.h),
-                    )
             else:
                 self.display = pygame.display.set_mode((self.w, self.h))
         except pygame.error as exc:
@@ -272,6 +304,27 @@ class CardBrickApp:
         if (dw, dh) == (0, 0):  # dummy driver corner case
             self.display = pygame.display.set_mode((self.w, self.h))
             dw, dh = self.w, self.h
+
+        logical_size = _resolve_logical_size(
+            configured_size, display_size=(dw, dh), fullscreen=self.fullscreen
+        )
+        if logical_size != configured_size:
+            log.info(
+                "logical size: %sx%s -> %sx%s for native display %sx%s",
+                configured_size[0],
+                configured_size[1],
+                logical_size[0],
+                logical_size[1],
+                dw,
+                dh,
+            )
+            self.w, self.h = logical_size
+        if dw < self.w or dh < self.h:
+            log.warning(
+                "display %s smaller than logical %s",
+                self.display.get_size(),
+                (self.w, self.h),
+            )
 
         self.canvas = pygame.Surface((self.w, self.h))
         self.screen = self.canvas  # all drawing targets the canvas
@@ -393,14 +446,11 @@ class CardBrickApp:
 
         Consumes exactly one meaningful event per call so rapid inputs
         queued between frames are never dropped. Also services joystick
-        hot-plug and the SELECT+START force-exit gesture.
+        hot-plug.
         """
         while True:
             event = pygame.event.poll()
             if event.type == pygame.NOEVENT:
-                if self.input.force_exit_held():
-                    log.info("SELECT+START held — force exit")
-                    raise QuitApp
                 return None
             if event.type == pygame.QUIT:
                 raise QuitApp
@@ -415,6 +465,10 @@ class CardBrickApp:
                 continue
             action = self.input.translate(event)
             if action:
+                if action == "select":
+                    return "start"
+                if action == "start":
+                    return "select"
                 return action
 
     # -- child start -----------------------------------------------------------------
@@ -587,7 +641,7 @@ class CardBrickApp:
                 "A = Start    X = Calendar"
                 if (startable or bonus)
                 else "X = Calendar",
-                "SELECT = Parent    START = Quit",
+                "START = Parent    SELECT = Quit",
             )
             self.present()
             self.clock.tick(FPS)
@@ -840,12 +894,21 @@ class CardBrickApp:
                 roll.feed_gap(10)
                 roll.feed(self._rule_surface())
                 roll.feed_gap(8)
-                text = vocab_detail["definitions"] or "(no definition)"
+                lines = []
                 if vocab_detail["gendered_forms"]:
-                    text = vocab_detail["gendered_forms"] + "\n" + text
-                if vocab_detail["example_en"]:
-                    text += "\n" + vocab_detail["example_en"]
-                print_block(text, self.font_small, FG)
+                    lines.append(vocab_detail["gendered_forms"])
+                lines.append(vocab_detail["definitions"] or "(no definition)")
+                if vocab_detail.get("word_en"):
+                    lines.append("EN: " + vocab_detail["word_en"])
+                if vocab_detail.get("word_jp"):
+                    lines.append("JP: " + vocab_detail["word_jp"])
+                if vocab_detail.get("example_en"):
+                    lines.append("Example EN: " + vocab_detail["example_en"])
+                if vocab_detail.get("example_jp"):
+                    lines.append("Example JP: " + vocab_detail["example_jp"])
+                if vocab_detail.get("report_link"):
+                    lines.append("Report: " + vocab_detail["report_link"])
+                print_block("\n".join(lines), self.font_small, FG)
 
         def print_up_to(target_phase):
             nonlocal printed_phase
@@ -1114,25 +1177,25 @@ class CardBrickApp:
             if known_confirmation is not None:
                 self._footer(
                     "A = Yes, I knew it   B = I made a mistake",
-                    "Auto-confirms in 5s   START = Finish",
+                    "Auto-confirms in 5s   START = Menu",
                 )
             elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
                     "D-pad = Reveal more   A = I know this",
-                    "L1 = Replay audio   R1 = Bury   SELECT = Menu",
+                    "L1 = Replay audio   R1 = Bury   START = Menu",
                 )
             else:
                 self._footer(
                     "A = Go to next card",
-                    "L1 = Replay audio   R1 = Bury   SELECT = Menu   START = Finish",
+                    "L1 = Replay audio   R1 = Bury   START = Menu",
                 )
         elif flipped:
             self._footer(
                 "A=Good  B=Again  Y=Easy  X=Hard",
-                "R1=Bury   SELECT=Menu   START=Finish",
+                "R1=Bury   START=Menu   SELECT=Finish",
             )
         else:
-            self._footer("D-pad = Show answer   L1 = Replay audio   START = Finish")
+            self._footer("D-pad/A = Show answer   START = Menu   SELECT = Finish")
 
         if menu is not None:
             self._draw_menu_overlay(menu)
@@ -1147,8 +1210,8 @@ class CardBrickApp:
         if key in self._image_cache:
             return self._image_cache[key]
         surf = None
-        path = os.path.join(self.audio.media_dir, os.path.basename(filename))
-        if os.path.exists(path):
+        path = self.audio.resolve(filename)
+        if path is not None:
             try:
                 raw = pygame.image.load(path)
                 try:
@@ -1164,7 +1227,9 @@ class CardBrickApp:
             except pygame.error as exc:
                 log.warning("could not load image %s: %s", path, exc)
         else:
-            log.warning("missing media file: %s", path)
+            log.warning("missing media file: %s",
+                        os.path.join(self.audio.media_dir,
+                                     os.path.basename(filename)))
         self._image_cache[key] = surf
         return surf
 
@@ -1834,7 +1899,7 @@ class CardBrickApp:
                     study = STUDY_ACTIONS.get(semantic, "—")
                     events.insert(0, (raw, semantic or "—", study))
                     del events[10:]
-                    if semantic == "start":
+                    if semantic == "select":
                         exit_screen = True
                 event = pygame.event.poll()
 
@@ -1871,7 +1936,7 @@ class CardBrickApp:
                     self.font.render("Press buttons to see events…", True, DIM), 220
                 )
             self._footer(
-                "Hold any button 3s = remap buttons", "START (mapped) or Esc = back"
+                "Hold any button 3s = remap buttons", "SELECT or Esc = back"
             )
             self.present()
             self.clock.tick(FPS)

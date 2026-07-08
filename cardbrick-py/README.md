@@ -30,7 +30,8 @@ Review service    (cardbrick/service.py — daily limits, category
 Session runner    (cardbrick/session.py — one sitting: queue, counters,
   ↓                summary)
 Pygame app        (cardbrick/app.py — state-driven child/parent UI on a
-                   640x480 logical canvas, controller-first)
+                   native 640x480 or 720x480 handheld canvas,
+                   controller-first)
 ```
 
 Supporting modules: `cardbrick/audio.py` (pluggable playback backends —
@@ -138,7 +139,7 @@ restaurant, food
  12 cards today                Front: ¿Dónde está el baño?  ♪
  8 to review + 4 new     -->   D-pad = show answer          -->  ¡Buen trabajo!
 Press A to start!              B=Again Y=Hard A=Good X=Easy      session stats
-                               R=Bury  SELECT=Menu
+                               R=Bury  START=Menu
 ```
 
 ### Controls (study)
@@ -154,9 +155,8 @@ Buttons use this fixed face layout:
 | X              | —                   | Hard        |
 | L1             | Replay audio        | Replay audio|
 | R1             | —                   | Bury until tomorrow |
-| SELECT         | Action menu (undo / bury / suspend / end) | same |
-| START          | Finish session      | same        |
-| SELECT + START held 2 s | Force exit to launcher | same |
+| START          | Action menu (undo / bury / suspend / end) | same |
+| SELECT         | Finish session / quit | same |
 
 Keyboard fallback for desktop testing: arrows/Space reveal, `1/2/3/4` =
 Again/Hard/Good/Easy (or literal `A/B/X/Y` keys), `L` replay, `R` bury,
@@ -168,9 +168,12 @@ calibration screen (Parent Mode → *Controller test & setup*, or
 `python main.py --input-diagnostic`). The defaults match common
 Anbernic/Knulli ordering but are only a starting guess — calibrate on
 real hardware. A font override is available via
-`CARDBRICK_FONT=/path/to/font.ttf`; by default the bundled
-`assets/fonts/DejaVuSans.ttf` is used (full Spanish coverage:
-á é í ó ú ñ ü ¿ ¡). The legacy `review` prototype still honours the
+`CARDBRICK_FONT=/path/to/font.ttf`; by default the app prefers bundled
+Noto Sans CJK/JP fonts when present, then falls back to DejaVu Sans
+(full Spanish coverage: á é í ó ú ñ ü ¿ ¡). The packaged Knulli build
+copies Noto from the repository's root `assets/font/` folder so
+Japanese vocab translations render as real glyphs instead of boxes.
+The legacy `review` prototype still honours the
 old `CARDBRICK_JOYMAP` env var.
 
 ### Four-phase vocab cards
@@ -184,7 +187,7 @@ the same deck/queue:
 Phase 0: word (+ audio, autoplays)
 Phase 1: + example sentence (headword highlighted, + its own audio)
 Phase 2: + image
-Phase 3: + gendered forms / definition / English translation
+Phase 3: + gendered forms / definition / English and Japanese translations
 ```
 
 D-pad reveals the next phase; there are no separate rating buttons —
@@ -199,7 +202,7 @@ much you needed to see*:
 | 3 (needed the full definition) | Again |
 
 L1 replays the current phase's audio (word audio at phase 0, example
-audio from phase 1 on); R1 bury and SELECT menu work the same as
+audio from phase 1 on); R1 bury and START menu work the same as
 regular cards. The header, definitions, and gendered forms are shown
 as plain text (HTML/CSS from the original card is not rendered — see
 Scope, below); the headword highlight inside the example sentence is
@@ -226,7 +229,7 @@ of updating the old one's progress.
 
 ### Parent mode
 
-`SELECT` on the start screen. From there: import `.apkg` files found in
+`START` on the start screen. From there: import `.apkg` files found in
 the data folder (or `data/import/`, or the app folder), choose active
 **decks** (which imported decks are *assigned* to the child at all)
 and active **categories** (Anki tags — a second, independent filter;
@@ -284,7 +287,7 @@ reachable three ways: **X** on the start screen, **X**
 on the session-complete screen (the natural "you earned a stamp"
 moment), and Parent Mode → *Calendar (stamps)*. Navigate months with
 **L1/R1** (or D-pad left/right), **A** jumps back to the current
-month, **B** or **SELECT** exits. Stamps are per-profile.
+month, **B**, **START**, or **SELECT** exits. Stamps are per-profile.
 
 ### Admin commands (CLI only, destructive)
 

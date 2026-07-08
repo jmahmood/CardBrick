@@ -6,7 +6,7 @@ from cardbrick.vocab_csv import _stable_id, import_vocab_csv
 
 HEADER = ["Word", "Word Audio", "Gendered Forms", "Definitions", "Image",
           "Example ES", "Example Audio", "Example EN", "Report Link",
-          "Word JP", "Example JP", "Tags"]
+          "Word EN", "Word JP", "Example JP", "Tags"]
 
 
 def write_csv(path, rows):
@@ -22,8 +22,8 @@ def gato_row(**overrides):
         "Gendered Forms": "la gata", "Definitions": "Animal felino.",
         "Image": "gato.jpg", "Example ES": "El gato duerme.",
         "Example Audio": "ex1.mp3", "Example EN": "The cat sleeps.",
-        "Report Link": "", "Word JP": "猫", "Example JP": "猫は眠る。",
-        "Tags": "animals",
+        "Report Link": "", "Word EN": "cat", "Word JP": "猫",
+        "Example JP": "猫は眠る。", "Tags": "animals",
     }
     row.update(overrides)
     return [row[col] for col in HEADER]
@@ -42,6 +42,7 @@ def test_csv_row_imports_as_vocab_card(tmp_path, storage, service):
     assert card["tags"] == "animals"
     detail = storage.get_vocab_detail(card_id)
     assert detail["gendered_forms"] == "la gata"
+    assert detail["word_en"] == "cat"
     assert detail["example_en"] == "The cat sleeps."
     assert detail["word_jp"] == "猫"
 

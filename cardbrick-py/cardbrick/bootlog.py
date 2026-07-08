@@ -115,4 +115,4 @@ def log_display_diagnostics(screen_size, logical_size, fullscreen,
             log.error("joystick %d: could not query (%s)", i, exc)
 
     log.info("font: %s", font_path or "pygame builtin fallback "
-                                      "(NOT safe for Spanish)")
+                                      "(NOT safe for Spanish/Japanese)")
