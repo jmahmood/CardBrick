@@ -438,6 +438,8 @@ class CardBrickApp:
                                                 bonus=self._session_bonus)
                  for _label, decks in entries]
         index = 0
+        top = 0
+        visible = 6
 
         while True:
             action = self.poll()
@@ -450,6 +452,7 @@ class CardBrickApp:
             elif action == "south_button":
                 self._session_deck_filter = entries[index][1]
                 return "REVIEW"
+            top = min(max(top, index - visible + 1), index)
 
             self.screen.fill(BG)
             self._center(self.font_big.render("Choose a Deck", True, FG),
@@ -457,7 +460,8 @@ class CardBrickApp:
             self._center(self.font_small.render(
                 "Which deck do you want to study?", True, DIM), 90)
             y = 140
-            for i, (label, _decks) in enumerate(entries):
+            for i in range(top, min(top + visible, len(entries))):
+                label = entries[i][0]
                 due, new = counts[i]
                 color = ACCENT if i == index else FG
                 prefix = "> " if i == index else "   "
