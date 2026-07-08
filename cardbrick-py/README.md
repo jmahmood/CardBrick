@@ -41,9 +41,8 @@ resolution), `cardbrick/bootlog.py` (file logging + startup
 diagnostics), `cardbrick/smoke.py` (`--smoke-test`),
 `cardbrick/errors.py` (visible fatal-error screens),
 `cardbrick/settings.py` (JSON app settings), `cardbrick/textutil.py`
-(HTML stripping, wrapping), and `cardbrick/ui.py` (the original
-minimal prototype reviewer, kept working under `python main.py
-review`).
+(HTML stripping, wrapping), and `cardbrick/paperroll.py` (the
+Paper & Ink spool animation behind the review screens).
 
 ### Dependencies
 
@@ -108,8 +107,6 @@ python main.py profile --study-ahead-days 2   # pull-forward horizon
 python main.py profile --study-ahead off      # day ends with the due pool
 python main.py profile --categories all      # study every tag
 
-# Legacy prototype reviewer (no limits/undo/profiles)
-python main.py review [--deck NAME] [--fullscreen]
 python main.py decks                  # list decks + due counts
 
 # Deployment tooling (see deploy/knulli/ at the repo root)
@@ -173,8 +170,6 @@ Noto Sans CJK/JP fonts when present, then falls back to DejaVu Sans
 (full Spanish coverage: á é í ó ú ñ ü ¿ ¡). The packaged Knulli build
 copies Noto from the repository's root `assets/font/` folder so
 Japanese vocab translations render as real glyphs instead of boxes.
-The legacy `review` prototype still honours the
-old `CARDBRICK_JOYMAP` env var.
 
 ### Four-phase vocab cards
 
