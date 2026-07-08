@@ -1070,6 +1070,17 @@ class CardBrickApp:
             roll.scroll(-scroll_step if action == "dpad_up" else scroll_step)
             return True
 
+        def vocab_image_surface():
+            if vocab_detail is None:
+                return None
+            return self._vocab_image_surface(vocab_detail["image_filename"])
+
+        def next_vocab_phase(current_phase):
+            next_phase = min(current_phase + 1, self.VOCAB_MAX_PHASE)
+            if next_phase == 2 and vocab_image_surface() is None:
+                next_phase = 3
+            return next_phase
+
         def prepare_for_next_print():
             roll.scroll_to_print_position()
 
@@ -1129,12 +1140,10 @@ class CardBrickApp:
                         self._render_highlight_line(line, vocab_detail["word"], self.font)
                     )
             elif p == 2:
-                roll.feed_gap(8)
-                image = self._vocab_image_surface(vocab_detail["image_filename"])
+                image = vocab_image_surface()
                 if image is not None:
+                    roll.feed_gap(8)
                     roll.feed(image, reveal=False)
-                else:
-                    roll.feed(self.font_small.render("(no image)", True, DIM))
             elif p == 3:
                 roll.feed_gap(10)
                 roll.feed(self._rule_surface(), reveal=False)
@@ -1387,7 +1396,7 @@ class CardBrickApp:
                         continue
                 elif action == "dpad_down":
                     if phase < self.VOCAB_MAX_PHASE:
-                        phase += 1
+                        phase = next_vocab_phase(phase)
                         print_up_to(phase)
                         if auto_play:
                             play_vocab()
