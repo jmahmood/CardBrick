@@ -250,6 +250,7 @@ class CardBrickApp:
         self._session_bonus = False  # next sprint ignores the daily goal
         self._deck_select_handoff_roll = None
         self._category_select_handoff_roll = None
+        self._child_start_handoff_roll = None
         self._review_printer_handoff_roll = None
         self._start_printer_handoff_roll = None
         self._sprint_label = ""  # "Sprint 3/8" shown in the review header
@@ -589,10 +590,17 @@ class CardBrickApp:
         startable = status["next_sprint_cards"] > 0
         bonus = not startable and status["bonus_cards"] > 0
 
-        roll = self._build_child_start_roll(status, startable, bonus)
-        if self._ticket_printed:
+        roll = self._child_start_handoff_roll
+        self._child_start_handoff_roll = None
+        if roll is None:
+            roll = self._build_child_start_roll(status, startable, bonus)
+        if self._ticket_printed and not hasattr(roll, "_child_start_view_target"):
             roll.finish()
         self._ticket_printed = True
+        if not hasattr(roll, "_child_start_view_target"):
+            roll._child_start_view_target = roll._target
+        if not hasattr(roll, "_child_start_total"):
+            roll._child_start_total = roll._child_start_view_target + roll.print_y
 
         while True:
             action = self.poll()
@@ -607,6 +615,8 @@ class CardBrickApp:
                 return "CALENDAR"
             if action in ("east_button", "unmapped") and (startable or bonus):
                 self._session_bonus = bonus
+                roll._child_start_view_target = roll._view_target
+                roll._child_start_total = roll._view_target + roll.print_y
                 if len(available_decks) > 1:
                     self._deck_select_handoff_roll = roll
                     return "DECK_SELECT"
@@ -745,7 +755,7 @@ class CardBrickApp:
                 self._scroll_choice_to_index(roll, rows, index)
                 choice_aligned = True
             if action in ("start", "south_button", "select"):
-                return "CHILD_START"
+                return self._return_to_child_start_with_roll(roll)
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
                 self._scroll_choice_to_index(roll, rows, index)
@@ -823,7 +833,7 @@ class CardBrickApp:
                 self._scroll_choice_to_index(roll, rows, index)
                 choice_aligned = True
             if action in ("start", "south_button", "select"):
-                return "CHILD_START"
+                return self._return_to_child_start_with_roll(roll)
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
                 self._scroll_choice_to_index(roll, rows, index)
@@ -918,6 +928,58 @@ class CardBrickApp:
         self.screen.blit(marker, (x - marker.get_width() - 12, y))
         base = y + self.font.get_ascent() + 3
         pygame.draw.line(self.screen, FG, (x, base), (x + row["width"], base), 2)
+
+    def _return_to_child_start_with_roll(self, roll):
+        target = getattr(roll, "_child_start_view_target", None)
+        if target is None:
+            return "CHILD_START"
+
+        if roll.printing_busy:
+            roll.finish()
+        roll.scroll(target - roll._view_target)
+        while roll.busy:
+            if self.poll():
+                roll._view_target = target
+                roll.offset = target
+                break
+            roll.update()
+            self._paper(roll)
+            self._draw_roll(roll)
+            self._footer("Returning to the start ticket...")
+            self.present()
+            self.clock.tick(FPS)
+
+        roll._view_target = target
+        roll.offset = target
+        self._trim_roll_to_child_start(roll)
+        self._child_start_handoff_roll = roll
+        return "CHILD_START"
+
+    def _trim_roll_to_child_start(self, roll):
+        total = getattr(roll, "_child_start_total", None)
+        if total is None:
+            return
+
+        y = roll._base
+        keep = 0
+        for item in roll._items:
+            bottom = y + item.h
+            if bottom > total + 0.5:
+                break
+            keep += 1
+            y = bottom
+        del roll._items[keep:]
+        roll._queue.clear()
+        roll._total = total
+        roll._target = total - roll.print_y
+        roll._view_target = roll._target
+        roll.offset = roll._target
+        roll._active_reveal = None
+        roll._pages = [
+            (coord, idx)
+            for coord, idx in roll._pages
+            if coord <= total + 0.5 and idx <= len(roll._items)
+        ]
 
     def _print_topic_selected(self, roll, label):
         roll.feed_gap(10)

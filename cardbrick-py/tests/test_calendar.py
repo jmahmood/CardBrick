@@ -2,6 +2,9 @@
 
 from datetime import datetime, timezone
 
+from conftest import seed_card
+from cardbrick.session import StudySession
+
 
 def _add_session(storage, profile_id, local_dt, cards_reviewed):
     """Insert a session started at a given *local* time. Stored UTC, so
@@ -27,6 +30,29 @@ def test_empty_session_earns_no_stamp(storage, service):
     _add_session(storage, 1, datetime(2026, 7, 10, 9, 0), 0)   # backed out
     _add_session(storage, 1, datetime(2026, 7, 10, 10, 0), 4)  # real
     assert service.sessions_per_day(1, 2026, 7) == {10: 1}
+
+
+def test_unfinished_sprint_with_review_earns_stamp(storage, service, profile,
+                                                   clock):
+    seed_card(storage, service, 1)
+    session = StudySession(storage, service, profile)
+    session.answer(4)
+
+    when = clock.now().astimezone()
+    assert service.sessions_per_day(
+        profile["id"], when.year, when.month) == {when.day: 1}
+
+
+def test_undone_review_no_longer_earns_stamp(storage, service, profile,
+                                             clock):
+    seed_card(storage, service, 1)
+    session = StudySession(storage, service, profile)
+    session.answer(4)
+    session.undo()
+
+    when = clock.now().astimezone()
+    assert service.sessions_per_day(
+        profile["id"], when.year, when.month) == {}
 
 
 def test_sessions_spread_across_days(storage, service):

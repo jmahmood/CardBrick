@@ -549,13 +549,32 @@ class Storage:
 
     def sessions_in_range(self, profile_id, start_iso, end_iso):
         """(started_at, cards_reviewed) for a profile's sessions whose
-        start falls in [start_iso, end_iso). Used by the stamp calendar;
-        callers group by local day and decide what counts as a "logged"
-        session (see ReviewService.sessions_per_day)."""
+        start falls in [start_iso, end_iso).
+
+        The stamp calendar needs to reflect work as soon as review_log
+        entries exist, even before finish_session has refreshed the
+        cached counters on sessions. Legacy/manual rows with no log
+        entries still fall back to sessions.cards_reviewed.
+        """
         return self.conn.execute(
-            """SELECT started_at, cards_reviewed FROM sessions
-               WHERE profile_id = ? AND started_at >= ? AND started_at < ?
-               ORDER BY started_at""",
+            """SELECT s.started_at,
+                      CASE
+                          WHEN lc.total_logs IS NOT NULL THEN lc.active_logs
+                          ELSE s.cards_reviewed
+                      END AS cards_reviewed
+               FROM sessions s
+               LEFT JOIN (
+                   SELECT session_id,
+                          COUNT(*) AS total_logs,
+                          SUM(CASE WHEN undone = 0 THEN 1 ELSE 0 END)
+                              AS active_logs
+                   FROM review_log
+                   WHERE session_id IS NOT NULL
+                   GROUP BY session_id
+               ) lc ON lc.session_id = s.id
+               WHERE s.profile_id = ?
+                 AND s.started_at >= ? AND s.started_at < ?
+               ORDER BY s.started_at""",
             (profile_id, start_iso, end_iso)).fetchall()
 
     def session_counts(self, session_id):
