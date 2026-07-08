@@ -45,12 +45,27 @@ KEYBOARD_MAP = {
     pygame.K_UP: "UP", pygame.K_DOWN: "DOWN",
 }
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_BUNDLED_FONT_DIR = os.path.join(_HERE, "..", "assets", "fonts")
+_ROOT_FONT_DIR = os.path.join(_HERE, "..", "..", "assets", "font")
+
 FONT_CANDIDATES = [
     os.environ.get("CARDBRICK_FONT", ""),
-    os.path.join(os.path.dirname(__file__), "..", "assets", "fonts",
-                 "main.ttf"),
+    os.path.join(_BUNDLED_FONT_DIR, "NotoSansJP-Regular.otf"),
+    os.path.join(_BUNDLED_FONT_DIR, "NotoSansCJK-Regular.ttc"),
+    os.path.join(_ROOT_FONT_DIR, "NotoSansJP-Regular.otf"),
+    os.path.join(_ROOT_FONT_DIR, "NotoSansCJK-Regular.ttc"),
+    os.path.join(_ROOT_FONT_DIR, "PixelMplus10-Regular.ttf"),
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.otf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    "/System/Library/Fonts/\u30d2\u30e9\u30ae\u30ce\u89d2\u30b4\u30b7\u30c3\u30af W3.ttc",
+    "C:/Windows/Fonts/msgothic.ttc",
+    "C:/Windows/Fonts/meiryo.ttc",
+    os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 

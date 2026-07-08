@@ -38,8 +38,8 @@ Controller-first and deployment-hardened for Knulli-style devices:
   fits — to the real display.
 - The app has its own exit path (SELECT quits/finishes) and never
   relies on RetroArch hotkeys.
-- A bundled DejaVu Sans covers Spanish glyphs; font resolution and all
-  startup facts are logged (see bootlog.py).
+- A bundled Unicode font covers Spanish/Japanese glyphs when present;
+  font resolution and all startup facts are logged (see bootlog.py).
 
 Keyboard fallback for desktop testing: arrows reveal, 1/2/3/4 =
 Again/Hard/Good/Easy (or literal A/B/X/Y keys), L replay, R bury,
@@ -92,13 +92,30 @@ DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
 _BUNDLED_FONT_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts"
 )
+_ROOT_FONT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "assets",
+    "font",
+)
 
 FONT_CANDIDATES = [
     os.environ.get("CARDBRICK_FONT", ""),
-    os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    os.path.join(_BUNDLED_FONT_DIR, "NotoSansJP-Regular.otf"),
+    os.path.join(_BUNDLED_FONT_DIR, "NotoSansCJK-Regular.ttc"),
+    os.path.join(_ROOT_FONT_DIR, "NotoSansJP-Regular.otf"),
+    os.path.join(_ROOT_FONT_DIR, "NotoSansCJK-Regular.ttc"),
+    os.path.join(_ROOT_FONT_DIR, "PixelMplus10-Regular.ttf"),
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.otf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    "/System/Library/Fonts/\u30d2\u30e9\u30ae\u30ce\u89d2\u30b4\u30b7\u30c3\u30af W3.ttc",
+    "C:/Windows/Fonts/msgothic.ttc",
+    "C:/Windows/Fonts/meiryo.ttc",
+    os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 
 _font_path_logged = False
@@ -140,7 +157,7 @@ def _load_font(size):
         _font_path_logged = True
         log.warning(
             "no bundled/system font found — using pygame builtin "
-            "(Spanish accents may render poorly)"
+            "(Spanish/Japanese glyphs may render poorly)"
         )
     return pygame.font.Font(None, size + 6)  # pygame default runs small
 

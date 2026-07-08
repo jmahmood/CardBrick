@@ -24,7 +24,7 @@ The deployment model, in one line:
 ├── cardbrick-py/                    # the whole app folder from the repo
 │   ├── main.py
 │   ├── cardbrick/                   # python package
-│   └── assets/fonts/DejaVuSans.ttf  # bundled Spanish-safe font
+│   └── assets/fonts/                # bundled Unicode-safe fonts
 ├── vendor/                          # dependencies, prepared on a PC:
 │   │                                #   pip install --target vendor \
 │   │                                #     --platform manylinux2014_aarch64 \
@@ -73,9 +73,9 @@ python3 main.py --knulli --smoke-test
 
 Prints one `[PASS]/[WARN]/[FAIL]` line per subsystem (data dir, log,
 settings, DB + migrations, cards, profile, scheduler, pygame, display,
-Spanish font glyphs, joystick, audio, input mapping) and exits 0 only
-if no hard check failed. `WARN` for "no joystick" / "no audio" is
-normal on a desktop.
+Spanish/Japanese font glyphs, joystick, audio, input mapping) and exits
+0 only if no hard check failed. `WARN` for "no joystick" / "no audio"
+is normal on a desktop.
 
 ## 4. Controller test & calibration
 

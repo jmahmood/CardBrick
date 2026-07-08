@@ -168,9 +168,12 @@ calibration screen (Parent Mode → *Controller test & setup*, or
 `python main.py --input-diagnostic`). The defaults match common
 Anbernic/Knulli ordering but are only a starting guess — calibrate on
 real hardware. A font override is available via
-`CARDBRICK_FONT=/path/to/font.ttf`; by default the bundled
-`assets/fonts/DejaVuSans.ttf` is used (full Spanish coverage:
-á é í ó ú ñ ü ¿ ¡). The legacy `review` prototype still honours the
+`CARDBRICK_FONT=/path/to/font.ttf`; by default the app prefers bundled
+Noto Sans CJK/JP fonts when present, then falls back to DejaVu Sans
+(full Spanish coverage: á é í ó ú ñ ü ¿ ¡). The packaged Knulli build
+copies Noto from the repository's root `assets/font/` folder so
+Japanese vocab translations render as real glyphs instead of boxes.
+The legacy `review` prototype still honours the
 old `CARDBRICK_JOYMAP` env var.
 
 ### Four-phase vocab cards
