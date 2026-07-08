@@ -51,6 +51,7 @@ options are pre-wired in the launch script.
 | Settings (hand-editable JSON) | `/userdata/saves/cardbrick/settings.json` |
 | Controller mapping      | `/userdata/saves/cardbrick/input_mapping.json` |
 | Imported audio          | `/userdata/saves/cardbrick/media/`           |
+| Packaged seed media     | `CardBrick/seed-data/media/` (read-only fallback) |
 | App log (rotating)      | `/userdata/saves/cardbrick/logs/cardbrick.log` |
 | Launch-script log       | `/userdata/saves/cardbrick/logs/launch.log`  |
 | Migration backups       | `/userdata/saves/cardbrick/cardbrick.db.backup-*` |
@@ -129,7 +130,7 @@ Re-importing never resets learning progress.
 
 ## 6. Configuring the child profile
 
-On-device: Parent Mode (SELECT on the start screen) → Categories /
+On-device: Parent Mode (START on the start screen) → Categories /
 Daily limits / Direction. From a PC:
 
 ```sh
@@ -156,8 +157,8 @@ Migration backups (`cardbrick.db.backup-*`) can be renamed back over
 
 RetroArch hotkeys do **not** apply to native apps. Built-in exits:
 
-- START during study → session summary; START again → quit.
-- SELECT + START held for 2 seconds → force exit from anywhere.
+- START opens the menu/parent-mode actions.
+- SELECT finishes or quits.
 - Every completed answer is already committed to the DB, so even a
   battery pull loses nothing.
 

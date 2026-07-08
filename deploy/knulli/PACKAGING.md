@@ -120,13 +120,16 @@ library, not pygame or the ARM64 runtime, so it runs directly on the
 host — a throwaway local venv is created automatically at
 `scripts/.deckbuild-venv` the first time, if `fsrs` isn't already
 importable), producing a database staged as `CardBrick/seed-data/`.
-`CardBrick.sh` copies it into `$CARD_BRICK_DATA_DIR` when the device
-has no database yet **or the one it has contains zero cards** (an
-empty db is what any earlier launch — even just a smoke test — leaves
-behind; it is backed up as `.pre-seed-*` before being replaced). A
-database with any cards in it is never touched, so redeploying an
-updated package later can't overwrite review progress that has
-accumulated on the device.
+`CardBrick.sh` copies the seed database into `$CARD_BRICK_DATA_DIR`
+when the device has no database yet **or the one it has contains zero
+cards** (an empty db is what any earlier launch — even just a smoke
+test — leaves behind; it is backed up as `.pre-seed-*` before being
+replaced). Seed media stays in `CardBrick/seed-data/media/` and is used
+in place as a read-only fallback, so first boot does not need to
+duplicate thousands of audio/image files into saves. A database with
+any cards in it is never touched, so redeploying an updated package
+later can't overwrite review progress that has accumulated on the
+device.
 Multiple deck files are imported one after another into the same
 database (imports are additive, per §5 of `README.md`).
 
@@ -189,8 +192,9 @@ line per subsystem (display, font, DB, scheduler, controller, audio).
 The launch script mounts the newest `runtime/*.squashfs`, exports
 `PYTHONHOME`/`PYTHONPATH`/`LD_LIBRARY_PATH` into it, keeps `.pyc`
 files in the data dir (`PYTHONPYCACHEPREFIX` — the app tree stays
-read-only), installs `seed-data/` on first boot if present (§2b), runs
-a one-time smoke test on first boot, and unmounts on exit. Run it
+read-only), installs the seed database on first boot if present (§2b),
+adds packaged seed media as a read-only fallback, runs a one-time smoke
+test on first boot, and unmounts on exit. Run it
 manually over SSH for diagnostics:
 
 ```sh

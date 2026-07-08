@@ -117,41 +117,101 @@ export PYTHONPYCACHEPREFIX="${CARD_BRICK_DATA_DIR}/.pycache"
 # forever. A database with any cards in it is real progress and is
 # never touched; the empty one we do replace is still backed up.
 SEED_DB="${GAMEDIR}/seed-data/cardbrick.db"
+SEED_MEDIA="${GAMEDIR}/seed-data/media"
 DEVICE_DB="${CARD_BRICK_DATA_DIR}/cardbrick.db"
+if [ -d "$SEED_MEDIA" ]; then
+    export CARDBRICK_EXTRA_MEDIA_DIRS="${SEED_MEDIA}${CARDBRICK_EXTRA_MEDIA_DIRS:+:$CARDBRICK_EXTRA_MEDIA_DIRS}"
+fi
+
+db_card_count() {
+    "$PYTHON" - "$1" <<'PYEOF'
+import sqlite3
+import sys
+
+db = sys.argv[1]
+try:
+    con = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+    ok = con.execute("PRAGMA integrity_check").fetchone()[0]
+    if ok != "ok":
+        print("CORRUPT:" + str(ok))
+    else:
+        count = con.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+        print("OK:" + str(count))
+except Exception as exc:
+    print("ERROR:" + str(exc))
+PYEOF
+}
+
 if [ -f "$SEED_DB" ]; then
     INSTALL_SEED=""
+    BACKUP_EXISTING=""
+    SEED_CHECK="$(db_card_count "$SEED_DB" 2>>"$LAUNCH_LOG")"
     if [ ! -f "$DEVICE_DB" ]; then
         INSTALL_SEED="first boot (no database yet)"
     else
-        CARD_COUNT="$("$PYTHON" -c '
-import sqlite3, sys
-try:
-    con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
-    print(con.execute("SELECT COUNT(*) FROM cards").fetchone()[0])
-except Exception:
-    print(-1)
-' "$DEVICE_DB" 2>>"$LAUNCH_LOG")"
-        if [ "$CARD_COUNT" = "0" ]; then
-            STAMP="$(date +%Y%m%dT%H%M%S)"
-            mv "$DEVICE_DB" "${DEVICE_DB}.pre-seed-${STAMP}" 2>>"$LAUNCH_LOG"
-            rm -f "${DEVICE_DB}-wal" "${DEVICE_DB}-shm"
-            INSTALL_SEED="existing database is empty (0 cards; backed up as .pre-seed-${STAMP})"
-        else
-            log "seed-data present but device database has ${CARD_COUNT} card(s) — leaving it alone"
-        fi
+        DEVICE_CHECK="$(db_card_count "$DEVICE_DB" 2>>"$LAUNCH_LOG")"
+        case "$DEVICE_CHECK" in
+            OK:0)
+                INSTALL_SEED="existing database is empty (0 cards)"
+                BACKUP_EXISTING="1"
+                ;;
+            OK:*)
+                log "seed-data present but device database has ${DEVICE_CHECK#OK:} card(s) — leaving it alone"
+                ;;
+            *)
+                INSTALL_SEED="existing database is unreadable (${DEVICE_CHECK})"
+                BACKUP_EXISTING="1"
+                ;;
+        esac
     fi
     if [ -n "$INSTALL_SEED" ]; then
-        log "installing seeded deck(s): ${INSTALL_SEED}"
-        if cp "$SEED_DB" "$DEVICE_DB" 2>>"$LAUNCH_LOG"; then
-            if [ -d "${GAMEDIR}/seed-data/media" ]; then
-                mkdir -p "${CARD_BRICK_DATA_DIR}/media"
-                cp -R "${GAMEDIR}/seed-data/media/." \
-                      "${CARD_BRICK_DATA_DIR}/media/" 2>>"$LAUNCH_LOG"
-            fi
-            log "seed install OK"
-        else
-            log "WARN: seed install failed — starting without seeded decks"
-        fi
+        case "$SEED_CHECK" in
+            OK:0)
+                log "WARN: seed-data database has 0 cards — not installing"
+                ;;
+            OK:*)
+                SEED_TMP_DB="${DEVICE_DB}.seed-tmp-$$"
+                rm -f "$SEED_TMP_DB"
+                DB_BYTES="$(wc -c < "$SEED_DB" 2>/dev/null | tr -d ' ')"
+                log "installing seeded deck(s): ${INSTALL_SEED}"
+                log "copying seed database (${DB_BYTES:-unknown} bytes)"
+                if cp "$SEED_DB" "$SEED_TMP_DB" 2>>"$LAUNCH_LOG"; then
+                    TMP_CHECK="$(db_card_count "$SEED_TMP_DB" 2>>"$LAUNCH_LOG")"
+                    if [ "$TMP_CHECK" = "$SEED_CHECK" ]; then
+                        if [ -f "$SEED_TMP_DB" ]; then
+                            if [ -n "$BACKUP_EXISTING" ] && [ -f "$DEVICE_DB" ]; then
+                                STAMP="$(date +%Y%m%dT%H%M%S)"
+                                if mv "$DEVICE_DB" "${DEVICE_DB}.pre-seed-${STAMP}" 2>>"$LAUNCH_LOG"; then
+                                    log "backed up previous database as .pre-seed-${STAMP}"
+                                else
+                                    log "WARN: could not back up previous database — seed database not installed"
+                                    rm -f "$SEED_TMP_DB"
+                                fi
+                                rm -f "${DEVICE_DB}-wal" "${DEVICE_DB}-shm"
+                            fi
+                        fi
+
+                        if [ -f "$SEED_TMP_DB" ]; then
+                            if mv "$SEED_TMP_DB" "$DEVICE_DB" 2>>"$LAUNCH_LOG"; then
+                                log "seed install OK (${SEED_CHECK#OK:} card(s))"
+                            else
+                                log "WARN: seed install failed while moving database into place"
+                                rm -f "$SEED_TMP_DB"
+                            fi
+                        fi
+                    else
+                        log "WARN: copied seed database failed verification (${TMP_CHECK})"
+                        rm -f "$SEED_TMP_DB"
+                    fi
+                else
+                    log "WARN: seed database copy failed — starting without seeded decks"
+                    rm -f "$SEED_TMP_DB"
+                fi
+                ;;
+            *)
+                log "WARN: seed-data database is unreadable (${SEED_CHECK}) — not installing"
+                ;;
+        esac
     fi
 fi
 
@@ -173,6 +233,7 @@ export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-alsa}"
     echo "SDL_VIDEODRIVER=${SDL_VIDEODRIVER}"
     echo "SDL_AUDIODRIVER=${SDL_AUDIODRIVER}"
     echo "CARD_BRICK_DATA_DIR=${CARD_BRICK_DATA_DIR}"
+    echo "CARDBRICK_EXTRA_MEDIA_DIRS=${CARDBRICK_EXTRA_MEDIA_DIRS:-<unset>}"
     "$PYTHON" --version 2>&1
 } >> "$LAUNCH_LOG"
 

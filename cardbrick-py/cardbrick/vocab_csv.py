@@ -6,7 +6,7 @@ header (case-insensitive, any column order, extra columns ignored):
 
     Word, Word Audio, Gendered Forms, Definitions, Image,
     Example ES, Example Audio, Example EN, Report Link,
-    Word JP, Example JP, Tags
+    Word EN, Word JP, Example JP, Tags
 
 Audio/Image cells may be a bare filename ("hola.mp3", "gato.jpg") or an
 Anki-style tag (`[sound:hola.mp3]`, `<img src="gato.jpg">`) pasted
@@ -109,24 +109,29 @@ def import_vocab_csv(csv_path, storage, scheduler, media_dir,
         _copy_if_present(image_filename, source_media_dir, media_dir, stats)
 
         definitions = clean_html(row.get("definitions", ""))
+        word_en = clean_html(row.get("word en", ""))
+        word_jp = clean_html(row.get("word jp", ""))
         example_en = clean_html(row.get("example en", ""))
+        example_jp = clean_html(row.get("example jp", ""))
 
         storage.upsert_card(
             card_id=card_id, note_id=card_id, deck=deck_name, front=word,
-            back=definitions or example_en, tags=tags,
+            back=definitions or word_en or example_en or word_jp or example_jp,
+            tags=tags,
             audio_filename=word_audio,
             audio_side="front" if word_audio else None,
             now_iso=iso(now_utc()), card_type="vocab")
         storage.upsert_vocab_card(
             card_id=card_id, word=word,
-            word_jp=clean_html(row.get("word jp", "")) or None,
+            word_en=word_en or None,
+            word_jp=word_jp or None,
             gendered_forms=clean_html(row.get("gendered forms", "")),
             definitions=definitions,
             image_filename=image_filename,
             example_es=clean_html(row.get("example es", "")),
             example_audio=example_audio,
             example_en=example_en,
-            example_jp=clean_html(row.get("example jp", "")) or None,
+            example_jp=example_jp or None,
             report_link=row.get("report link", "").strip() or None)
         storage.init_review_state(scheduler.initial_state(card_id))
 

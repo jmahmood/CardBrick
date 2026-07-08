@@ -33,11 +33,10 @@ Controller-first and deployment-hardened for Knulli-style devices:
   button indices are never trusted (see input_map.py). Face buttons are
   labelled with the fixed layout used by this app (A = right, B = bottom,
   X = top, Y = left).
-- Everything renders on a fixed logical canvas (default 640x480, the
-  RG35XX SP panel) which is scaled — integer scaling when it fits — to
-  the real display.
-- The app has its own exit paths (START from summary quits; SELECT +
-  START held 2 s force-exits from anywhere; Esc on desktop) and never
+- Everything renders on a native handheld logical canvas (640x480 or
+  720x480 when detected) which is scaled — integer scaling when it
+  fits — to the real display.
+- The app has its own exit path (SELECT quits/finishes) and never
   relies on RetroArch hotkeys.
 - A bundled DejaVu Sans covers Spanish glyphs; font resolution and all
   startup facts are logged (see bootlog.py).
@@ -64,6 +63,11 @@ from .textutil import wrap_text
 log = logging.getLogger(__name__)
 
 FPS = 30
+DEFAULT_LOGICAL_SIZE = (640, 480)
+NATIVE_FULLSCREEN_SIZES = {
+    (640, 480),  # RG35XX Plus and similar 4:3 panels
+    (720, 480),  # RG34XX SP widescreen panel
+}
 
 BG = (24, 26, 30)
 FG = (235, 235, 228)
@@ -98,6 +102,22 @@ FONT_CANDIDATES = [
 ]
 
 _font_path_logged = False
+
+
+def _resolve_logical_size(configured_size, display_size=None, fullscreen=False):
+    """Choose the canvas size for the current display.
+
+    The saved/default logical size remains the portable 640x480 layout.
+    In fullscreen on known handheld panels, use the physical panel size
+    as the logical canvas so 720x480 devices do not get pillarboxed.
+    """
+    if (
+        fullscreen
+        and configured_size == DEFAULT_LOGICAL_SIZE
+        and display_size in NATIVE_FULLSCREEN_SIZES
+    ):
+        return display_size
+    return configured_size
 
 
 def resolve_font_path():
@@ -188,8 +208,8 @@ class CardBrickApp:
         pygame.init()
         log_pygame_versions()
         ensure_font_support()
-        self.w = int(settings.get("logical_width", 640))
-        self.h = int(settings.get("logical_height", 480))
+        self.w = int(settings.get("logical_width", DEFAULT_LOGICAL_SIZE[0]))
+        self.h = int(settings.get("logical_height", DEFAULT_LOGICAL_SIZE[1]))
         if fullscreen is None:
             fullscreen = bool(settings.get("fullscreen"))
         self.fullscreen = fullscreen
@@ -227,15 +247,10 @@ class CardBrickApp:
 
     def _init_display(self):
         """Logical canvas + real display; scaling computed once."""
+        configured_size = (self.w, self.h)
         try:
             if self.fullscreen:
                 self.display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                if self.display.get_size() < (self.w, self.h):
-                    log.warning(
-                        "display %s smaller than logical %s",
-                        self.display.get_size(),
-                        (self.w, self.h),
-                    )
             else:
                 self.display = pygame.display.set_mode((self.w, self.h))
         except pygame.error as exc:
@@ -250,6 +265,27 @@ class CardBrickApp:
         if (dw, dh) == (0, 0):  # dummy driver corner case
             self.display = pygame.display.set_mode((self.w, self.h))
             dw, dh = self.w, self.h
+
+        logical_size = _resolve_logical_size(
+            configured_size, display_size=(dw, dh), fullscreen=self.fullscreen
+        )
+        if logical_size != configured_size:
+            log.info(
+                "logical size: %sx%s -> %sx%s for native display %sx%s",
+                configured_size[0],
+                configured_size[1],
+                logical_size[0],
+                logical_size[1],
+                dw,
+                dh,
+            )
+            self.w, self.h = logical_size
+        if dw < self.w or dh < self.h:
+            log.warning(
+                "display %s smaller than logical %s",
+                self.display.get_size(),
+                (self.w, self.h),
+            )
 
         self.canvas = pygame.Surface((self.w, self.h))
         self.screen = self.canvas  # all drawing targets the canvas
@@ -371,14 +407,11 @@ class CardBrickApp:
 
         Consumes exactly one meaningful event per call so rapid inputs
         queued between frames are never dropped. Also services joystick
-        hot-plug and the SELECT+START force-exit gesture.
+        hot-plug.
         """
         while True:
             event = pygame.event.poll()
             if event.type == pygame.NOEVENT:
-                if self.input.force_exit_held():
-                    log.info("SELECT+START held — force exit")
-                    raise QuitApp
                 return None
             if event.type == pygame.QUIT:
                 raise QuitApp
@@ -393,6 +426,10 @@ class CardBrickApp:
                 continue
             action = self.input.translate(event)
             if action:
+                if action == "select":
+                    return "start"
+                if action == "start":
+                    return "select"
                 return action
 
     # -- child start -----------------------------------------------------------------
@@ -550,7 +587,7 @@ class CardBrickApp:
                 "A = Start    X = Calendar"
                 if (startable or bonus)
                 else "X = Calendar",
-                "SELECT = Parent    START = Quit",
+                "START = Parent    SELECT = Quit",
             )
             self.present()
             self.clock.tick(FPS)
@@ -984,17 +1021,17 @@ class CardBrickApp:
             if known_confirmation is not None:
                 self._footer(
                     "A = Yes, I knew it   B = I made a mistake",
-                    "Auto-confirms in 5s   START = Finish",
+                    "Auto-confirms in 5s   START = Menu",
                 )
             elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
                     "D-pad = Reveal more   A = I know this",
-                    "L1 = Replay audio   R1 = Bury   SELECT = Menu",
+                    "L1 = Replay audio   R1 = Bury   START = Menu",
                 )
             else:
                 self._footer(
                     "A = Go to next card",
-                    "L1 = Replay audio   R1 = Bury   SELECT = Menu   START = Finish",
+                    "L1 = Replay audio   R1 = Bury   START = Menu",
                 )
             if menu is not None:
                 self._draw_menu_overlay(menu)
@@ -1025,10 +1062,10 @@ class CardBrickApp:
             self._block(back, self.font, ACCENT, top=div_y + 18, max_width=max_width)
             self._footer(
                 "A=Good  B=Again  Y=Easy  X=Hard",
-                "R1=Bury   SELECT=Menu   START=Finish",
+                "R1=Bury   START=Menu   SELECT=Finish",
             )
         else:
-            self._footer("D-pad = Show answer   L1 = Replay audio   START = Finish")
+            self._footer("D-pad/A = Show answer   START = Menu   SELECT = Finish")
 
         if menu is not None:
             self._draw_menu_overlay(menu)
@@ -1078,12 +1115,22 @@ class CardBrickApp:
         if phase >= 3:
             pygame.draw.line(self.screen, DIVIDER, (margin, y), (self.w - margin, y))
             y += 12
-            text = vocab["definitions"] or "(no definition)"
+            lines = []
             if vocab["gendered_forms"]:
-                text = vocab["gendered_forms"] + "\n" + text
+                lines.append(vocab["gendered_forms"])
+            lines.append(vocab["definitions"] or "(no definition)")
+            if vocab["word_en"]:
+                lines.append("EN: " + vocab["word_en"])
+            if vocab["word_jp"]:
+                lines.append("JP: " + vocab["word_jp"])
             if vocab["example_en"]:
-                text += "\n" + vocab["example_en"]
-            self._block(text, self.font_small, ACCENT, top=y, max_width=max_width)
+                lines.append("Example EN: " + vocab["example_en"])
+            if vocab["example_jp"]:
+                lines.append("Example JP: " + vocab["example_jp"])
+            if vocab["report_link"]:
+                lines.append("Report: " + vocab["report_link"])
+            self._block("\n".join(lines), self.font_small, ACCENT, top=y,
+                        max_width=max_width)
 
     def _vocab_image_surface(self, filename, max_height=140):
         """Loaded + scaled image surface, cached by filename so it is
@@ -1094,8 +1141,8 @@ class CardBrickApp:
         if key in self._image_cache:
             return self._image_cache[key]
         surf = None
-        path = os.path.join(self.audio.media_dir, os.path.basename(filename))
-        if os.path.exists(path):
+        path = self.audio.resolve(filename)
+        if path is not None:
             try:
                 raw = pygame.image.load(path)
                 try:
@@ -1111,7 +1158,9 @@ class CardBrickApp:
             except pygame.error as exc:
                 log.warning("could not load image %s: %s", path, exc)
         else:
-            log.warning("missing media file: %s", path)
+            log.warning("missing media file: %s",
+                        os.path.join(self.audio.media_dir,
+                                     os.path.basename(filename)))
         self._image_cache[key] = surf
         return surf
 
@@ -1264,7 +1313,7 @@ class CardBrickApp:
             for text, color in lines:
                 self._center(self.font.render(text, True, color), y)
                 y += 44
-            self._footer(go_label, "X = Calendar   START = Quit")
+            self._footer(go_label, "X = Calendar   SELECT = Quit")
             self.present()
             self.clock.tick(FPS)
 
@@ -1358,7 +1407,7 @@ class CardBrickApp:
                     h=cell_h,
                 )
 
-        self._footer("L1/R1 = Month    A = Today", "SELECT = Back")
+        self._footer("L1/R1 = Month    A = Today", "START/B/SELECT = Back")
 
     def _draw_day_cell(self, day, count, is_today, x, y, w, h):
         if is_today:
@@ -1782,7 +1831,7 @@ class CardBrickApp:
                     study = STUDY_ACTIONS.get(semantic, "—")
                     events.insert(0, (raw, semantic or "—", study))
                     del events[10:]
-                    if semantic == "start":
+                    if semantic == "select":
                         exit_screen = True
                 event = pygame.event.poll()
 
@@ -1819,7 +1868,7 @@ class CardBrickApp:
                     self.font.render("Press buttons to see events…", True, DIM), 220
                 )
             self._footer(
-                "Hold any button 3s = remap buttons", "START (mapped) or Esc = back"
+                "Hold any button 3s = remap buttons", "SELECT or Esc = back"
             )
             self.present()
             self.clock.tick(FPS)

@@ -102,3 +102,20 @@ def test_existing_media_plays_through_backend(tmp_path):
     player = AudioPlayer(str(tmp_path), backend=backend)
     assert player.play("hola.mp3") is True
     assert launched[0].argv[-1] == os.path.join(str(tmp_path), "hola.mp3")
+
+
+def test_extra_media_dir_is_used_as_readonly_fallback(tmp_path):
+    primary = tmp_path / "save-media"
+    fallback = tmp_path / "seed-media"
+    primary.mkdir()
+    fallback.mkdir()
+    (fallback / "hola.mp3").write_bytes(b"x")
+    backend, launched = make_backend({"ffplay"})
+    player = AudioPlayer(str(primary), backend=backend,
+                         extra_media_dirs=[str(fallback)])
+
+    assert player.available("hola.mp3") is True
+    assert player.resolve("hola.mp3") == os.path.join(str(fallback),
+                                                      "hola.mp3")
+    assert player.play("hola.mp3") is True
+    assert launched[0].argv[-1] == os.path.join(str(fallback), "hola.mp3")

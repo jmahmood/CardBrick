@@ -14,7 +14,7 @@ from conftest import seed_card
 
 from cardbrick.scheduler import iso
 from cardbrick.session import StudySession
-from cardbrick.storage import Storage
+from cardbrick.storage import SCHEMA_VERSION, Storage
 
 
 def _limits(**overrides):
@@ -391,7 +391,7 @@ def test_migration_seeds_goal_from_old_caps(tmp_path):
 
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 7
+        assert storage.schema_version() == SCHEMA_VERSION
         maya, leo = storage.list_profiles()
         assert maya["daily_goal_cards"] == 35  # 5 new + 30 review
         assert maya["study_ahead_days"] == 1
@@ -422,7 +422,7 @@ def test_v5_databases_get_sprint_sized_limits(tmp_path):
 
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 7
+        assert storage.schema_version() == SCHEMA_VERSION
         student = storage.list_profiles()[0]
         assert student["session_card_limit"] == 20
         assert student["session_time_minutes"] == 10

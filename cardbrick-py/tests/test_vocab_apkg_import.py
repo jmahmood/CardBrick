@@ -18,7 +18,7 @@ DECK_ID = 55
 # Matches the spec order exactly (including the optional JP fields).
 VOCAB_FIELDS = ["Word", "Word Audio", "Gendered Forms", "Definitions",
                 "Image", "Example ES", "Example Audio", "Example EN",
-                "Report Link", "Word JP", "Example JP"]
+                "Report Link", "Word EN", "Word JP", "Example JP"]
 
 MODELS = {
     str(VOCAB_MID): {
@@ -45,12 +45,13 @@ VOCAB_NOTE_FIELDS = [
     "[sound:ex1.mp3]",                    # Example Audio
     "The cat sleeps a lot.",              # Example EN
     "",                                    # Report Link
+    "cat",                                 # Word EN
     "猫",                                  # Word JP
     "猫はよく眠る。",                        # Example JP
 ]
 
 
-def build_vocab_apkg(path):
+def build_vocab_apkg(path, include_media=True):
     tmp_col = str(path) + ".col"
     conn = sqlite3.connect(tmp_col)
     conn.executescript(COL_SCHEMA)
@@ -76,11 +77,15 @@ def build_vocab_apkg(path):
 
     with zipfile.ZipFile(path, "w") as zf:
         zf.write(tmp_col, "collection.anki2")
-        zf.writestr("0", b"fake jpg bytes")
-        zf.writestr("1", b"fake example audio bytes")
-        zf.writestr("2", b"fake word audio bytes")
-        zf.writestr("media", json.dumps({
-            "0": "gato.jpg", "1": "ex1.mp3", "2": "word_gato.mp3"}))
+        if include_media:
+            zf.writestr("0", b"fake jpg bytes")
+            zf.writestr("1", b"fake example audio bytes")
+            zf.writestr("2", b"fake word audio bytes")
+            media = {"0": "gato.jpg", "1": "ex1.mp3",
+                     "2": "word_gato.mp3"}
+        else:
+            media = {}
+        zf.writestr("media", json.dumps(media))
     os.remove(tmp_col)
 
 
@@ -112,6 +117,7 @@ def test_vocab_detail_fields_extracted(imported, storage):
     assert detail["image_filename"] == "gato.jpg"
     assert detail["example_es"] == "El gato duerme mucho."
     assert detail["example_audio"] == "ex1.mp3"
+    assert detail["word_en"] == "cat"
     assert detail["example_en"] == "The cat sleeps a lot."
     assert detail["word_jp"] == "猫"
     assert detail["example_jp"] == "猫はよく眠る。"
@@ -124,6 +130,18 @@ def test_vocab_media_copied(imported):
     assert (media_dir / "ex1.mp3").read_bytes() == b"fake example audio bytes"
     assert (media_dir / "word_gato.mp3").read_bytes() == \
         b"fake word audio bytes"
+
+
+def test_missing_vocab_media_is_reported(tmp_path, storage, service):
+    apkg = tmp_path / "vocab_no_media.apkg"
+    build_vocab_apkg(apkg, include_media=False)
+    stats = import_apkg(str(apkg), storage, service.scheduler,
+                        str(tmp_path / "media"))
+
+    assert stats.media_files == 0
+    assert sorted(stats.missing_media) == [
+        "ex1.mp3", "gato.jpg", "word_gato.mp3"]
+    assert "Missing media referenced by cards: 3 file(s)" in stats.summary()
 
 
 def test_basic_note_in_same_deck_still_imports(imported, storage):

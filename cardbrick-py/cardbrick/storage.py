@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE TABLE IF NOT EXISTS vocab_cards (
     card_id         INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
     word            TEXT NOT NULL,
+    word_en         TEXT,
     word_jp         TEXT,
     gendered_forms  TEXT,
     definitions     TEXT,
@@ -142,6 +143,9 @@ _PROFILE_UPGRADES = {
     "study_ahead_days": "INTEGER NOT NULL DEFAULT 1",
     "study_ahead_enabled": "INTEGER NOT NULL DEFAULT 1",
 }
+_VOCAB_CARD_UPGRADES = {
+    "word_en": "TEXT",
+}
 
 
 class Storage:
@@ -184,6 +188,7 @@ class Storage:
             self._backup(stored)
         self._upgrade_table("cards", _CARD_UPGRADES)
         self._upgrade_table("review_state", _STATE_UPGRADES)
+        self._upgrade_table("vocab_cards", _VOCAB_CARD_UPGRADES)
         added = self._upgrade_table("child_profiles", _PROFILE_UPGRADES)
         if "daily_goal_cards" in added:
             # Existing profiles were tuned around the old review+new caps;
@@ -288,7 +293,7 @@ class Storage:
     def upsert_vocab_card(self, card_id, word, word_jp, gendered_forms,
                           definitions, image_filename, example_es,
                           example_audio, example_en, example_jp,
-                          report_link):
+                          report_link, word_en=None):
         """Insert or refresh the phase-content row for a 'vocab' card.
 
         Re-importing updates the displayed content only; review_state
@@ -296,12 +301,14 @@ class Storage:
         """
         self.conn.execute(
             """INSERT INTO vocab_cards
-               (card_id, word, word_jp, gendered_forms, definitions,
+               (card_id, word, word_en, word_jp, gendered_forms, definitions,
                 image_filename, example_es, example_audio, example_en,
                 example_jp, report_link)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(card_id) DO UPDATE SET
-                   word=excluded.word, word_jp=excluded.word_jp,
+                   word=excluded.word,
+                   word_en=excluded.word_en,
+                   word_jp=excluded.word_jp,
                    gendered_forms=excluded.gendered_forms,
                    definitions=excluded.definitions,
                    image_filename=excluded.image_filename,
@@ -310,7 +317,7 @@ class Storage:
                    example_en=excluded.example_en,
                    example_jp=excluded.example_jp,
                    report_link=excluded.report_link""",
-            (card_id, word, word_jp, gendered_forms, definitions,
+            (card_id, word, word_en, word_jp, gendered_forms, definitions,
              image_filename, example_es, example_audio, example_en,
              example_jp, report_link))
 

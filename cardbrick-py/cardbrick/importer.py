@@ -56,11 +56,21 @@ class ImportStats:
         self.cards = 0
         self.notes = 0
         self.media_files = 0
+        self.referenced_media = set()
+        self.missing_media = []
         self.skipped = []  # (card_id, reason) for auditing
 
     @property
     def skipped_cards(self):
         return len(self.skipped)
+
+    @property
+    def missing_media_files(self):
+        return len(self.missing_media)
+
+    def note_media(self, filename):
+        if filename:
+            self.referenced_media.add(os.path.basename(filename))
 
     def skip(self, card_id, reason):
         self.skipped.append((card_id, reason))
@@ -76,6 +86,12 @@ class ImportStats:
                 reasons[reason] = reasons.get(reason, 0) + 1
             details = ", ".join(f"{n}x {r}" for r, n in sorted(reasons.items()))
             text += f"\nSkipped: {details}"
+        if self.missing_media:
+            examples = ", ".join(self.missing_media[:5])
+            if len(self.missing_media) > 5:
+                examples += ", ..."
+            text += (f"\nMissing media referenced by cards: "
+                     f"{len(self.missing_media)} file(s) ({examples}).")
         return text
 
 
@@ -114,7 +130,12 @@ def import_apkg(apkg_path, storage, scheduler, media_dir):
             _import_collection(col_path, storage, scheduler, stats,
                                has_new_format)
 
-        stats.media_files = _copy_media(zf, names, media_dir)
+        stats.media_files, copied_media = _copy_media(zf, names, media_dir)
+        stats.missing_media = sorted(
+            filename for filename in stats.referenced_media
+            if filename not in copied_media and
+            not os.path.exists(os.path.join(media_dir, filename))
+        )
 
     storage.commit()
     return stats
@@ -190,6 +211,7 @@ def _import_collection(col_path, storage, scheduler, stats,
                 audio_filename, audio_side = front_audio[0], "front"
             elif back_audio:
                 audio_filename, audio_side = back_audio[0], "back"
+            stats.note_media(audio_filename)
 
             deck = decks.get(str(card["did"]),
                              decks.get(card["did"], "Default"))
@@ -260,26 +282,35 @@ def _import_vocab_note(card, note, field_names, deck, storage, scheduler,
 
     _, word_audio_files = extract_audio(field("word audio"))
     _, example_audio_files = extract_audio(field("example audio"))
+    image_filename = extract_image_filename(field("image"))
     definitions = clean_html(field("definitions"))
+    word_en = clean_html(field("word en"))
+    word_jp = clean_html(field("word jp"))
     example_en = clean_html(field("example en"))
+    example_jp = clean_html(field("example jp"))
     tags = note["tags"].strip()
 
     storage.upsert_card(
         card_id=card["id"], note_id=note["id"], deck=deck, front=word,
-        back=definitions or example_en, tags=tags,
+        back=definitions or word_en or example_en or word_jp or example_jp,
+        tags=tags,
         audio_filename=word_audio_files[0] if word_audio_files else None,
         audio_side="front" if word_audio_files else None,
         now_iso=iso(now_utc()), card_type="vocab")
+    stats.note_media(word_audio_files[0] if word_audio_files else None)
+    stats.note_media(example_audio_files[0] if example_audio_files else None)
+    stats.note_media(image_filename)
     storage.upsert_vocab_card(
         card_id=card["id"], word=word,
-        word_jp=clean_html(field("word jp")) or None,
+        word_en=word_en or None,
+        word_jp=word_jp or None,
         gendered_forms=clean_html(field("gendered forms")),
         definitions=definitions,
-        image_filename=extract_image_filename(field("image")),
+        image_filename=image_filename,
         example_es=clean_html(field("example es")),
         example_audio=example_audio_files[0] if example_audio_files else None,
         example_en=example_en,
-        example_jp=clean_html(field("example jp")) or None,
+        example_jp=example_jp or None,
         report_link=field("report link").strip() or None)
     storage.init_review_state(scheduler.initial_state(card["id"]))
 
@@ -334,7 +365,7 @@ def _models(conn, col):
 def _copy_media(zf, names, media_dir):
     """Copy media files out of the archive under their real names."""
     if "media" not in names:
-        return 0
+        return 0, set()
     try:
         with zf.open("media") as f:
             mapping = json.load(f)
@@ -342,10 +373,11 @@ def _copy_media(zf, names, media_dir):
         # New export format stores the media map as protobuf; media from
         # such archives is skipped (the collection itself is anki21b and
         # already rejected earlier, so this is just belt and braces).
-        return 0
+        return 0, set()
 
     os.makedirs(media_dir, exist_ok=True)
     copied = 0
+    copied_names = set()
     for zip_name, real_name in mapping.items():
         if zip_name not in names:
             continue
@@ -357,4 +389,5 @@ def _copy_media(zf, names, media_dir):
                 open(os.path.join(media_dir, safe_name), "wb") as dst:
             shutil.copyfileobj(src, dst)
         copied += 1
-    return copied
+        copied_names.add(safe_name)
+    return copied, copied_names
