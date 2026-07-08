@@ -280,6 +280,20 @@ class CardBrickApp:
     def run(self):
         if self.initial_state:
             state = self.initial_state
+        elif self.input_map.source == "defaults" and \
+                pygame.joystick.get_count() > 0:
+            # A joystick is present but never calibrated: the built-in
+            # DEFAULT_BUTTONS guess is only a starting point and is
+            # frequently wrong for a given device's raw SDL button
+            # order. Landing in Parent Menu with a wrong guess strands
+            # the child/parent on a screen that doesn't respond to any
+            # button — calibration has to come first so south_button
+            # (etc.) actually means something. Keyboard-only setups
+            # (desktop testing) skip this: KEYBOARD_SEMANTICS is fixed
+            # and never needs calibration.
+            log.warning("joystick present with no saved mapping — "
+                        "starting in controller setup")
+            state = "INPUT_DIAG"
         elif self._card_count() == 0:
             # Nothing imported yet: route straight to setup/parent mode.
             log.warning("no cards in database — starting in parent mode")
