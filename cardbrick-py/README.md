@@ -99,8 +99,10 @@ python main.py study                  # add --fullscreen on the handheld
 
 # Configure the child profile from the command line (parent mode can do
 # the same on-device)
-python main.py profile --name Maya --daily-goal 150 --daily-new 10 \
+python main.py profile --name Maya --daily-goal 150 \
     --sprint-cards 20 --sprint-minutes 10 --categories restaurant,food
+python main.py profile --daily-new 10    # optional fixed new-card drip
+                                         # (default 0 = goal-paced)
 python main.py profile --study-ahead-days 2   # pull-forward horizon
 python main.py profile --study-ahead off      # day ends with the due pool
 python main.py profile --categories all      # study every tag
@@ -257,6 +259,20 @@ deck is assigned (or only one deck exists at all), the picker is
 skipped automatically and the session starts immediately: no extra tap
 when there's no real choice to make.
 
+### Child-facing topic (tag) picker
+
+Parent Mode's Categories screen decides which tags are *assigned* to
+the child at all; the same "pick one for just this sitting" pattern as
+the deck picker applies to tags too. After the deck choice (if any),
+if more than one category is assigned, a "Choose a Topic" screen
+offers "All assigned categories" plus one entry per assigned tag, each
+with its own due-card count. Picking a tag is pure session-level
+filtering — the same non-destructive idea as Anki's filtered decks:
+no card's tags or deck membership ever change, so the tag stays part
+of the whole collection and "All assigned categories" always includes
+it again next time. Skipped automatically when zero or one category is
+assigned, same as the deck picker.
+
 ### Stamp calendar
 
 A Brain Age-style calendar that stamps each day the child studied, with
@@ -277,17 +293,27 @@ month, **SELECT** exits. Stamps are per-profile.
 python main.py admin purge-decks              # purge every deck
 python main.py admin purge-decks --deck Spanish --deck French
 python main.py admin purge-decks --yes        # skip the confirmation prompt
+python main.py admin reset                    # wipe ALL study context
 ```
 
-Permanently deletes cards, their FSRS review state, review log entries,
-and vocab-card content (cascading deletes, scoped to the named decks or
-every deck if `--deck` is omitted). Child profiles and settings are
-untouched. Always backs up the database first, to
-`cardbrick.db.backup-purge-<timestamp>` next to the live database, and
-always asks `Type 'yes' to confirm:` unless `--yes` is passed — there's
-no undo button in the child-facing UI, so this is the one command in
-the app that discards data outright. This is an admin/CLI-only
-operation; it is deliberately not exposed in Parent Mode's on-device UI.
+`purge-decks` permanently deletes cards, their FSRS review state,
+review log entries, and vocab-card content (cascading deletes, scoped
+to the named decks or every deck if `--deck` is omitted). Child
+profiles and settings are untouched.
+
+`reset` goes further — a true clean slate: it deletes the whole
+database (decks, review history, sessions, child profiles) and all
+imported media, so the next start behaves like a first install with a
+fresh default profile. Display settings and controller calibration
+(`settings.json` / `input_mapping.json`) are kept — they're device
+facts, not study context.
+
+Both commands always back up the database first, to
+`cardbrick.db.backup-<label>-<timestamp>` next to the live database,
+and always ask `Type 'yes' to confirm:` unless `--yes` is passed —
+there's no undo button in the child-facing UI, so these are the only
+commands in the app that discard data outright. They are admin/CLI
+only; deliberately not exposed in Parent Mode's on-device UI.
 
 ### Daily goal & sprints (microstudying)
 
@@ -299,13 +325,25 @@ sprint is bounded by `session_card_limit`
 always knows how many sprints they still owe ("3 sprints to go today").
 Doing sprints back-to-back — "going ahead" — burns the count down just
 the same as spacing them out; the schedule is the child's own and
-nothing nags. `daily_new_cards` (default 10) still paces how fast new
-material enters FSRS.
+nothing nags.
 
+New-card intake is paced by the goal itself (`daily_new_cards` default
+0 = auto): new cards fill whatever the goal has left after due
+reviews, so day one of a fresh deck is a full goal-sized day of
+sprints, and as reviews build up they crowd new cards out
+automatically — when reviews alone exceed the goal, no new cards enter
+until the backlog drains. Set `daily_new_cards` to a number for a
+stricter fixed drip instead.
+
+The plan never promises more than the day can supply — a small deck
+that runs out of cards, or a fixed new-card cap, shrinks `goal_today`
+so the child always sees an honest, finishable day.
 When today's due cards run out before the goal, sprints top up with
 soon-due cards pulled forward (`study_ahead_days`, default 1 — safe
 under FSRS, an early review just earns a smaller stability gain), and
-after the goal is met an optional bonus sprint is offered. Set
+once the day is done an optional bonus sprint is offered; bonus
+sprints may also pull extra new cards beyond the daily pacing, one
+sprint at a time, so a keen child never hits a dead end. Set
 `study_ahead_enabled` to 0 to end the day when the due pool is empty
 instead. All counters are derived from the review log, so they survive
 restarts and undo; a backlog never floods the child — extra due cards

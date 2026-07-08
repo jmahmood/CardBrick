@@ -5,6 +5,7 @@ handheld: a daily card goal chipped away in short sprints across the
 day (see ReviewService.sprint_status), never one long sitting. Screens:
 
     ChildStart -> DeckSelect (only when >1 deck is assigned)
+              -> CategorySelect (only when >1 category is assigned)
               -> Review (one sprint) -> SessionSummary
                  -> Review again ("going ahead": the next sprint now)
                  -> or back to ChildStart
@@ -13,11 +14,17 @@ day (see ReviewService.sprint_status), never one long sitting. Screens:
                               suspended / progress / calendar /
                               controller setup) -> ChildStart
 
-Parent Mode's Decks screen configures which decks are *assigned* to the
-child at all (child_profiles.active_decks); DeckSelect is the child's
-own per-sitting choice of which *one* assigned deck (or all of them
-combined) to study right now. A single assigned deck skips the picker
-entirely — no extra tap when there's no real choice to make.
+Parent Mode's Decks/Categories screens configure which decks and tags
+are *assigned* to the child at all (child_profiles.active_decks /
+active_categories) — the scope a parent has decided is in bounds.
+DeckSelect and CategorySelect are the child's own per-sitting choice of
+which *one* assigned deck, or *one* assigned tag, to focus on right
+now (or all of them combined, via "All assigned ..."). Choosing a tag
+never moves cards or changes what they're tagged with — same as
+Anki's filtered decks — so finishing the sprint (or picking "All
+assigned categories" next time) simply returns to studying everything
+in scope. A single assigned deck/category skips its picker entirely —
+no extra tap when there's no real choice to make.
 
 Controller-first and deployment-hardened for Knulli-style devices:
 
@@ -158,6 +165,7 @@ class CardBrickApp:
         self.input_map = InputMap(paths.input_map_path if paths else None)
         self._image_cache = {}  # vocab card images, decoded once per file
         self._session_deck_filter = None  # child's per-sitting deck pick
+        self._session_category_filter = None  # ...and per-sitting tag pick
         self._session_bonus = False  # next sprint ignores the daily goal
         self._sprint_label = ""      # "Sprint 3/8" shown in the review header
         self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
@@ -281,6 +289,7 @@ class CardBrickApp:
         handlers = {
             "CHILD_START": self.screen_child_start,
             "DECK_SELECT": self.screen_deck_select,
+            "CATEGORY_SELECT": self.screen_category_select,
             "REVIEW": self.screen_review,
             "SUMMARY": self.screen_summary,
             "CALENDAR": self.screen_calendar,
@@ -342,8 +351,23 @@ class CardBrickApp:
         return self.storage.deck_names_list() if active is None \
             else list(active)
 
+    def _resolve_available_categories(self):
+        """Tags the parent has assigned to this profile: every observed
+        tag if active_categories is None, else that explicit (possibly
+        empty) list. Same convention as _resolve_available_decks."""
+        active = self.profile["active_categories"]
+        return self.storage.all_tags() if active is None else list(active)
+
+    def _next_after_deck_choice(self):
+        """Where to go once the deck for this sitting is settled: the
+        topic/tag picker if there's a real choice to make, else
+        straight to Review — mirrors the deck-count threshold."""
+        return "CATEGORY_SELECT" \
+            if len(self._resolve_available_categories()) > 1 else "REVIEW"
+
     def screen_child_start(self):
         self._session_deck_filter = None  # cleared each time we land here
+        self._session_category_filter = None
         self._session_bonus = False
         status = self.service.sprint_status(profile=self.profile)
         available_decks = self._resolve_available_decks()
@@ -369,23 +393,40 @@ class CardBrickApp:
                     (startable or bonus):
                 self._session_bonus = bonus
                 return "DECK_SELECT" if len(available_decks) > 1 \
-                    else "REVIEW"
+                    else self._next_after_deck_choice()
 
             self.screen.fill(BG)
             self._center(self.font_small.render("SPANISH PRACTICE", True,
                                                 DIM), 36)
             self._center(self.font_big.render(self.profile["name"], True,
                                               FG), 80)
-            self._center(self.font.render(cat_label, True, ACCENT), 150)
-            self._center(self.font_small.render(deck_label, True, DIM), 182)
+            # _center doesn't clip: a long joined tag/deck list must be
+            # truncated first or it renders off both screen edges.
+            self._center(self.font.render(
+                self._truncate_to_width(self.font, cat_label, self.w - 40),
+                True, ACCENT), 150)
+            self._center(self.font_small.render(
+                self._truncate_to_width(self.font_small, deck_label,
+                                       self.w - 40),
+                True, DIM), 182)
             if startable:
+                # "Last sprint" only makes sense once earlier sprints
+                # happened; an untouched day gets "today" phrasing.
                 n = status["sprints_remaining"]
-                headline = "Last sprint of the day!" if n == 1 else \
-                    f"{n} sprints to go today"
+                if status["cards_done"] == 0:
+                    headline = "Just one sprint today!" if n == 1 else \
+                        f"{n} sprints today"
+                else:
+                    headline = "Last sprint of the day!" if n == 1 else \
+                        f"{n} sprints to go today"
                 self._center(self.font_big.render(headline, True, FG), 215)
-                self._center(self.font.render(
-                    f"{status['cards_done']} / {status['goal']} cards done",
-                    True, DIM), 265)
+                progress = (f"{status['cards_done']} / "
+                            f"{status['goal_today']} cards done")
+                if status["goal_today"] < status["goal"]:
+                    # Supply-limited (e.g. a fresh deck paced by
+                    # daily_new_cards): say why the day is short.
+                    progress += " — more unlock tomorrow"
+                self._center(self.font.render(progress, True, DIM), 265)
                 minutes = self.profile["session_time_minutes"]
                 sprint_line = (f"next sprint: "
                                f"{status['next_sprint_cards']} cards"
@@ -396,11 +437,12 @@ class CardBrickApp:
                 self._center(self.font.render(
                     "Press the bottom button to start!", True, GOOD), 360)
             elif bonus:
-                self._center(self.font_big.render("Goal reached! Great job!",
-                                                  True, GOOD), 215)
+                headline = "Goal reached! Great job!" if status["goal_met"] \
+                    else "That's everything for today!"
+                self._center(self.font_big.render(headline, True, GOOD),
+                             215)
                 self._center(self.font.render(
-                    f"{status['cards_done']} cards today — all "
-                    f"{status['sprints_planned']} sprints done", True, DIM),
+                    f"{status['cards_done']} cards done today", True, DIM),
                     265)
                 self._center(self.font_small.render(
                     f"Spare time? A bonus sprint of "
@@ -449,7 +491,7 @@ class CardBrickApp:
                 index = (index + 1) % len(entries)
             elif action == "south_button":
                 self._session_deck_filter = entries[index][1]
-                return "REVIEW"
+                return self._next_after_deck_choice()
 
             self.screen.fill(BG)
             self._center(self.font_big.render("Choose a Deck", True, FG),
@@ -461,7 +503,62 @@ class CardBrickApp:
                 due, new = counts[i]
                 color = ACCENT if i == index else FG
                 prefix = "> " if i == index else "   "
-                text = f"{prefix}{label}   ({due + new} due)"
+                text = self._truncate_to_width(
+                    self.font, f"{prefix}{label}   ({due + new} due)",
+                    self.w - 120)
+                self.screen.blit(self.font.render(text, True, color),
+                                (60, y))
+                y += 44
+            self._footer("Up/Down = Choose   Bottom = Select   "
+                         "Right = Back")
+            self.present()
+            self.clock.tick(FPS)
+
+    def screen_category_select(self):
+        """Child-facing topic/tag picker: shown only when the parent
+        has assigned more than one category (screen_child_start and
+        DeckSelect both skip straight to REVIEW otherwise). Lets the
+        child focus on one specific assigned tag for just this sitting
+        — the same non-destructive filtering as Anki's filtered decks:
+        no card's tags or deck ever change, so finishing (or picking
+        "All assigned categories" next time) simply returns to
+        studying everything in scope."""
+        available = self._resolve_available_categories()
+        entries = [("All assigned categories", None)] + \
+            [(name, [name]) for name in available]
+        counts = [self.service.counts_for_queue(
+                      profile=self.profile,
+                      deck_filter=self._session_deck_filter,
+                      category_filter=cats,
+                      bonus=self._session_bonus)
+                 for _label, cats in entries]
+        index = 0
+
+        while True:
+            action = self.poll()
+            if action in ("start", "east_button", "select"):
+                return "CHILD_START"
+            if action == "dpad_up":
+                index = (index - 1) % len(entries)
+            elif action == "dpad_down":
+                index = (index + 1) % len(entries)
+            elif action == "south_button":
+                self._session_category_filter = entries[index][1]
+                return "REVIEW"
+
+            self.screen.fill(BG)
+            self._center(self.font_big.render("Choose a Topic", True, FG),
+                         40)
+            self._center(self.font_small.render(
+                "Want to focus on something specific?", True, DIM), 90)
+            y = 140
+            for i, (label, _cats) in enumerate(entries):
+                due, new = counts[i]
+                color = ACCENT if i == index else FG
+                prefix = "> " if i == index else "   "
+                text = self._truncate_to_width(
+                    self.font, f"{prefix}{label}   ({due + new} due)",
+                    self.w - 120)
                 self.screen.blit(self.font.render(text, True, color),
                                 (60, y))
                 y += 44
@@ -493,10 +590,13 @@ class CardBrickApp:
             self._sprint_label = f"Sprint {number}/{status['sprints_planned']}"
         session = StudySession(self.storage, self.service, self.profile,
                                deck_filter=self._session_deck_filter,
+                               category_filter=self._session_category_filter,
                                bonus=self._session_bonus)
-        log.info("session %d started: %d cards queued (%s, deck filter: %s)",
+        log.info("session %d started: %d cards queued (%s, deck filter: "
+                "%s, category filter: %s)",
                  session.session_id, session.planned_total,
-                 self._sprint_label, self._session_deck_filter)
+                 self._sprint_label, self._session_deck_filter,
+                 self._session_category_filter)
         try:
             return self._review_loop(session)
         finally:
@@ -680,11 +780,20 @@ class CardBrickApp:
         header = card["deck"]
         if card["tags"]:
             header += "  ·  " + " ".join(card["tags"].split()[:3])
-        self.screen.blit(self.font_small.render(header, True, DIM), (16, 12))
-        left = f"{self._sprint_label}  ·  {session.remaining()} left" \
+        right = f"{self._sprint_label}  ·  {session.remaining()} left" \
             if self._sprint_label else f"{session.remaining()} left"
-        surf = self.font_small.render(left, True, DIM)
-        self.screen.blit(surf, (self.w - surf.get_width() - 16, 12))
+        right_surf = self.font_small.render(right, True, DIM)
+        # Both sides share one row: clip the (unbounded deck/tag) left
+        # side so it can never run into the (short, fixed-shape) right
+        # side, instead of letting long deck names or several tags
+        # overlap the sprint/remaining count.
+        gap = 24
+        max_left_width = self.w - 32 - right_surf.get_width() - gap
+        header = self._truncate_to_width(self.font_small, header,
+                                         max_left_width)
+        self.screen.blit(self.font_small.render(header, True, DIM), (16, 12))
+        self.screen.blit(right_surf, (self.w - right_surf.get_width() - 16,
+                                      12))
         pygame.draw.line(self.screen, DIVIDER, (16, 40), (self.w - 16, 40))
 
         if vocab is not None:
@@ -872,25 +981,25 @@ class CardBrickApp:
         avg = s.get("avg_response_ms")
 
         # Where the day stands now that this sprint is in the log; the
-        # deck filter is kept so "next sprint now" continues the same
-        # deck the child picked for this sitting.
+        # deck/category filters are kept so "next sprint now" continues
+        # the same deck/topic the child picked for this sitting.
         status = self.service.sprint_status(
-            profile=self.profile, deck_filter=self._session_deck_filter)
+            profile=self.profile, deck_filter=self._session_deck_filter,
+            category_filter=self._session_category_filter)
         more = status["next_sprint_cards"] > 0
         bonus = not more and status["bonus_cards"] > 0
-        goal_met = status["cards_remaining"] == 0
 
-        if goal_met:
-            headline = "Goal reached! Great job!"
-            subtitle = f"{status['cards_done']} CARDS TODAY"
-        elif more:
+        if more:
             n = status["sprints_remaining"]
             headline = "¡Buen trabajo!"
             subtitle = "SPRINT DONE — LAST ONE TO GO" if n == 1 else \
                 f"SPRINT DONE — {n} TO GO TODAY"
+        elif status["goal_met"]:
+            headline = "Goal reached! Great job!"
+            subtitle = f"{status['cards_done']} CARDS TODAY"
         else:
-            headline = "¡Buen trabajo!"
-            subtitle = "SPRINT DONE — NO MORE CARDS TODAY"
+            headline = "That's everything for today!"
+            subtitle = f"{status['cards_done']} CARDS TODAY"
 
         lines = [
             (f"Cards answered:  {s.get('cards_reviewed', 0)}", FG),
@@ -904,8 +1013,8 @@ class CardBrickApp:
              else "Pass rate:  —", DIM),
             (f"Time:  {minutes}m {seconds:02d}s" +
              (f"    Avg answer:  {avg / 1000:.1f}s" if avg else ""), DIM),
-            (f"Today:  {status['cards_done']} / {status['goal']} cards",
-             DIM),
+            (f"Today:  {status['cards_done']} / {status['goal_today']} "
+             f"cards", DIM),
         ]
         if s.get("buried_count") or s.get("suspended_count"):
             lines.append((f"Buried {s.get('buried_count', 0)}   "
@@ -1262,8 +1371,10 @@ class CardBrickApp:
                     mark = "[x]" if on else "[ ]"
                 color = ACCENT if i == index else FG
                 prefix = "> " if i == index else "   "
-                self.screen.blit(self.font.render(
-                    f"{prefix}{mark} {label}", True, color), (80, y))
+                text = self._truncate_to_width(
+                    self.font, f"{prefix}{mark} {label}", self.w - 100)
+                self.screen.blit(self.font.render(text, True, color),
+                                (80, y))
                 y += 40
             if not items:
                 self._center(self.font.render(empty_message, True, DIM),
@@ -1278,7 +1389,7 @@ class CardBrickApp:
         # material; study-ahead settings are CLI-only for now.
         fields = [
             ("Daily goal (cards)", "daily_goal_cards", 10, 500),
-            ("New cards per day", "daily_new_cards", 0, 100),
+            ("New cards per day (0 = auto)", "daily_new_cards", 0, 500),
             ("Cards per sprint", "session_card_limit", 1, 200),
             ("Minutes per sprint (0 = off)", "session_time_minutes", 0, 90),
         ]
@@ -1580,6 +1691,25 @@ class CardBrickApp:
 
     def _center(self, surf, y):
         self.screen.blit(surf, ((self.w - surf.get_width()) // 2, y))
+
+    @staticmethod
+    def _truncate_to_width(font, text, max_width):
+        """``text``, shortened with a trailing "…" if it exceeds
+        ``max_width`` pixels in ``font`` — never lets a long deck name
+        or tag list run into whatever is drawn next to it."""
+        if max_width <= 0:
+            return ""
+        if font.size(text)[0] <= max_width:
+            return text
+        ellipsis = "…"
+        ellipsis_width = font.size(ellipsis)[0]
+        if ellipsis_width > max_width:
+            return ""  # not even room for the ellipsis alone
+        budget = max_width - ellipsis_width
+        truncated = text
+        while truncated and font.size(truncated)[0] > budget:
+            truncated = truncated[:-1]
+        return truncated + ellipsis
 
     def _block(self, text, font, color, top, max_width):
         y = top

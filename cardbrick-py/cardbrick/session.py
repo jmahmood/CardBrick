@@ -15,14 +15,18 @@ from .scheduler import iso
 
 class StudySession:
     def __init__(self, storage, service, profile, deck_filter=None,
-                 bonus=False):
+                 category_filter=None, bonus=False):
         """One sprint: the unit of microstudying (see
         ReviewService.sprint_status).
 
-        ``deck_filter`` overrides the profile's assigned decks for
-        just this sitting — e.g. a child picking one specific deck out
-        of several the parent has assigned (see app.py's DECK_SELECT
-        screen). None falls back to the profile's active_decks, same
+        ``deck_filter``/``category_filter`` override the profile's
+        assigned decks/tags for just this sitting — e.g. a child
+        picking one specific deck, or one specific tag, out of several
+        the parent has assigned (see app.py's DECK_SELECT and
+        CATEGORY_SELECT screens). Picking a tag never changes what
+        cards are tagged with, only what this sitting shows — the same
+        non-destructive filtering as Anki's filtered decks. None falls
+        back to the profile's active_decks/active_categories, same
         convention as ReviewService.get_due_cards.
 
         ``bonus`` marks the optional goal-ignoring sprint offered after
@@ -31,13 +35,16 @@ class StudySession:
         self.service = service
         self.profile = profile
         self.started_at = service.now()
+        effective_categories = category_filter if category_filter is not None \
+            else profile.get("active_categories")
         self.session_id = storage.create_session(
             profile_id=profile["id"],
             started_at=iso(self.started_at),
-            category_filter=profile.get("active_categories"))
+            category_filter=effective_categories)
 
         rows = service.get_due_cards(profile=profile,
                                      deck_filter=deck_filter,
+                                     category_filter=category_filter,
                                      bonus=bonus)
         self.queue = deque(row["id"] for row in rows)
         self.planned_total = len(rows)
