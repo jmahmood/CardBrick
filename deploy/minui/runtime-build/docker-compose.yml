@@ -1,0 +1,27 @@
+# ARM64 builder for the CardBrick pygame-ce squashfs runtime (MinUI /
+# tg5040 target).
+#
+# Run via ../scripts/build_runtime.sh (or `docker compose up` in this
+# directory). On an x86 host you need binfmt/qemu for linux/arm64 —
+# the wrapper script checks and tells you how to enable it.
+#
+# build-runtime.sh reads its hooks (pre-install.sh, requirements.txt,
+# post-install.sh) and writes its output squashfs under /local/build/,
+# so — unlike deploy/knulli's compose file — this one mounts the whole
+# runtime-build/ directory straight at /local/build.
+services:
+  runtime_builder:
+    image: debian:bullseye
+    platform: linux/arm64
+    command:
+      - "/bin/bash"
+      - "-lc"
+      - "/local/build/build-runtime.sh 2>&1"
+    env_file:
+      - build-config
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: .
+        target: /local/build

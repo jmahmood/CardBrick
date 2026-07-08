@@ -15,6 +15,12 @@ def test_fullscreen_640x480_keeps_native_logical_size():
     ) == (640, 480)
 
 
+def test_fullscreen_720x720_uses_native_logical_size():
+    assert _resolve_logical_size(
+        (640, 480), display_size=(720, 720), fullscreen=True
+    ) == (720, 720)
+
+
 def test_fullscreen_1024x768_keeps_640x480_logical_size():
     # The TrimUI Brick isn't a "native size" panel — its 640x480 canvas
     # is scaled up to fill it instead (see the scaling tests below).

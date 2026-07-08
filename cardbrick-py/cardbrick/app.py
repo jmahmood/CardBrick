@@ -42,11 +42,11 @@ Controller-first and deployment-hardened for Knulli-style devices:
   button indices are never trusted (see input_map.py). Face buttons are
   labelled with the fixed layout used by this app (A = right, B = bottom,
   X = top, Y = left).
-- Everything renders on a native handheld logical canvas (640x480 or
-  720x480 when detected) which is scaled — integer scaling when it
-  fits, or an exact aspect-matched scale (e.g. 1.6x on the TrimUI
-  Brick's 1024x768 panel) when the display is a clean multiple of the
-  canvas's proportions — to the real display.
+- Everything renders on a native handheld logical canvas (640x480,
+  720x480 or 720x720 when detected) which is scaled — integer scaling
+  when it fits, or an exact aspect-matched scale (e.g. 1.6x on the
+  TrimUI Brick's 1024x768 panel) when the display is a clean multiple
+  of the canvas's proportions — to the real display.
 - The app has its own exit path (SELECT quits/finishes) and never
   relies on RetroArch hotkeys.
 - A bundled Unicode font covers Spanish/Japanese glyphs when present;
@@ -86,6 +86,7 @@ DEFAULT_LOGICAL_SIZE = (640, 480)
 NATIVE_FULLSCREEN_SIZES = {
     (640, 480),  # RG35XX Plus and similar 4:3 panels
     (720, 480),  # RG34XX SP widescreen panel
+    (720, 720),  # RGB30 square panel
 }
 
 # "Paper & Ink" palette: the whole UI is warm paper printed with ink,
@@ -158,7 +159,8 @@ def _resolve_logical_size(configured_size, display_size=None, fullscreen=False):
 
     The saved/default logical size remains the portable 640x480 layout.
     In fullscreen on known handheld panels, use the physical panel size
-    as the logical canvas so 720x480 devices do not get pillarboxed.
+    as the logical canvas so non-4:3 devices (e.g. 720x480, 720x720)
+    do not get pillarboxed.
     """
     if (
         fullscreen

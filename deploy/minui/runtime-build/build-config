@@ -1,0 +1,9 @@
+# Versions for the pygame-ce squashfs runtime (MinUI / tg5040 target).
+#
+# Starts from the same pair validated for deploy/knulli — Python 3.12.8
+# + pygame-ce 2.5.6 — since build-runtime.sh compiles Python itself
+# from source on Bullseye here, keeping it under MinUI's GLIBC 2.33
+# ceiling. Bump together and re-run the smoke test on hardware if you
+# change either.
+PYTHON_VERSION=3.12.8
+PYGAME_VERSION=2.5.6

@@ -30,7 +30,7 @@ Review service    (cardbrick/service.py — daily limits, category
 Session runner    (cardbrick/session.py — one sitting: queue, counters,
   ↓                summary)
 Pygame app        (cardbrick/app.py — state-driven child/parent UI on a
-                   native 640x480 or 720x480 handheld canvas,
+                   native 640x480, 720x480 or 720x720 handheld canvas,
                    controller-first)
 ```
 
