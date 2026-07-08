@@ -25,3 +25,15 @@ deploy/knulli/scripts/.deckbuild-venv/
 # the package (see deploy/knulli/decks/README.md) — not app content.
 deploy/knulli/decks/*
 !deploy/knulli/decks/README.md
+
+# MinUI packaging outputs (deploy/minui) — build-runtime.sh writes the
+# squashfs artifact straight into runtime-build/, alongside the tracked
+# hook files (see deploy/minui/runtime-build/docker-compose.yml).
+deploy/minui/runtime-build/*.squashfs
+deploy/minui/dist/
+deploy/minui/scripts/.deckbuild-venv/
+
+# Personal deck files dropped in deploy/minui/decks/ for baking into
+# the package (see deploy/minui/decks/README.md) — not app content.
+deploy/minui/decks/*
+!deploy/minui/decks/README.md
