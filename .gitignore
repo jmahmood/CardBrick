@@ -12,6 +12,9 @@ test_cache/
 CLAUDE.md
 venv-syncd
 workspace
+.DS_Store
+cardbrick-py/*.apkg
+cardbrick-py/mise.toml
 
 # Knulli packaging outputs (deploy/knulli)
 deploy/knulli/dist/

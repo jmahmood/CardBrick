@@ -36,6 +36,7 @@ find . -name '__pycache__' -type d -exec rm -rf {} +
 │   ├── cardbrick/            # code
 │   ├── assets/fonts/         # Noto Sans JP/CJK + DejaVu fallback
 │   │                         # (Spanish + Japanese glyph coverage)
+│   ├── assets/sfx/           # bundled UI sound effects
 │   └── scripts/              # optional (sample deck generator)
 ├── vendor/                   # pygame-ce, fsrs, typing-extensions
 └── runtime/                  # optional portable Python

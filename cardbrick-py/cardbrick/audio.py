@@ -26,6 +26,9 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
+import wave
+import struct
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +53,8 @@ class _MixerBackend:
             raise RuntimeError("pygame built without mixer module")
         pygame.mixer.init()  # raises pygame.error if SDL_mixer/device bad
         self._music = pygame.mixer.music
+        self._sounds = {}
+        self._sound_cls = pygame.mixer.Sound
         self._error = pygame.error
         log.info("audio: pygame.mixer initialised: %s",
                  pygame.mixer.get_init())
@@ -62,6 +67,19 @@ class _MixerBackend:
             return True
         except self._error as exc:
             log.warning("mixer could not play %s: %s", path, exc)
+            return False
+
+    def play_effect(self, path, volume=1.0):
+        try:
+            sound = self._sounds.get(path)
+            if sound is None:
+                sound = self._sound_cls(path)
+                self._sounds[path] = sound
+            sound.set_volume(volume)
+            sound.play()
+            return True
+        except self._error as exc:
+            log.warning("mixer could not play effect %s: %s", path, exc)
             return False
 
     def stop(self):
@@ -85,6 +103,8 @@ class _CommandBackend:
         self._which = which_fn or shutil.which
         self._popen = popen_fn or subprocess.Popen
         self._proc = None
+        self._effect_procs = []
+        self._effect_cache = {}
         self._players = []  # (argv, extensions or None)
 
         if custom_cmd:
@@ -130,6 +150,50 @@ class _CommandBackend:
             log.warning("audio: could not run %s: %s", argv[0], exc)
             return False
 
+    def play_effect(self, path, volume=1.0):
+        path = self._effect_path(path, volume)
+        argv = self.command_for(path)
+        if argv is None:
+            log.warning("audio: no CLI player handles effect %s", path)
+            return False
+        self._reap_effects()
+        try:
+            self._effect_procs.append(self._popen(
+                argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL))
+            return True
+        except OSError as exc:
+            log.warning("audio: could not run effect player %s: %s",
+                        argv[0], exc)
+            return False
+
+    def _effect_path(self, path, volume):
+        if volume >= 0.995 or os.path.splitext(path)[1].lower() != ".wav":
+            return path
+        key = (path, round(max(volume, 0.0), 3))
+        cached = self._effect_cache.get(key)
+        if cached and os.path.exists(cached):
+            return cached
+        try:
+            scaled = _scaled_wav(path, key[1])
+        except (OSError, wave.Error, struct.error) as exc:
+            log.warning("audio: could not scale effect %s: %s", path, exc)
+            return path
+        self._effect_cache[key] = scaled
+        return scaled
+
+    def _reap_effects(self):
+        alive = []
+        for proc in self._effect_procs:
+            if proc.poll() is None:
+                alive.append(proc)
+                continue
+            try:
+                proc.wait(timeout=0)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        self._effect_procs = alive
+
     def stop(self):
         if self._proc is not None:
             if self._proc.poll() is None:
@@ -148,6 +212,9 @@ class _NullBackend:
     name = "none"
 
     def play(self, path):
+        return False
+
+    def play_effect(self, path, volume=1.0):
         return False
 
     def stop(self):
@@ -175,7 +242,8 @@ def _pick_backend(choice, custom_cmd):
 
 
 class AudioPlayer:
-    def __init__(self, media_dir, backend=None, extra_media_dirs=None):
+    def __init__(self, media_dir, backend=None, extra_media_dirs=None,
+                 sfx_dirs=None):
         self.media_dir = media_dir
         if extra_media_dirs is None:
             extra_media_dirs = os.environ.get("CARDBRICK_EXTRA_MEDIA_DIRS", "")
@@ -183,7 +251,11 @@ class AudioPlayer:
                 path for path in extra_media_dirs.split(os.pathsep) if path
             ]
         self.media_dirs = [media_dir] + list(extra_media_dirs)
+        if sfx_dirs is None:
+            sfx_dirs = self._default_sfx_dirs()
+        self.sfx_dirs = list(sfx_dirs)
         self._missing_logged = set()
+        self._missing_effects_logged = set()
         if backend is None:
             backend = _pick_backend(
                 os.environ.get("CARDBRICK_AUDIO", "auto").strip().lower(),
@@ -193,6 +265,19 @@ class AudioPlayer:
         log.info("audio backend: %s", backend.name)
         if len(self.media_dirs) > 1:
             log.info("media search dirs: %s", ", ".join(self.media_dirs))
+        if self.sfx_dirs:
+            log.info("sfx search dirs: %s", ", ".join(self.sfx_dirs))
+
+    @staticmethod
+    def _default_sfx_dirs():
+        cardbrick_dir = os.path.dirname(os.path.abspath(__file__))
+        app_dir = os.path.dirname(cardbrick_dir)
+        repo_dir = os.path.dirname(app_dir)
+        candidates = [
+            os.path.join(app_dir, "assets", "sfx"),
+            os.path.join(repo_dir, "assets", "sfx"),
+        ]
+        return [path for path in candidates if os.path.isdir(path)]
 
     def resolve(self, filename):
         if not filename:
@@ -222,5 +307,55 @@ class AudioPlayer:
             return False
         return self.backend.play(path)
 
+    def resolve_effect(self, filename_or_path):
+        if not filename_or_path:
+            return None
+        if os.path.isabs(filename_or_path) and os.path.exists(filename_or_path):
+            return filename_or_path
+        if os.path.dirname(filename_or_path) and os.path.exists(filename_or_path):
+            return os.path.abspath(filename_or_path)
+        basename = os.path.basename(filename_or_path)
+        for sfx_dir in self.sfx_dirs:
+            path = os.path.join(sfx_dir, basename)
+            if os.path.exists(path):
+                return path
+        return None
+
+    def play_effect(self, filename_or_path, volume=1.0):
+        """Play a bundled UI sound effect without interrupting media."""
+        if not self.enabled or not filename_or_path:
+            return False
+        path = self.resolve_effect(filename_or_path)
+        if path is None:
+            if filename_or_path not in self._missing_effects_logged:
+                self._missing_effects_logged.add(filename_or_path)
+                log.warning("missing sound effect: %s", filename_or_path)
+            return False
+        volume = min(max(float(volume), 0.0), 1.0)
+        if volume <= 0:
+            return False
+        return self.backend.play_effect(path, volume=volume)
+
     def stop(self):
         self.backend.stop()
+
+
+def _scaled_wav(path, volume):
+    """Return a temp WAV copy with sample amplitude scaled by volume."""
+    with wave.open(path, "rb") as src:
+        params = src.getparams()
+        frames = src.readframes(src.getnframes())
+    if params.sampwidth != 2:
+        raise wave.Error("only 16-bit PCM effects can be scaled")
+    samples = struct.unpack("<" + "h" * (len(frames) // 2), frames)
+    scaled = bytearray()
+    for sample in samples:
+        value = int(sample * volume)
+        value = max(-32768, min(32767, value))
+        scaled.extend(struct.pack("<h", value))
+    fd, out = tempfile.mkstemp(prefix="cardbrick-sfx-", suffix=".wav")
+    os.close(fd)
+    with wave.open(out, "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(bytes(scaled))
+    return out

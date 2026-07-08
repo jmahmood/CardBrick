@@ -5,7 +5,6 @@ Usage:
     python main.py study [--fullscreen]     CardBrick-style study appliance
                                             (child/parent flow; the default)
     python main.py import <deck.apkg>       Import an Anki package
-    python main.py review [--deck NAME]     Legacy prototype reviewer
     python main.py decks                    List decks and due counts
     python main.py profile [...]            View/edit the child profile
     python main.py admin purge-decks [...]  Permanently delete imported decks
@@ -74,12 +73,6 @@ def build_parser():
     p_import.add_argument("--deck", dest="import_deck",
                           help="For .csv import: deck name to file the "
                                "cards under (default: Vocabulario)")
-
-    p_review = sub.add_parser("review",
-                              help="Legacy prototype reviewer (no limits)")
-    p_review.add_argument("--deck", help="Review only this deck")
-    p_review.add_argument("--fullscreen", action="store_true",
-                          help="Run fullscreen (use on the handheld)")
 
     sub.add_parser("decks", help="List decks and due counts")
 
@@ -205,13 +198,6 @@ def main(argv=None):
             _profile_command(storage, args)
         elif args.command == "admin":
             return _admin_command(storage, paths, args)
-        elif args.command == "review":
-            from cardbrick.audio import AudioPlayer
-            from cardbrick.ui import ReviewApp
-            audio = AudioPlayer(paths.media_dir)
-            app = ReviewApp(storage, scheduler, audio,
-                            deck=args.deck, fullscreen=args.fullscreen)
-            app.run()
         else:  # study
             return _run_app(storage, scheduler, paths,
                             fullscreen=args.fullscreen or None)

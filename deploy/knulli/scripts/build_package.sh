@@ -120,6 +120,13 @@ if [ -d "$ROOT_FONT_DIR" ]; then
         cp "${REPO_ROOT}/LICENSES/NotoSans-OFL.txt" \
            "${STAGE}/cardbrick-py/assets/fonts/"
 fi
+ROOT_SFX_DIR="${REPO_ROOT}/assets/sfx"
+if [ -d "$ROOT_SFX_DIR" ]; then
+    mkdir -p "${STAGE}/cardbrick-py/assets/sfx"
+    find "$ROOT_SFX_DIR" -maxdepth 1 -type f \
+        \( -name '*.wav' -o -name '*.mp3' \) \
+        -exec cp {} "${STAGE}/cardbrick-py/assets/sfx/" \;
+fi
 # Belt-and-suspenders: strip any cache dirs that did come from a tracked
 # path above (e.g. a stray __pycache__ committed by accident).
 find "${STAGE}/cardbrick-py" \

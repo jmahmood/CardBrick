@@ -688,41 +688,7 @@ class Storage:
             profile[key] = json.loads(raw) if raw else None
         return profile
 
-    # -- legacy prototype queries (main.py review / decks) ------------------------
-
-    def next_due_card(self, now_iso, deck=None):
-        """The most overdue card, joined with its review state."""
-        query = """SELECT c.*, r.due, r.reps, r.lapses, r.state AS fsrs_state,
-                          r.fsrs_json
-                   FROM cards c JOIN review_state r ON r.card_id = c.id
-                   WHERE r.due <= ?"""
-        params = [now_iso]
-        if deck:
-            query += " AND c.deck = ?"
-            params.append(deck)
-        query += " ORDER BY r.due LIMIT 1"
-        return self.conn.execute(query, params).fetchone()
-
-    def next_due_time(self, deck=None):
-        """ISO timestamp of the earliest due card, or None if no cards."""
-        query = """SELECT MIN(r.due) AS next_due
-                   FROM cards c JOIN review_state r ON r.card_id = c.id"""
-        params = []
-        if deck:
-            query += " WHERE c.deck = ?"
-            params.append(deck)
-        row = self.conn.execute(query, params).fetchone()
-        return row["next_due"] if row else None
-
-    def due_count(self, now_iso, deck=None):
-        query = """SELECT COUNT(*) AS n
-                   FROM cards c JOIN review_state r ON r.card_id = c.id
-                   WHERE r.due <= ?"""
-        params = [now_iso]
-        if deck:
-            query += " AND c.deck = ?"
-            params.append(deck)
-        return self.conn.execute(query, params).fetchone()["n"]
+    # -- deck summary queries -----------------------------------------------------
 
     def decks(self, now_iso):
         """All deck names with total and currently-due card counts."""
