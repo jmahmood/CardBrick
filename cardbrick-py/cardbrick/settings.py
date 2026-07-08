@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 DEFAULTS = {
     "current_child_profile_id": None,
     "auto_play_audio": True,
+    "reduced_motion": False,  # True = paper-roll feeds snap instantly
     "fullscreen": False,
     "logical_width": 640,
     "logical_height": 480,
