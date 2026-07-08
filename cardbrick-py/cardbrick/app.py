@@ -243,6 +243,8 @@ class CardBrickApp:
         self._session_bonus = False  # next sprint ignores the daily goal
         self._deck_select_handoff_roll = None
         self._category_select_handoff_roll = None
+        self._review_printer_handoff_roll = None
+        self._start_printer_handoff_roll = None
         self._sprint_label = ""  # "Sprint 3/8" shown in the review header
         self._ticket_printed = False  # child-start prints once per run
         self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
@@ -411,8 +413,10 @@ class CardBrickApp:
             "CHILD_START": self.screen_child_start,
             "DECK_SELECT": self.screen_deck_select,
             "CATEGORY_SELECT": self.screen_category_select,
+            "REVIEW_PRINTER_HANDOFF": self.screen_review_printer_handoff,
             "REVIEW": self.screen_review,
             "SUMMARY": self.screen_summary,
+            "START_PRINTER_HANDOFF": self.screen_start_printer_handoff,
             "CALENDAR": self.screen_calendar,
             "PARENT_MENU": self.screen_parent_menu,
             "PARENT_IMPORT": self.screen_parent_import,
@@ -507,6 +511,48 @@ class CardBrickApp:
         self._session_bonus = False
         status = self.service.sprint_status(profile=self.profile)
         available_decks = self._resolve_available_decks()
+        startable = status["next_sprint_cards"] > 0
+        bonus = not startable and status["bonus_cards"] > 0
+
+        roll = self._build_child_start_roll(status, startable, bonus)
+        if self._ticket_printed:
+            roll.finish()
+        self._ticket_printed = True
+
+        while True:
+            action = self.poll()
+            if action and roll.busy:
+                roll.finish()
+            if action == "start":
+                return "QUIT"
+            if action == "select":
+                return "PARENT_MENU"
+            if action == "north_button":
+                self._calendar_return = "CHILD_START"
+                return "CALENDAR"
+            if action in ("east_button", "unmapped") and (startable or bonus):
+                self._session_bonus = bonus
+                if len(available_decks) > 1:
+                    self._deck_select_handoff_roll = roll
+                    return "DECK_SELECT"
+                next_state = self._next_after_deck_choice()
+                if next_state == "CATEGORY_SELECT":
+                    self._category_select_handoff_roll = roll
+                return next_state
+
+            roll.update()
+            self._paper(roll)
+            self._draw_roll(roll)
+            self._footer(
+                "A = Start    X = Calendar"
+                if (startable or bonus)
+                else "X = Calendar",
+                "START = Parent    SELECT = Quit",
+            )
+            self.present()
+            self.clock.tick(FPS)
+
+    def _build_child_start_roll(self, status, startable, bonus):
         categories = self.profile["active_categories"]
         cat_label = (
             "All categories"
@@ -523,8 +569,6 @@ class CardBrickApp:
             if decks
             else "No decks set"
         )
-        startable = status["next_sprint_cards"] > 0
-        bonus = not startable and status["bonus_cards"] > 0
 
         # The day's job ticket, printed onto the roll once on first
         # entry this run; later visits snap instantly so navigation
@@ -616,42 +660,7 @@ class CardBrickApp:
             roll.feed(self._stamp_surface("All done for today!", GOOD))
             roll.feed_gap(12)
             roll.feed(self.font.render("Come back tomorrow.", True, DIM))
-        if self._ticket_printed:
-            roll.finish()
-        self._ticket_printed = True
-
-        while True:
-            action = self.poll()
-            if action and roll.busy:
-                roll.finish()
-            if action == "start":
-                return "QUIT"
-            if action == "select":
-                return "PARENT_MENU"
-            if action == "north_button":
-                self._calendar_return = "CHILD_START"
-                return "CALENDAR"
-            if action in ("east_button", "unmapped") and (startable or bonus):
-                self._session_bonus = bonus
-                if len(available_decks) > 1:
-                    self._deck_select_handoff_roll = roll
-                    return "DECK_SELECT"
-                next_state = self._next_after_deck_choice()
-                if next_state == "CATEGORY_SELECT":
-                    self._category_select_handoff_roll = roll
-                return next_state
-
-            roll.update()
-            self._paper(roll)
-            self._draw_roll(roll)
-            self._footer(
-                "A = Start    X = Calendar"
-                if (startable or bonus)
-                else "X = Calendar",
-                "START = Parent    SELECT = Quit",
-            )
-            self.present()
-            self.clock.tick(FPS)
+        return roll
 
     def screen_deck_select(self):
         """Child-facing deck picker: shown only when the parent has
@@ -677,6 +686,7 @@ class CardBrickApp:
         visible = 6
         transition_roll = self._deck_select_handoff_roll
         self._deck_select_handoff_roll = None
+        setup_roll = transition_roll
         if transition_roll is not None:
             self._print_deck_select_transition(
                 transition_roll, entries, counts, top, visible
@@ -695,8 +705,8 @@ class CardBrickApp:
             elif action == "east_button":
                 self._session_deck_filter = entries[index][1]
                 next_state = self._next_after_deck_choice()
-                if next_state == "CATEGORY_SELECT" and transition_roll is not None:
-                    self._category_select_handoff_roll = transition_roll
+                if next_state == "CATEGORY_SELECT" and setup_roll is not None:
+                    self._category_select_handoff_roll = setup_roll
                 return next_state
             top = min(max(top, index - visible + 1), index)
 
@@ -771,6 +781,7 @@ class CardBrickApp:
         visible = 6
         transition_roll = self._category_select_handoff_roll
         self._category_select_handoff_roll = None
+        setup_roll = transition_roll
         if transition_roll is not None:
             self._print_category_select_transition(
                 transition_roll, entries, counts, top, visible
@@ -788,6 +799,10 @@ class CardBrickApp:
                 index = (index + 1) % len(entries)
             elif action == "east_button":
                 self._session_category_filter = entries[index][1]
+                if setup_roll is not None:
+                    self._print_topic_selected(setup_roll, entries[index][0])
+                    self._review_printer_handoff_roll = setup_roll
+                    return "REVIEW_PRINTER_HANDOFF"
                 return "REVIEW"
             top = min(max(top, index - visible + 1), index)
 
@@ -823,6 +838,15 @@ class CardBrickApp:
             roll.feed(self.font.render(text, True, FG), x=80)
             roll.feed_gap(8)
 
+    def _print_topic_selected(self, roll, label):
+        roll.feed_gap(10)
+        roll.feed(self._rule_surface())
+        roll.feed_gap(10)
+        text = self._truncate_to_width(
+            self.font_small, f"TOPIC SELECTED: {label}", self.w - 170
+        )
+        roll.feed(self.font_small.render(text, True, GOOD), x=80)
+
     def _draw_category_select(self, entries, counts, index, top, visible):
         self._paper()
         self._page_header("Choose a Topic", "Want to focus on something specific?")
@@ -852,6 +876,42 @@ class CardBrickApp:
     VOCAB_MAX_PHASE = 3
     VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
     VOCAB_KNOWN_CONFIRM_SECONDS = 5.0
+
+    def screen_review_printer_handoff(self):
+        setup_roll = self._review_printer_handoff_roll
+        self._review_printer_handoff_roll = None
+        if setup_roll is None or self.settings.get("reduced_motion"):
+            return "REVIEW"
+
+        review_roll = self._new_roll()
+
+        while setup_roll.busy:
+            action = self.poll()
+            if action:
+                setup_roll.finish()
+            else:
+                setup_roll.update()
+            self._paper(setup_roll)
+            self._draw_roll(setup_roll)
+            self._footer("Topic selected", "Looking over to the card printer...")
+            self.present()
+            self.clock.tick(FPS)
+
+        frames = max(1, int(FPS * 0.32))
+        for frame in range(frames + 1):
+            if self.poll():
+                return "REVIEW"
+            t = frame / frames
+            eased = t * t * (3 - 2 * t)
+            old_x = -int(self.w * eased)
+            new_x = self.w - int(self.w * eased)
+            self.screen.fill(BG)
+            self._draw_printer_view_at(setup_roll, old_x)
+            self._draw_printer_view_at(review_roll, new_x)
+            self._footer("Topic selected", "Card printer ready")
+            self.present()
+            self.clock.tick(FPS)
+        return "REVIEW"
 
     def screen_review(self):
         if self._session_bonus:
@@ -1470,9 +1530,11 @@ class CardBrickApp:
                 if more or bonus:
                     self._session_bonus = bonus
                     return "REVIEW"
-                return "CHILD_START"
+                self._start_printer_handoff_roll = roll
+                return "START_PRINTER_HANDOFF"
             if action in ("south_button", "select"):
-                return "CHILD_START"
+                self._start_printer_handoff_roll = roll
+                return "START_PRINTER_HANDOFF"
 
             roll.update()
             self._paper(roll)
@@ -1480,6 +1542,38 @@ class CardBrickApp:
             self._footer(go_label, "X = Calendar   START = Quit")
             self.present()
             self.clock.tick(FPS)
+
+    def screen_start_printer_handoff(self):
+        review_roll = self._start_printer_handoff_roll
+        self._start_printer_handoff_roll = None
+        if review_roll is None or self.settings.get("reduced_motion"):
+            return "CHILD_START"
+
+        status = self.service.sprint_status(profile=self.profile)
+        startable = status["next_sprint_cards"] > 0
+        bonus = not startable and status["bonus_cards"] > 0
+        start_roll = self._build_child_start_roll(status, startable, bonus)
+        start_roll.finish()
+        self._ticket_printed = True
+
+        if review_roll.busy:
+            review_roll.finish()
+
+        frames = max(1, int(FPS * 0.32))
+        for frame in range(frames + 1):
+            if self.poll():
+                return "CHILD_START"
+            t = frame / frames
+            eased = t * t * (3 - 2 * t)
+            start_x = -self.w + int(self.w * eased)
+            review_x = int(self.w * eased)
+            self.screen.fill(BG)
+            self._draw_printer_view_at(start_roll, start_x)
+            self._draw_printer_view_at(review_roll, review_x)
+            self._footer("Returning to the setup printer")
+            self.present()
+            self.clock.tick(FPS)
+        return "CHILD_START"
 
     # -- stamp calendar ---------------------------------------------------------------
 
@@ -2228,6 +2322,17 @@ class CardBrickApp:
 
     def _draw_roll(self, roll):
         roll.draw(self.screen, self.content_x0, self.content_x1, self.h - 44)
+
+    def _draw_printer_view_at(self, roll, x):
+        view = pygame.Surface((self.w, self.h))
+        previous = self.screen
+        self.screen = view
+        try:
+            self._paper(roll)
+            self._draw_roll(roll)
+        finally:
+            self.screen = previous
+        self.screen.blit(view, (x, 0))
 
     def _menu_row(self, text, x, y, selected, font=None):
         """One list entry. Selection is a vermillion margin marker plus
