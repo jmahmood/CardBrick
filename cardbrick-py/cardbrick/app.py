@@ -241,6 +241,7 @@ class CardBrickApp:
         self._session_deck_filter = None  # child's per-sitting deck pick
         self._session_category_filter = None  # ...and per-sitting tag pick
         self._session_bonus = False  # next sprint ignores the daily goal
+        self._deck_select_handoff_roll = None
         self._sprint_label = ""  # "Sprint 3/8" shown in the review header
         self._ticket_printed = False  # child-start prints once per run
         self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
@@ -631,11 +632,10 @@ class CardBrickApp:
                 return "CALENDAR"
             if action in ("east_button", "unmapped") and (startable or bonus):
                 self._session_bonus = bonus
-                return (
-                    "DECK_SELECT"
-                    if len(available_decks) > 1
-                    else self._next_after_deck_choice()
-                )
+                if len(available_decks) > 1:
+                    self._deck_select_handoff_roll = roll
+                    return "DECK_SELECT"
+                return self._next_after_deck_choice()
 
             roll.update()
             self._paper(roll)
@@ -671,9 +671,17 @@ class CardBrickApp:
         index = 0
         top = 0
         visible = 6
+        transition_roll = self._deck_select_handoff_roll
+        self._deck_select_handoff_roll = None
+        if transition_roll is not None:
+            self._print_deck_select_transition(
+                transition_roll, entries, counts, top, visible
+            )
 
         while True:
             action = self.poll()
+            if action and transition_roll is not None and transition_roll.busy:
+                transition_roll.finish()
             if action in ("start", "south_button", "select"):
                 return "CHILD_START"
             if action == "dpad_up":
@@ -685,20 +693,49 @@ class CardBrickApp:
                 return self._next_after_deck_choice()
             top = min(max(top, index - visible + 1), index)
 
-            self._paper()
-            self._page_header("Choose a Deck", "Which deck do you want to study?")
-            y = 140
-            for i in range(top, min(top + visible, len(entries))):
-                label = entries[i][0]
-                due, new = counts[i]
-                text = self._truncate_to_width(
-                    self.font, f"{label}   ({due + new} due)", self.w - 160
-                )
-                self._menu_row(text, 80, y, i == index)
-                y += 44
+            if transition_roll is not None and transition_roll.busy:
+                transition_roll.update()
+                self._paper(transition_roll)
+                self._draw_roll(transition_roll)
+            else:
+                transition_roll = None
+                self._draw_deck_select(entries, counts, index, top, visible)
             self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
+
+    def _print_deck_select_transition(self, roll, entries, counts, top, visible):
+        """Continue the child-start ticket into the deck picker instead
+        of replacing the paper with a fresh static screen."""
+        roll.feed_page()
+        roll.feed_gap(10)
+        roll.feed(self.font_big.render("Choose a Deck", True, FG))
+        roll.feed_gap(6)
+        roll.feed(self.font_small.render("Which deck do you want to study?", True, DIM))
+        roll.feed_gap(8)
+        roll.feed(self._rule_surface())
+        roll.feed_gap(10)
+        for i in range(top, min(top + visible, len(entries))):
+            label = entries[i][0]
+            due, new = counts[i]
+            text = self._truncate_to_width(
+                self.font, f"{label}   ({due + new} due)", self.w - 160
+            )
+            roll.feed(self.font.render(text, True, FG), x=80)
+            roll.feed_gap(8)
+
+    def _draw_deck_select(self, entries, counts, index, top, visible):
+        self._paper()
+        self._page_header("Choose a Deck", "Which deck do you want to study?")
+        y = 140
+        for i in range(top, min(top + visible, len(entries))):
+            label = entries[i][0]
+            due, new = counts[i]
+            text = self._truncate_to_width(
+                self.font, f"{label}   ({due + new} due)", self.w - 160
+            )
+            self._menu_row(text, 80, y, i == index)
+            y += 44
 
     def screen_category_select(self):
         """Child-facing topic/tag picker: shown only when the parent
