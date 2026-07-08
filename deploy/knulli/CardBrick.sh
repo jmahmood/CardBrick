@@ -41,26 +41,6 @@ fail() {
     exit 1
 }
 
-# ------------------------------------------------------- seed deck(s)
-# If the package was built with --deck (see PACKAGING.md), a database
-# already containing the imported deck(s) ships at GAMEDIR/seed-data/.
-# Install it on this device's very first boot only — i.e. only if no
-# database exists yet in the data dir — so a later package update never
-# clobbers review progress that has since accumulated on-device.
-SEED_DIR="${GAMEDIR}/seed-data"
-if [ -f "${SEED_DIR}/cardbrick.db" ] && [ ! -f "${CARD_BRICK_DATA_DIR}/cardbrick.db" ]; then
-    log "first boot: installing seeded deck(s) from ${SEED_DIR}"
-    if cp "${SEED_DIR}/cardbrick.db" "${CARD_BRICK_DATA_DIR}/cardbrick.db" 2>>"$LAUNCH_LOG"; then
-        if [ -d "${SEED_DIR}/media" ]; then
-            mkdir -p "${CARD_BRICK_DATA_DIR}/media"
-            cp -R "${SEED_DIR}/media/." "${CARD_BRICK_DATA_DIR}/media/" 2>>"$LAUNCH_LOG"
-        fi
-        log "seed install OK"
-    else
-        log "WARN: seed install failed — starting with an empty database instead"
-    fi
-fi
-
 log "=== CardBrick launch $(date) ==="
 
 [ -d "$APP_DIR" ] || fail "app directory not found: $APP_DIR"
@@ -126,6 +106,54 @@ fi
 # The squashfs (and possibly the whole SD card) is read-only — keep
 # .pyc files out of the app tree.
 export PYTHONPYCACHEPREFIX="${CARD_BRICK_DATA_DIR}/.pycache"
+
+# ------------------------------------------------------- seed deck(s)
+# If the package was built with --deck (see PACKAGING.md), a database
+# already containing the imported deck(s) ships at GAMEDIR/seed-data/.
+# Install it when the device has no database yet, OR when the existing
+# database contains zero cards — an empty db is what every pre-seed
+# launch (even just the smoke test) leaves behind, and skipping in that
+# case would strand the device on the "No cards imported" screen
+# forever. A database with any cards in it is real progress and is
+# never touched; the empty one we do replace is still backed up.
+SEED_DB="${GAMEDIR}/seed-data/cardbrick.db"
+DEVICE_DB="${CARD_BRICK_DATA_DIR}/cardbrick.db"
+if [ -f "$SEED_DB" ]; then
+    INSTALL_SEED=""
+    if [ ! -f "$DEVICE_DB" ]; then
+        INSTALL_SEED="first boot (no database yet)"
+    else
+        CARD_COUNT="$("$PYTHON" -c '
+import sqlite3, sys
+try:
+    con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+    print(con.execute("SELECT COUNT(*) FROM cards").fetchone()[0])
+except Exception:
+    print(-1)
+' "$DEVICE_DB" 2>>"$LAUNCH_LOG")"
+        if [ "$CARD_COUNT" = "0" ]; then
+            STAMP="$(date +%Y%m%dT%H%M%S)"
+            mv "$DEVICE_DB" "${DEVICE_DB}.pre-seed-${STAMP}" 2>>"$LAUNCH_LOG"
+            rm -f "${DEVICE_DB}-wal" "${DEVICE_DB}-shm"
+            INSTALL_SEED="existing database is empty (0 cards; backed up as .pre-seed-${STAMP})"
+        else
+            log "seed-data present but device database has ${CARD_COUNT} card(s) — leaving it alone"
+        fi
+    fi
+    if [ -n "$INSTALL_SEED" ]; then
+        log "installing seeded deck(s): ${INSTALL_SEED}"
+        if cp "$SEED_DB" "$DEVICE_DB" 2>>"$LAUNCH_LOG"; then
+            if [ -d "${GAMEDIR}/seed-data/media" ]; then
+                mkdir -p "${CARD_BRICK_DATA_DIR}/media"
+                cp -R "${GAMEDIR}/seed-data/media/." \
+                      "${CARD_BRICK_DATA_DIR}/media/" 2>>"$LAUNCH_LOG"
+            fi
+            log "seed install OK"
+        else
+            log "WARN: seed install failed — starting without seeded decks"
+        fi
+    fi
+fi
 
 # ------------------------------------------------------------------ SDL
 # `mali` is what the upstream runtime validated on Knulli / Allwinner

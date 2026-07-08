@@ -120,10 +120,13 @@ library, not pygame or the ARM64 runtime, so it runs directly on the
 host — a throwaway local venv is created automatically at
 `scripts/.deckbuild-venv` the first time, if `fsrs` isn't already
 importable), producing a database staged as `CardBrick/seed-data/`.
-`CardBrick.sh` copies it into `$CARD_BRICK_DATA_DIR` the **first time
-the app runs on a given device** — i.e. only when no `cardbrick.db`
-exists there yet — so redeploying an updated package later never
-overwrites review progress that has since accumulated on the device.
+`CardBrick.sh` copies it into `$CARD_BRICK_DATA_DIR` when the device
+has no database yet **or the one it has contains zero cards** (an
+empty db is what any earlier launch — even just a smoke test — leaves
+behind; it is backed up as `.pre-seed-*` before being replaced). A
+database with any cards in it is never touched, so redeploying an
+updated package later can't overwrite review progress that has
+accumulated on the device.
 Multiple deck files are imported one after another into the same
 database (imports are additive, per §5 of `README.md`).
 
@@ -205,7 +208,7 @@ bash /userdata/roms/ports/CardBrick.sh --input-diagnostic
 | Smoke test WARN on joystick/audio over SSH | Normal when ES owns the controller or audio is busy; verify from the Ports menu launch. |
 | Ports menu doesn't list CardBrick | Update Gamelists (Start → Games Settings) or reboot. |
 | Wrong/laggy buttons | Parent Mode → Controller test & setup; hold any button ~3 s to force calibration. |
-| Baked-in deck(s) didn't appear | Seeding is first-boot-only (never overwrites an existing `cardbrick.db`). Check `launch.log` for "installing seeded deck(s)"/"seed install OK". On a device that's already been booted once, either `rm /userdata/saves/cardbrick/cardbrick.db` (loses any progress since) or import manually via Parent Mode. |
+| Baked-in deck(s) didn't appear | Seeding installs when the device db is missing **or has 0 cards**; a db with cards in it is never overwritten. Check `launch.log`: "seed install OK" vs "device database has N card(s) — leaving it alone". If the device db has old/unwanted cards, run `admin reset` on-device (`bash CardBrick.sh admin reset --yes` over SSH) and relaunch — the seed installs on the next start. Also confirm the package actually shipped decks: `validate_package.sh` prints "seed-data DB OK: N card(s)". |
 | `validate_package.sh` reports 0 cards in seed-data | The `.apkg` needs "Support older Anki versions" checked at export (`README.md` §5) — the new zstd format is rejected. |
 
 ## Relationship to the older vendored-wheels docs
