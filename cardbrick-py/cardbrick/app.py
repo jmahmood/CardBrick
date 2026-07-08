@@ -689,6 +689,7 @@ class CardBrickApp:
     # No separate Again/Hard/Good/Easy buttons for these cards.
     VOCAB_MAX_PHASE = 3
     VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
+    VOCAB_KNOWN_CONFIRM_SECONDS = 5.0
 
     def screen_review(self):
         if self._session_bonus:
@@ -735,6 +736,7 @@ class CardBrickApp:
         flipped = False
         phase = 0  # vocab cards only: 0..VOCAB_MAX_PHASE
         vocab_detail = None  # vocab cards only: the vocab_cards row
+        known_confirmation = None  # vocab only: pending "I know this" confirmation
         shown_at = None
         audio_status = None
         menu = None  # action-menu overlay index, or None when closed
@@ -774,9 +776,11 @@ class CardBrickApp:
             audio_status = "playing" if self.audio.play(filename) else "missing"
 
         def begin_card(card):
-            nonlocal flipped, phase, vocab_detail, shown_at, audio_status
+            nonlocal flipped, phase, vocab_detail, known_confirmation
+            nonlocal shown_at, audio_status
             flipped = False
             phase = 0
+            known_confirmation = None
             vocab_detail = (
                 self.storage.get_vocab_detail(card["id"])
                 if card["card_type"] == "vocab"
@@ -790,6 +794,15 @@ class CardBrickApp:
                 audio_status = "missing"
             if auto_play:
                 play_vocab() if vocab_detail is not None else play(card, "front")
+
+        def confirm_known(mistake=False):
+            rating = (
+                self.VOCAB_PHASE_RATING[known_confirmation["phase"]]
+                if not mistake
+                else 1
+            )
+            session.answer(rating, elapsed_ms=known_confirmation["elapsed_ms"])
+            advance()
 
         def advance():
             """Fetch the next card after the current one was consumed.
@@ -816,6 +829,13 @@ class CardBrickApp:
         while True:
             if card is None:
                 return end_session()
+
+            if (
+                known_confirmation is not None
+                and time.monotonic() >= known_confirmation["deadline"]
+            ):
+                confirm_known()
+                continue
 
             action = self.poll()
             if action:
@@ -857,7 +877,18 @@ class CardBrickApp:
                     card = restored
                     begin_card(card)
             elif vocab_detail is not None:
-                if action in DPAD:
+                if known_confirmation is not None:
+                    if action == "east_button":
+                        confirm_known()
+                        continue
+                    if action == "south_button":
+                        confirm_known(mistake=True)
+                        continue
+                    if action == "r1":
+                        session.bury_current()
+                        advance()
+                        continue
+                elif action in DPAD:
                     if phase < self.VOCAB_MAX_PHASE:
                         phase += 1
                         if auto_play:
@@ -866,9 +897,19 @@ class CardBrickApp:
                     elapsed = int(
                         (self.service.now() - shown_at).total_seconds() * 1000
                     )
-                    session.answer(self.VOCAB_PHASE_RATING[phase], elapsed_ms=elapsed)
-                    advance()
-                    continue
+                    if phase >= self.VOCAB_MAX_PHASE:
+                        session.answer(self.VOCAB_PHASE_RATING[phase], elapsed_ms=elapsed)
+                        advance()
+                        continue
+                    known_confirmation = {
+                        "phase": phase,
+                        "elapsed_ms": elapsed,
+                        "deadline": time.monotonic()
+                        + self.VOCAB_KNOWN_CONFIRM_SECONDS,
+                    }
+                    phase = self.VOCAB_MAX_PHASE
+                    if auto_play:
+                        play_vocab()
                 elif action == "r1":
                     session.bury_current()
                     advance()
@@ -900,13 +941,22 @@ class CardBrickApp:
                     menu,
                     phase=phase,
                     vocab=vocab_detail,
+                    known_confirmation=known_confirmation,
                 )
                 needs_draw = False
                 heartbeat = 0
             self.clock.tick(FPS)
 
     def _draw_review(
-        self, session, card, flipped, audio_status, menu, phase=0, vocab=None
+        self,
+        session,
+        card,
+        flipped,
+        audio_status,
+        menu,
+        phase=0,
+        vocab=None,
+        known_confirmation=None,
     ):
         self.screen.fill(BG)
         header = card["deck"]
@@ -931,14 +981,19 @@ class CardBrickApp:
 
         if vocab is not None:
             self._draw_vocab_phases(card, vocab, phase, audio_status, top=60)
-            if phase < self.VOCAB_MAX_PHASE:
+            if known_confirmation is not None:
+                self._footer(
+                    "A = Yes, I knew it   B = I made a mistake",
+                    "Auto-confirms in 5s   START = Finish",
+                )
+            elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
                     "D-pad = Reveal more   A = I know this",
                     "L1 = Replay audio   R1 = Bury   SELECT = Menu",
                 )
             else:
                 self._footer(
-                    "A = I know this",
+                    "A = Go to next card",
                     "L1 = Replay audio   R1 = Bury   SELECT = Menu   START = Finish",
                 )
             if menu is not None:
