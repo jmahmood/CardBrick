@@ -5,6 +5,8 @@ to CLI players and finally to a silent no-op without ever crashing.
 """
 
 import os
+import struct
+import wave
 
 from cardbrick.audio import (AudioPlayer, _CommandBackend, _NullBackend)
 
@@ -38,6 +40,14 @@ def make_backend(available, custom_cmd=None, launched=None):
     backend = _CommandBackend(custom_cmd=custom_cmd, which_fn=which,
                               popen_fn=popen)
     return backend, launched
+
+
+def write_wav(path, samples):
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(8000)
+        wf.writeframes(b"".join(struct.pack("<h", s) for s in samples))
 
 
 def test_command_backend_picks_player_by_extension():
@@ -119,3 +129,70 @@ def test_extra_media_dir_is_used_as_readonly_fallback(tmp_path):
                                                       "hola.mp3")
     assert player.play("hola.mp3") is True
     assert launched[0].argv[-1] == os.path.join(str(fallback), "hola.mp3")
+
+
+def test_missing_sound_effect_is_soft(tmp_path):
+    backend, launched = make_backend({"ffplay"})
+    player = AudioPlayer(str(tmp_path), backend=backend, sfx_dirs=[])
+
+    assert player.play_effect("missing.wav") is False
+    assert launched == []
+
+
+def test_sound_effect_with_null_backend_never_crashes(tmp_path):
+    sfx_dir = tmp_path / "sfx"
+    sfx_dir.mkdir()
+    (sfx_dir / "line-tick.wav").write_bytes(b"x")
+    player = AudioPlayer(str(tmp_path), backend=_NullBackend(),
+                         sfx_dirs=[str(sfx_dir)])
+
+    assert player.play_effect("line-tick.wav") is False
+
+
+def test_existing_sound_effect_plays_from_sfx_dir(tmp_path):
+    sfx_dir = tmp_path / "sfx"
+    sfx_dir.mkdir()
+    (sfx_dir / "line-tick.wav").write_bytes(b"x")
+    backend, launched = make_backend({"aplay"})
+    player = AudioPlayer(str(tmp_path), backend=backend,
+                         sfx_dirs=[str(sfx_dir)])
+
+    assert player.play_effect("line-tick.wav") is True
+    assert launched[0].argv[-1] == os.path.join(str(sfx_dir),
+                                                "line-tick.wav")
+
+
+def test_sound_effect_does_not_stop_media_playback(tmp_path):
+    media_dir = tmp_path / "media"
+    sfx_dir = tmp_path / "sfx"
+    media_dir.mkdir()
+    sfx_dir.mkdir()
+    (media_dir / "hola.mp3").write_bytes(b"x")
+    (sfx_dir / "line-tick.wav").write_bytes(b"x")
+    backend, launched = make_backend({"mpg123", "aplay"})
+    player = AudioPlayer(str(media_dir), backend=backend,
+                         sfx_dirs=[str(sfx_dir)])
+
+    assert player.play("hola.mp3") is True
+    assert player.play_effect("line-tick.wav") is True
+    assert len(launched) == 2
+    assert launched[0].argv[0] == "mpg123"
+    assert launched[1].argv[0] == "aplay"
+    assert not launched[0].terminated
+
+
+def test_command_sound_effect_volume_uses_scaled_wav(tmp_path):
+    sfx_dir = tmp_path / "sfx"
+    sfx_dir.mkdir()
+    source = sfx_dir / "line-tick.wav"
+    write_wav(source, [10000, -10000])
+    backend, launched = make_backend({"aplay"})
+    player = AudioPlayer(str(tmp_path), backend=backend,
+                         sfx_dirs=[str(sfx_dir)])
+
+    assert player.play_effect("line-tick.wav", volume=0.25) is True
+    scaled_path = launched[0].argv[-1]
+    assert scaled_path != str(source)
+    with wave.open(scaled_path, "rb") as wf:
+        frames = wf.readframes(wf.getnframes())
+    assert struct.unpack("<hh", frames) == (2500, -2500)

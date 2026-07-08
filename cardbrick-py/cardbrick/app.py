@@ -109,6 +109,8 @@ RATING_FOR_SEMANTIC = {
 }
 
 DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
+LINE_FEED_SFX = "line-tick.wav"
+PAGE_FEED_SFX = "page-whirr.wav"
 
 _BUNDLED_FONT_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts"
@@ -415,6 +417,7 @@ class CardBrickApp:
             "PARENT_CATEGORIES": self.screen_parent_categories,
             "PARENT_DECKS": self.screen_parent_decks,
             "PARENT_LIMITS": self.screen_parent_limits,
+            "PARENT_AUDIO": self.screen_parent_audio,
             "PARENT_SUSPENDED": self.screen_parent_suspended,
             "PARENT_PROGRESS": self.screen_parent_progress,
             "INPUT_DIAG": self.screen_input_diagnostic,
@@ -819,6 +822,7 @@ class CardBrickApp:
         menu = None  # action-menu overlay index, or None when closed
         needs_draw = True
         heartbeat = 0
+        tear_next_page = False
 
         # The card is *printed* onto the paper roll: content is fed as
         # line feeds, each new card starts with a page feed past a
@@ -968,7 +972,7 @@ class CardBrickApp:
 
         def begin_card(card, new_page=True):
             nonlocal flipped, phase, vocab_detail, known_confirmation
-            nonlocal shown_at, audio_status, printed_phase
+            nonlocal shown_at, audio_status, printed_phase, tear_next_page
             flipped = False
             phase = 0
             printed_phase = 0
@@ -989,7 +993,9 @@ class CardBrickApp:
             # Print the card. new_page=False after an undo rewind: the
             # spool has already rolled back to this page's blank start.
             # The very first page on the roll starts without a tear.
-            roll.feed_page(perf=new_page and roll.page_count > 0)
+            tear = tear_next_page
+            tear_next_page = False
+            roll.feed_page(perf=new_page and roll.page_count > 0, tear=tear)
             print_stub()
             print_front()
 
@@ -1014,6 +1020,16 @@ class CardBrickApp:
             card = None if session.time_limit_reached() else session.current_card()
             if card:
                 begin_card(card)
+
+        def discard_current(stamp_text, suspend=False):
+            nonlocal tear_next_page
+            if suspend:
+                session.suspend_current()
+            else:
+                session.bury_current()
+            print_small_stamp(stamp_text)
+            tear_next_page = True
+            advance()
 
         def end_session():
             self.audio.stop()
@@ -1062,13 +1078,9 @@ class CardBrickApp:
                             card = restored
                             begin_card(card, new_page=not rewound)
                     elif choice.startswith("Bury"):
-                        session.bury_current()
-                        print_small_stamp("BURIED")
-                        advance()
+                        discard_current("BURIED")
                     elif choice.startswith("Suspend"):
-                        session.suspend_current()
-                        print_small_stamp("SUSPENDED")
-                        advance()
+                        discard_current("SUSPENDED", suspend=True)
                     elif choice == "End session":
                         return end_session()
             elif action == "start":
@@ -1095,9 +1107,7 @@ class CardBrickApp:
                         confirm_known(mistake=True)
                         continue
                     if action == "r1":
-                        session.bury_current()
-                        print_small_stamp("BURIED")
-                        advance()
+                        discard_current("BURIED")
                         continue
                 elif action in DPAD:
                     if phase < self.VOCAB_MAX_PHASE:
@@ -1125,9 +1135,7 @@ class CardBrickApp:
                     if auto_play:
                         play_vocab()
                 elif action == "r1":
-                    session.bury_current()
-                    print_small_stamp("BURIED")
-                    advance()
+                    discard_current("BURIED")
                     continue
             elif not flipped:
                 if action in DPAD or action in ("east_button", "unmapped"):
@@ -1142,9 +1150,7 @@ class CardBrickApp:
                 advance()
                 continue
             elif action == "r1":
-                session.bury_current()
-                print_small_stamp("BURIED")
-                advance()
+                discard_current("BURIED")
                 continue
 
             # The screen is static between inputs: redraw only while
@@ -1535,6 +1541,7 @@ class CardBrickApp:
             ("Decks", "PARENT_DECKS"),
             ("Categories", "PARENT_CATEGORIES"),
             ("Daily goal & sprints", "PARENT_LIMITS"),
+            ("Paper feed sound", "PARENT_AUDIO"),
             ("Suspended cards", "PARENT_SUSPENDED"),
             ("Progress", "PARENT_PROGRESS"),
             ("Calendar (stamps)", "CALENDAR"),
@@ -1790,6 +1797,56 @@ class CardBrickApp:
                 self.screen.blit(value, (self.w - 130, y))
                 y += 52
             self._footer("D-pad = Adjust   L1/R1 = +/-10   B = Save & back")
+            self.present()
+            self.clock.tick(FPS)
+
+    def screen_parent_audio(self):
+        enabled = bool(self.settings.get("paper_feed_sfx_enabled", True))
+        volume = int(round(
+            float(self.settings.get("paper_feed_sfx_volume", 0.15)) * 100
+        ))
+        volume = min(max(volume, 0), 100)
+        index = 0
+        fields = ("Paper feed SFX", "Volume")
+
+        def save():
+            self.settings.set("paper_feed_sfx_enabled", enabled)
+            self.settings.set("paper_feed_sfx_volume", volume / 100)
+
+        while True:
+            action = self.poll()
+            if action in ("start", "south_button", "select"):
+                save()
+                return "PARENT_MENU"
+            if action == "dpad_up":
+                index = (index - 1) % len(fields)
+            elif action == "dpad_down":
+                index = (index + 1) % len(fields)
+            elif action == "east_button" and index == 0:
+                enabled = not enabled
+            elif action in ("dpad_left", "dpad_right", "l1", "r1") and index == 1:
+                step = {
+                    "dpad_left": -5,
+                    "dpad_right": 5,
+                    "l1": -10,
+                    "r1": 10,
+                }[action]
+                volume = min(max(volume + step, 0), 100)
+                self.audio.play_effect(LINE_FEED_SFX, volume=volume / 100)
+
+            self._paper()
+            self._page_header("Paper Feed Sound", "Tick and page-feed whirr")
+            rows = [
+                ("Paper feed SFX", "On" if enabled else "Off"),
+                ("Volume", f"{volume}%"),
+            ]
+            y = 150
+            for i, (label, value) in enumerate(rows):
+                self._menu_row(label, 100, y, i == index)
+                value_s = self.font.render(value, True, FG)
+                self.screen.blit(value_s, (self.w - 190, y))
+                y += 56
+            self._footer("A = Toggle   D-pad/L1/R1 = Volume", "B = Save & back")
             self.present()
             self.clock.tick(FPS)
 
@@ -2073,9 +2130,19 @@ class CardBrickApp:
         roll = PaperRoll(
             print_y=self.h * 2 // 3 if print_y is None else print_y,
             reduced_motion=bool(self.settings.get("reduced_motion")),
+            on_feed=self._paper_feed_sound,
         )
         roll.perf_color = DIVIDER
         return roll
+
+    def _paper_feed_sound(self, event):
+        if not self.settings.get("paper_feed_sfx_enabled", True):
+            return
+        volume = float(self.settings.get("paper_feed_sfx_volume", 0.15))
+        if event == "line":
+            self.audio.play_effect(LINE_FEED_SFX, volume=volume)
+        elif event == "page":
+            self.audio.play_effect(PAGE_FEED_SFX, volume=volume)
 
     def _draw_roll(self, roll):
         roll.draw(self.screen, self.content_x0, self.content_x1, self.h - 44)

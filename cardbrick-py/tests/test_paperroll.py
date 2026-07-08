@@ -84,6 +84,62 @@ def test_page_feed_inserts_perforation_group():
     roll.feed_page()
     assert roll.page_count == 2
     assert roll.offset == 30 + PAGE_GAP + PERF_H + PAGE_GAP - 100
+    assert any(item.kind == "perf" for item in roll._items)
+
+
+def test_torn_page_feed_uses_jagged_perforation_kind():
+    roll = make_roll(reduced_motion=True)
+    roll.feed_page(perf=False)
+    roll.feed(None, h=30)
+    roll.feed_page(tear=True)
+
+    assert roll.page_count == 2
+    assert any(item.kind == "tear-perf" for item in roll._items)
+    assert not any(item.kind == "perf" and item.event == "page"
+                   for item in roll._items)
+
+
+def test_feed_perf_remains_clean_lone_perforation():
+    roll = make_roll(reduced_motion=True)
+    roll.feed_perf()
+
+    assert [(item.kind, item.event) for item in roll._items] == [
+        ("perf", None)
+    ]
+
+
+def test_feed_events_fire_for_animated_content_and_page_feed():
+    events = []
+    roll = make_roll(on_feed=events.append)
+    roll.feed_page(perf=False)
+    roll.feed(None, h=30)
+    settle(roll)
+    roll.feed_page()
+    settle(roll)
+
+    assert events == ["line", "page"]
+
+
+def test_finish_does_not_burst_feed_events():
+    events = []
+    roll = make_roll(on_feed=events.append)
+    roll.feed_page(perf=False)
+    roll.feed(None, h=30)
+    roll.feed_page()
+
+    roll.finish()
+
+    assert events == []
+
+
+def test_reduced_motion_does_not_emit_feed_events():
+    events = []
+    roll = make_roll(reduced_motion=True, on_feed=events.append)
+    roll.feed_page(perf=False)
+    roll.feed(None, h=30)
+    roll.feed_page()
+
+    assert events == []
 
 
 def test_rewind_page_rolls_back_to_previous_page_start():

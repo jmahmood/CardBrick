@@ -84,6 +84,9 @@ therefore auto-selects the first working backend and logs the choice:
 
 Override with `CARDBRICK_AUDIO=auto|mixer|command|none` or point at an
 exact player with `CARDBRICK_AUDIO_CMD="mpg123 -q {file}"`.
+Paper-feed UI sounds can be adjusted on-device in Parent Mode →
+Paper feed sound, or by editing `paper_feed_sfx_enabled` and
+`paper_feed_sfx_volume` in `settings.json`.
 
 ## Usage
 

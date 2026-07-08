@@ -40,19 +40,21 @@ PAGE_GAP = 36
 
 
 class _Item:
-    __slots__ = ("kind", "surf", "h", "x")
+    __slots__ = ("kind", "surf", "h", "x", "event")
 
-    def __init__(self, kind, surf, h, x=None):
-        self.kind = kind  # "surf" | "perf" | "gap"
+    def __init__(self, kind, surf, h, x=None, event=None):
+        self.kind = kind  # "surf" | "perf" | "tear-perf" | "gap"
         self.surf = surf
         self.h = h
         self.x = x  # None = centred in the content span
+        self.event = event
 
 
 class PaperRoll:
-    def __init__(self, print_y, reduced_motion=False):
+    def __init__(self, print_y, reduced_motion=False, on_feed=None):
         self.print_y = print_y  # screen row the write point rests on
         self.reduced_motion = reduced_motion
+        self.on_feed = on_feed
         self._items = []
         self._queue = deque()
         self._base = 0.0  # roll coordinate of _items[0]'s top edge
@@ -86,7 +88,7 @@ class PaperRoll:
         self._queue.append(_Item("perf", None, PERF_H))
         self._maybe_snap()
 
-    def feed_page(self, perf=True):
+    def feed_page(self, perf=True, tear=False):
         """Advance to fresh paper for a new page (card).
 
         The perforation group is queued like any other content, so the
@@ -95,7 +97,8 @@ class PaperRoll:
         """
         if perf:
             self._queue.append(_Item("gap", None, PAGE_GAP))
-            self._queue.append(_Item("perf", None, PERF_H))
+            kind = "tear-perf" if tear else "perf"
+            self._queue.append(_Item(kind, None, PERF_H, event="page"))
             self._queue.append(_Item("gap", None, PAGE_GAP))
         self._queue.append(_Item("page-start", None, 0))
         self._maybe_snap()
@@ -145,7 +148,7 @@ class PaperRoll:
             # perforation) so only real content paces the feed.
             while self._queue:
                 item = self._queue.popleft()
-                self._commit(item)
+                self._commit(item, notify=True)
                 if item.kind not in ("gap", "page-start"):
                     break
         self.offset += (self._target - self.offset) * EASE
@@ -154,13 +157,18 @@ class PaperRoll:
         self._prune()
         return self.busy
 
-    def _commit(self, item):
+    def _commit(self, item, notify=False):
         if item.kind == "page-start":
             self._pages.append((self._total, len(self._items)))
         else:
             self._items.append(item)
             self._total += item.h
         self._target = self._total - self.print_y
+        if notify and self.on_feed:
+            if item.kind == "surf":
+                self.on_feed("line")
+            elif item.event:
+                self.on_feed(item.event)
 
     def _maybe_snap(self):
         if self.reduced_motion:
@@ -194,6 +202,23 @@ class PaperRoll:
                 mid = int(top + item.h / 2)
                 for xx in range(x0 + 6, x1 - 10, 16):
                     pygame.draw.line(screen, self.perf_color, (xx, mid), (xx + 8, mid), 2)
+            elif item.kind == "tear-perf":
+                mid = int(top + item.h / 2)
+                points = []
+                offsets = (0, -4, 3, -2, 4, -3, 2, -1)
+                for i, xx in enumerate(range(x0 + 6, x1 - 8, 14)):
+                    points.append((xx, mid + offsets[i % len(offsets)]))
+                if len(points) >= 2:
+                    pygame.draw.lines(screen, self.perf_color, False, points, 2)
+                    for i, (px, py) in enumerate(points[1:-1:3], start=1):
+                        direction = -1 if i % 2 else 1
+                        pygame.draw.line(
+                            screen,
+                            self.perf_color,
+                            (px, py),
+                            (px + 6, py + 5 * direction),
+                            1,
+                        )
             elif item.surf is not None:
                 x = item.x if item.x is not None else x0 + (x1 - x0 - item.surf.get_width()) // 2
                 screen.blit(item.surf, (x, int(top)))
