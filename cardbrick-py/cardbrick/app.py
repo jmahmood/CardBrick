@@ -50,7 +50,7 @@ Controller-first and deployment-hardened for Knulli-style devices:
 - A bundled Unicode font covers Spanish/Japanese glyphs when present;
   font resolution and all startup facts are logged (see bootlog.py).
 
-Keyboard fallback for desktop testing: arrows reveal, 1/2/3/4 =
+Keyboard fallback for desktop testing: Down reveals, 1/2/3/4 =
 Again/Hard/Good/Easy (or literal A/B/X/Y keys), L replay, R bury,
 U undo, Tab menu, Esc finish/quit.
 """
@@ -64,8 +64,15 @@ import pygame
 
 from .bootlog import log_display_diagnostics, log_pygame_versions
 from .importer import ApkgError, import_apkg
-from .input_map import FACE_LABELS, STUDY_ACTIONS, InputMap, InputTranslator
-from .paperroll import PaperRoll
+from .input_map import (
+    AXIS_THRESHOLD,
+    FACE_LABELS,
+    KEYBOARD_SEMANTICS,
+    STUDY_ACTIONS,
+    InputMap,
+    InputTranslator,
+)
+from .paperroll import PAGE_GAP, PERF_H, PaperRoll
 from .scheduler import iso
 from .session import StudySession
 from .textutil import wrap_text
@@ -249,6 +256,7 @@ class CardBrickApp:
         self._ticket_printed = False  # child-start prints once per run
         self._calendar_return = "CHILD_START"  # where the stamp calendar exits to
         self.input = InputTranslator(self.input_map)
+        self._held_inputs = {}  # input source -> semantic currently held
 
         pygame.init()
         log_pygame_versions()
@@ -472,6 +480,7 @@ class CardBrickApp:
                 self._joysticks.pop(event.instance_id, None)
                 log.warning("joystick disconnected")
                 continue
+            self._track_held_input(event)
             action = self.input.translate(event)
             if action:
                 if action == "select":
@@ -479,6 +488,72 @@ class CardBrickApp:
                 if action == "start":
                     return "select"
                 return action
+
+    def _track_held_input(self, event):
+        """Remember held semantic inputs so review can detect a long
+        Up press even when SDL emits only a press event and a later
+        release/centre event."""
+        if event.type == pygame.KEYDOWN:
+            semantic = self._semantic_for_key(event.key)
+            if semantic:
+                self._held_inputs[("key", event.key)] = semantic
+        elif event.type == pygame.KEYUP:
+            self._held_inputs.pop(("key", event.key), None)
+        elif event.type == pygame.JOYBUTTONDOWN:
+            semantic = self.input_map.semantic_for_button(event.button)
+            if semantic:
+                source = ("button", getattr(event, "instance_id", 0), event.button)
+                self._held_inputs[source] = semantic
+        elif event.type == pygame.JOYBUTTONUP:
+            source = ("button", getattr(event, "instance_id", 0), event.button)
+            self._held_inputs.pop(source, None)
+        elif event.type == pygame.JOYHATMOTION:
+            source = ("hat", getattr(event, "instance_id", 0), event.hat)
+            self._held_inputs.pop(source, None)
+            semantic = self._semantic_for_hat(event.value)
+            if semantic:
+                self._held_inputs[source] = semantic
+        elif event.type == pygame.JOYAXISMOTION and event.axis <= 1:
+            source = ("axis", getattr(event, "instance_id", 0), event.axis)
+            self._held_inputs.pop(source, None)
+            semantic = self._semantic_for_axis(event.axis, event.value)
+            if semantic:
+                self._held_inputs[source] = semantic
+
+    def _semantic_held(self, semantic):
+        return semantic in self._held_inputs.values()
+
+    @staticmethod
+    def _semantic_for_key(key):
+        name = pygame.key.name(key)
+        return KEYBOARD_SEMANTICS.get(name)
+
+    @staticmethod
+    def _semantic_for_hat(value):
+        x, y = value
+        if y == 1:
+            return "dpad_up"
+        if y == -1:
+            return "dpad_down"
+        if x == -1:
+            return "dpad_left"
+        if x == 1:
+            return "dpad_right"
+        return None
+
+    @staticmethod
+    def _semantic_for_axis(axis, value):
+        if axis == 0:
+            if value > AXIS_THRESHOLD:
+                return "dpad_right"
+            if value < -AXIS_THRESHOLD:
+                return "dpad_left"
+        elif axis == 1:
+            if value > AXIS_THRESHOLD:
+                return "dpad_down"
+            if value < -AXIS_THRESHOLD:
+                return "dpad_up"
+        return None
 
     # -- child start -----------------------------------------------------------------
 
@@ -553,57 +628,19 @@ class CardBrickApp:
             self.clock.tick(FPS)
 
     def _build_child_start_roll(self, status, startable, bonus):
-        categories = self.profile["active_categories"]
-        cat_label = (
-            "All categories"
-            if categories is None
-            else ", ".join(categories)
-            if categories
-            else "No categories set"
-        )
-        decks = self.profile["active_decks"]
-        deck_label = (
-            "All decks"
-            if decks is None
-            else ", ".join(decks)
-            if decks
-            else "No decks set"
-        )
-
         # The day's job ticket, printed onto the roll once on first
         # entry this run; later visits snap instantly so navigation
         # never animates in the child's way.
-        text_max = self.content_x1 - self.content_x0 - 12
         roll = self._new_roll(print_y=self.h - 100)
         roll.feed_page(perf=False)
         roll.feed_gap(8)
         roll.feed(
             self._stub_surface(
-                "SPANISH PRACTICE",
+                "cardbrick",
                 self.service.now().astimezone().strftime("%a %b %d").upper(),
             ),
             reveal=False,
         )
-        roll.feed(self._rule_surface(), reveal=False)
-        roll.feed_gap(14)
-        roll.feed(self.font_big.render(self.profile["name"], True, FG))
-        roll.feed_gap(8)
-        # Long joined tag/deck lists must be truncated up front or they
-        # print off both edges of the paper.
-        roll.feed(
-            self.font.render(
-                self._truncate_to_width(self.font, cat_label, text_max), True, ACCENT
-            )
-        )
-        roll.feed_gap(2)
-        roll.feed(
-            self.font_small.render(
-                self._truncate_to_width(self.font_small, deck_label, text_max),
-                True,
-                DIM,
-            )
-        )
-        roll.feed_gap(12)
         roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(14)
         if startable:
@@ -683,77 +720,60 @@ class CardBrickApp:
             for _label, decks in entries
         ]
         index = 0
-        top = 0
-        visible = 6
-        transition_roll = self._deck_select_handoff_roll
+        roll = self._deck_select_handoff_roll
         self._deck_select_handoff_roll = None
-        setup_roll = transition_roll
-        if transition_roll is not None:
-            self._print_deck_select_transition(
-                transition_roll, entries, counts, top, visible
-            )
+        setup_roll = roll
+        if roll is None:
+            roll = self._new_roll()
+            setup_roll = None
+        rows = self._print_choice_page(
+            roll,
+            "Choose a Deck",
+            "Which deck do you want to study?",
+            entries,
+            counts,
+        )
+        if setup_roll is None:
+            roll.finish()
+            self._scroll_choice_to_index(roll, rows, index)
+        choice_aligned = setup_roll is None
 
         while True:
             action = self.poll()
-            if action and transition_roll is not None and transition_roll.busy:
-                transition_roll.finish()
+            if action and roll.printing_busy:
+                roll.finish()
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
             if action in ("start", "south_button", "select"):
                 return "CHILD_START"
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
             elif action == "dpad_down":
                 index = (index + 1) % len(entries)
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
             elif action == "east_button":
                 self._session_deck_filter = entries[index][1]
                 next_state = self._next_after_deck_choice()
                 if next_state == "CATEGORY_SELECT" and setup_roll is not None:
-                    self._category_select_handoff_roll = setup_roll
+                    roll.scroll_to_print_position()
+                    self._category_select_handoff_roll = roll
                 return next_state
-            top = min(max(top, index - visible + 1), index)
 
-            if transition_roll is not None and transition_roll.busy:
-                transition_roll.update()
-                self._paper(transition_roll)
-                self._draw_roll(transition_roll)
-            else:
-                transition_roll = None
-                self._draw_deck_select(entries, counts, index, top, visible)
+            if not roll.printing_busy and not choice_aligned:
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
+            if roll.busy:
+                roll.update()
+            self._paper(roll)
+            self._draw_roll(roll)
+            if not roll.printing_busy:
+                self._draw_choice_marker(roll, rows, index)
             self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
-
-    def _print_deck_select_transition(self, roll, entries, counts, top, visible):
-        """Continue the child-start ticket into the deck picker instead
-        of replacing the paper with a fresh static screen."""
-        roll.feed_page()
-        roll.feed_gap(10)
-        roll.feed(self.font_big.render("Choose a Deck", True, FG))
-        roll.feed_gap(6)
-        roll.feed(self.font_small.render("Which deck do you want to study?", True, DIM))
-        roll.feed_gap(8)
-        roll.feed(self._rule_surface(), reveal=False)
-        roll.feed_gap(10)
-        for i in range(top, min(top + visible, len(entries))):
-            label = entries[i][0]
-            due, new = counts[i]
-            text = self._truncate_to_width(
-                self.font, f"{label}   ({due + new} due)", self.w - 160
-            )
-            roll.feed(self.font.render(text, True, FG), x=80)
-            roll.feed_gap(8)
-
-    def _draw_deck_select(self, entries, counts, index, top, visible):
-        self._paper()
-        self._page_header("Choose a Deck", "Which deck do you want to study?")
-        y = 140
-        for i in range(top, min(top + visible, len(entries))):
-            label = entries[i][0]
-            due, new = counts[i]
-            text = self._truncate_to_width(
-                self.font, f"{label}   ({due + new} due)", self.w - 160
-            )
-            self._menu_row(text, 80, y, i == index)
-            y += 44
 
     def screen_category_select(self):
         """Child-facing topic/tag picker: shown only when the parent
@@ -778,66 +798,126 @@ class CardBrickApp:
             for _label, cats in entries
         ]
         index = 0
-        top = 0
-        visible = 6
-        transition_roll = self._category_select_handoff_roll
+        roll = self._category_select_handoff_roll
         self._category_select_handoff_roll = None
-        setup_roll = transition_roll
-        if transition_roll is not None:
-            self._print_category_select_transition(
-                transition_roll, entries, counts, top, visible
-            )
+        setup_roll = roll
+        if roll is None:
+            roll = self._new_roll()
+            setup_roll = None
+        rows = self._print_choice_page(
+            roll,
+            "Choose a Topic",
+            "Want to focus on something specific?",
+            entries,
+            counts,
+        )
+        if setup_roll is None:
+            roll.finish()
+            self._scroll_choice_to_index(roll, rows, index)
+        choice_aligned = setup_roll is None
 
         while True:
             action = self.poll()
-            if action and transition_roll is not None and transition_roll.busy:
-                transition_roll.finish()
+            if action and roll.printing_busy:
+                roll.finish()
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
             if action in ("start", "south_button", "select"):
                 return "CHILD_START"
             if action == "dpad_up":
                 index = (index - 1) % len(entries)
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
             elif action == "dpad_down":
                 index = (index + 1) % len(entries)
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
             elif action == "east_button":
                 self._session_category_filter = entries[index][1]
                 if setup_roll is not None:
-                    self._print_topic_selected(setup_roll, entries[index][0])
-                    self._review_printer_handoff_roll = setup_roll
+                    roll.scroll_to_print_position()
+                    self._print_topic_selected(roll, entries[index][0])
+                    self._review_printer_handoff_roll = roll
                     return "REVIEW_PRINTER_HANDOFF"
                 return "REVIEW"
-            top = min(max(top, index - visible + 1), index)
 
-            if transition_roll is not None and transition_roll.busy:
-                transition_roll.update()
-                self._paper(transition_roll)
-                self._draw_roll(transition_roll)
-            else:
-                transition_roll = None
-                self._draw_category_select(entries, counts, index, top, visible)
+            if not roll.printing_busy and not choice_aligned:
+                self._scroll_choice_to_index(roll, rows, index)
+                choice_aligned = True
+            if roll.busy:
+                roll.update()
+            self._paper(roll)
+            self._draw_roll(roll)
+            if not roll.printing_busy:
+                self._draw_choice_marker(roll, rows, index)
             self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
 
-    def _print_category_select_transition(self, roll, entries, counts, top, visible):
-        """Continue the existing roll into the topic picker."""
-        roll.feed_page()
-        roll.feed_gap(10)
-        roll.feed(self.font_big.render("Choose a Topic", True, FG))
-        roll.feed_gap(6)
-        roll.feed(
-            self.font_small.render("Want to focus on something specific?", True, DIM)
-        )
-        roll.feed_gap(8)
-        roll.feed(self._rule_surface(), reveal=False)
-        roll.feed_gap(10)
-        for i in range(top, min(top + visible, len(entries))):
-            label = entries[i][0]
+    def _print_choice_page(self, roll, title, subtitle, entries, counts):
+        """Print a full picker page and return row coordinates for the
+        moving selection mark. The choices live on the roll, so Up/Down
+        scrolls through printed paper instead of redrawing a window."""
+        cursor = roll._total + sum(item.h for item in roll._queue)
+
+        def feed_gap(h):
+            nonlocal cursor
+            roll.feed_gap(h)
+            cursor += h
+
+        def feed(surf, x=None, reveal=True):
+            nonlocal cursor
+            roll.feed(surf, x=x, reveal=reveal)
+            cursor += surf.get_height()
+
+        has_previous_page = roll.page_count > 0
+        roll.feed_page(perf=has_previous_page)
+        if has_previous_page:
+            cursor += PAGE_GAP + PERF_H + PAGE_GAP
+        feed_gap(10)
+        feed(self.font_big.render(title, True, FG))
+        feed_gap(6)
+        feed(self.font_small.render(subtitle, True, DIM))
+        feed_gap(8)
+        feed(self._rule_surface(), reveal=False)
+        feed_gap(10)
+        rows = []
+        for i, (label, _filter) in enumerate(entries):
             due, new = counts[i]
             text = self._truncate_to_width(
                 self.font, f"{label}   ({due + new} due)", self.w - 160
             )
-            roll.feed(self.font.render(text, True, FG), x=80)
-            roll.feed_gap(8)
+            surf = self.font.render(text, True, FG)
+            rows.append(
+                {
+                    "coord": cursor,
+                    "x": 80,
+                    "width": surf.get_width(),
+                }
+            )
+            feed(surf, x=80)
+            feed_gap(10)
+        return rows
+
+    def _scroll_choice_to_index(self, roll, rows, index):
+        if not rows:
+            return
+        focus_y = min(self.h - 150, 205)
+        wanted_offset = rows[index]["coord"] - focus_y
+        roll.scroll(wanted_offset - roll._view_target)
+
+    def _draw_choice_marker(self, roll, rows, index):
+        if not rows:
+            return
+        row = rows[index]
+        y = int(row["coord"] - roll.offset)
+        if y < -self.font.get_linesize() or y > self.h - 62:
+            return
+        x = row["x"]
+        marker = self.font.render("▶", True, ACCENT)
+        self.screen.blit(marker, (x - marker.get_width() - 12, y))
+        base = y + self.font.get_ascent() + 3
+        pygame.draw.line(self.screen, FG, (x, base), (x + row["width"], base), 2)
 
     def _print_topic_selected(self, roll, label):
         roll.feed_gap(10)
@@ -964,6 +1044,9 @@ class CardBrickApp:
         needs_draw = True
         heartbeat = 0
         tear_next_page = False
+        up_hold_started = None
+        up_hold_undo_fired = False
+        UP_UNDO_HOLD_SECONDS = 0.65
 
         # The card is *printed* onto the paper roll: content is fed as
         # line feeds, each new card starts with a page feed past a
@@ -1191,6 +1274,34 @@ class CardBrickApp:
             tear_next_page = True
             advance()
 
+        def undo_last_answer():
+            nonlocal card
+            restored = session.undo()
+            if restored is None:
+                return False
+            # Reverse feed: the spool visibly rolls back past the
+            # perforation, then the restored card prints again where it
+            # used to be.
+            rewound = roll.rewind_page()
+            card = restored
+            begin_card(card, new_page=not rewound)
+            return True
+
+        def before_flip_controls_active():
+            return (
+                menu is None
+                and card is not None
+                and not roll.printing_busy
+                and (
+                    (vocab_detail is None and not flipped)
+                    or (
+                        vocab_detail is not None
+                        and known_confirmation is None
+                        and phase < self.VOCAB_MAX_PHASE
+                    )
+                )
+            )
+
         def end_session():
             self.audio.stop()
             session.finish()
@@ -1212,6 +1323,27 @@ class CardBrickApp:
                     # Golden rule: never make the child wait. Any input
                     # snaps the feed to its end, then applies normally.
                     roll.finish()
+            up_is_held = self._semantic_held("dpad_up")
+            if not up_is_held:
+                up_hold_started = None
+                up_hold_undo_fired = False
+            elif before_flip_controls_active():
+                if up_hold_started is None:
+                    up_hold_started = time.monotonic()
+                    up_hold_undo_fired = False
+                elif (
+                    not up_hold_undo_fired
+                    and time.monotonic() - up_hold_started >= UP_UNDO_HOLD_SECONDS
+                ):
+                    if undo_last_answer():
+                        needs_draw = True
+                    up_hold_undo_fired = True
+            else:
+                # If this hold already fired, keep it spent until the
+                # user releases Up. Otherwise start timing only once the
+                # pre-flip controls are active.
+                if not up_hold_undo_fired:
+                    up_hold_started = None
             if menu is not None:
                 if action == "dpad_up":
                     menu = (menu - 1) % len(self.MENU_ENTRIES)
@@ -1222,14 +1354,7 @@ class CardBrickApp:
                 elif action == "east_button":
                     choice, menu = self.MENU_ENTRIES[menu], None
                     if choice.startswith("Undo"):
-                        restored = session.undo()
-                        if restored is not None:
-                            # Reverse feed: the spool visibly rolls back
-                            # past the perforation, then the restored
-                            # card prints again where it used to be.
-                            rewound = roll.rewind_page()
-                            card = restored
-                            begin_card(card, new_page=not rewound)
+                        undo_last_answer()
                     elif choice.startswith("Bury"):
                         discard_current("BURIED")
                     elif choice.startswith("Suspend"):
@@ -1246,11 +1371,7 @@ class CardBrickApp:
                 else:
                     play(card, "back" if flipped else "front", forced=True)
             elif action == "undo":
-                restored = session.undo()
-                if restored is not None:
-                    rewound = roll.rewind_page()
-                    card = restored
-                    begin_card(card, new_page=not rewound)
+                undo_last_answer()
             elif vocab_detail is not None:
                 if scroll_card(action):
                     continue
@@ -1264,7 +1385,7 @@ class CardBrickApp:
                     if action == "r1":
                         discard_current("BURIED")
                         continue
-                elif action in DPAD:
+                elif action == "dpad_down":
                     if phase < self.VOCAB_MAX_PHASE:
                         phase += 1
                         print_up_to(phase)
@@ -1292,7 +1413,7 @@ class CardBrickApp:
                     discard_current("BURIED")
                     continue
             elif not flipped:
-                if action in DPAD or action in ("east_button", "unmapped"):
+                if action == "dpad_down" or action in ("east_button", "unmapped"):
                     flipped = True
                     print_back()
                     if auto_play:
@@ -1344,7 +1465,7 @@ class CardBrickApp:
                 )
             elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
-                    "D-pad = Reveal more   A = I know this",
+                    "Down = Reveal more   Hold Up = Undo   A = I know this",
                     "L1 = Replay audio   R1 = Bury   START = Menu",
                 )
             else:
@@ -1358,7 +1479,10 @@ class CardBrickApp:
                 "D-pad=Scroll   R1=Bury   START=Menu   SELECT=Finish",
             )
         else:
-            self._footer("D-pad/A = Show answer   START = Menu   SELECT = Finish")
+            self._footer(
+                "Down/A = Show answer   Hold Up = Undo",
+                "START = Menu   SELECT = Finish",
+            )
 
         if menu is not None:
             self._draw_menu_overlay(menu)

@@ -48,10 +48,10 @@ STUDY_ACTIONS = {
     "r1": "bury_card",
     "select": "quit",
     "start": "open_action_menu",
-    "dpad_up": "reveal_answer",
+    "dpad_up": "hold_to_undo_before_reveal",
     "dpad_down": "reveal_answer",
-    "dpad_left": "reveal_answer",
-    "dpad_right": "reveal_answer",
+    "dpad_left": "scroll_after_reveal",
+    "dpad_right": "scroll_after_reveal",
 }
 
 # Starting-point guess for unmapped devices: Knulli handhelds label the
