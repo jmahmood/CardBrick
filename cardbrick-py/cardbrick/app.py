@@ -42,9 +42,11 @@ Controller-first and deployment-hardened for Knulli-style devices:
   button indices are never trusted (see input_map.py). Face buttons are
   labelled with the fixed layout used by this app (A = right, B = bottom,
   X = top, Y = left).
-- Everything renders on a native handheld logical canvas (640x480 or
-  720x480 when detected) which is scaled — integer scaling when it
-  fits — to the real display.
+- Everything renders on a native handheld logical canvas (640x480,
+  720x480 or 720x720 when detected) which is scaled — integer scaling
+  when it fits, or an exact aspect-matched scale (e.g. 1.6x on the
+  TrimUI Brick's 1024x768 panel) when the display is a clean multiple
+  of the canvas's proportions — to the real display.
 - The app has its own exit path (SELECT quits/finishes) and never
   relies on RetroArch hotkeys.
 - A bundled Unicode font covers Spanish/Japanese glyphs when present;
@@ -84,6 +86,7 @@ DEFAULT_LOGICAL_SIZE = (640, 480)
 NATIVE_FULLSCREEN_SIZES = {
     (640, 480),  # RG35XX Plus and similar 4:3 panels
     (720, 480),  # RG34XX SP widescreen panel
+    (720, 720),  # RGB30 square panel
 }
 
 # "Paper & Ink" palette: the whole UI is warm paper printed with ink,
@@ -156,7 +159,8 @@ def _resolve_logical_size(configured_size, display_size=None, fullscreen=False):
 
     The saved/default logical size remains the portable 640x480 layout.
     In fullscreen on known handheld panels, use the physical panel size
-    as the logical canvas so 720x480 devices do not get pillarboxed.
+    as the logical canvas so non-4:3 devices (e.g. 720x480, 720x720)
+    do not get pillarboxed.
     """
     if (
         fullscreen
@@ -165,6 +169,33 @@ def _resolve_logical_size(configured_size, display_size=None, fullscreen=False):
     ):
         return display_size
     return configured_size
+
+
+def _compute_scaled_canvas_size(display_size, logical_size, integer_scaling):
+    """Target size and mode for blitting the logical canvas onto the display.
+
+    Integer scaling keeps pixel art crisp, but flooring to a whole
+    factor can leave a lot of an otherwise well-proportioned panel
+    unused (e.g. a 640x480 canvas on a 1024x768 4:3 display floors to
+    1x instead of the exact 1.6x that would fill it). When the
+    display's aspect ratio exactly matches the logical canvas, scale
+    up to fill it exactly — there's no cropping or distortion risk,
+    so the "keep it a whole number" reason for integer scaling doesn't
+    apply.
+
+    Returns ((tw, th), mode) where mode is "integer", "exact-fill" or
+    "aspect-fit".
+    """
+    dw, dh = display_size
+    w, h = logical_size
+    if integer_scaling:
+        factor = max(min(dw // w, dh // h), 1)
+        tw, th = w * factor, h * factor
+        if dw * h == dh * w and (dw > tw or dh > th):
+            return (dw, dh), "exact-fill"
+        return (tw, th), "integer"
+    ratio = min(dw / w, dh / h)
+    return (int(w * ratio), int(h * ratio)), "aspect-fit"
 
 
 def resolve_font_path():
@@ -347,13 +378,15 @@ class CardBrickApp:
             self._scaled = None  # fast path: blit 1:1
             log.info("scaling: none (display matches logical size)")
         else:
-            if self.settings.get("integer_scaling", True):
-                factor = max(min(dw // self.w, dh // self.h), 1)
-                tw, th = self.w * factor, self.h * factor
-                log.info("scaling: integer x%d -> %dx%d", factor, tw, th)
+            integer_scaling = self.settings.get("integer_scaling", True)
+            (tw, th), mode = _compute_scaled_canvas_size(
+                (dw, dh), (self.w, self.h), integer_scaling
+            )
+            if mode == "integer":
+                log.info("scaling: integer x%d -> %dx%d", tw // self.w, tw, th)
+            elif mode == "exact-fill":
+                log.info("scaling: exact aspect fill -> %dx%d", tw, th)
             else:
-                ratio = min(dw / self.w, dh / self.h)
-                tw, th = int(self.w * ratio), int(self.h * ratio)
                 log.info("scaling: aspect-fit -> %dx%d", tw, th)
             self._scaled = pygame.Surface((tw, th))
             self._scale_offset = ((dw - tw) // 2, (dh - th) // 2)

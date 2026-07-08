@@ -1,0 +1,6 @@
+# Extra Python dependencies baked INTO the squashfs runtime, on top of
+# pygame-ce (which build-runtime.sh compiles from source).
+#
+# Keep this in sync with cardbrick-py/requirements.txt, minus pygame-ce.
+fsrs>=6.0
+typing-extensions>=4.0
