@@ -16,3 +16,9 @@ workspace
 # Knulli packaging outputs (deploy/knulli)
 deploy/knulli/dist/
 deploy/knulli/runtime-build/build/
+deploy/knulli/scripts/.deckbuild-venv/
+
+# Personal deck files dropped in deploy/knulli/decks/ for baking into
+# the package (see deploy/knulli/decks/README.md) — not app content.
+deploy/knulli/decks/*
+!deploy/knulli/decks/README.md

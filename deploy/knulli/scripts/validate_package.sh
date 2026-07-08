@@ -115,6 +115,45 @@ else
     warn "no runtime squashfs in bundle (--no-runtime build?) — device must already have one"
 fi
 
+# ---------------------------------------------------------- seed deck(s)
+SEED_DB="${STAGE}/seed-data/cardbrick.db"
+if [ -f "$SEED_DB" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        SEED_CHECK="$(python3 - "$SEED_DB" <<'PYEOF'
+import sqlite3
+import sys
+
+db = sys.argv[1]
+try:
+    con = sqlite3.connect(db)
+    ok = con.execute("PRAGMA integrity_check").fetchone()[0]
+    if ok != "ok":
+        print(f"CORRUPT:{ok}")
+        sys.exit(0)
+    count = con.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+    print(f"OK:{count}")
+except Exception as exc:  # noqa: BLE001 - reporting only
+    print(f"ERROR:{exc}")
+PYEOF
+)"
+        case "$SEED_CHECK" in
+            OK:0) fail "seed-data DB has 0 cards — deck import likely failed silently" ;;
+            OK:*) pass "seed-data DB OK: ${SEED_CHECK#OK:} card(s) pre-installed" ;;
+            *) fail "seed-data DB check failed: ${SEED_CHECK}" ;;
+        esac
+    else
+        warn "python3 not on host — skipped seed-data DB integrity check"
+    fi
+    [ -f "${STAGE}/seed-data/SEED_INFO" ] \
+        && pass "seed-data/SEED_INFO present" \
+        || fail "seed-data/SEED_INFO missing"
+elif [ -d "${STAGE}/seed-data" ]; then
+    fail "seed-data/ exists but cardbrick.db is missing"
+else
+    warn "no seed-data — package ships with no decks pre-installed" \
+         "(rebuild with --deck FILE.apkg, or import on-device via Parent Mode)"
+fi
+
 # ----------------------------------------------------------- checksums
 if command -v sha256sum >/dev/null 2>&1 && [ -f "${STAGE}/PACKAGE_MANIFEST.sha256" ]; then
     if ( cd "$STAGE" && sha256sum --quiet -c PACKAGE_MANIFEST.sha256 2>/dev/null ); then

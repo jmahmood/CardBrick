@@ -41,6 +41,26 @@ fail() {
     exit 1
 }
 
+# ------------------------------------------------------- seed deck(s)
+# If the package was built with --deck (see PACKAGING.md), a database
+# already containing the imported deck(s) ships at GAMEDIR/seed-data/.
+# Install it on this device's very first boot only — i.e. only if no
+# database exists yet in the data dir — so a later package update never
+# clobbers review progress that has since accumulated on-device.
+SEED_DIR="${GAMEDIR}/seed-data"
+if [ -f "${SEED_DIR}/cardbrick.db" ] && [ ! -f "${CARD_BRICK_DATA_DIR}/cardbrick.db" ]; then
+    log "first boot: installing seeded deck(s) from ${SEED_DIR}"
+    if cp "${SEED_DIR}/cardbrick.db" "${CARD_BRICK_DATA_DIR}/cardbrick.db" 2>>"$LAUNCH_LOG"; then
+        if [ -d "${SEED_DIR}/media" ]; then
+            mkdir -p "${CARD_BRICK_DATA_DIR}/media"
+            cp -R "${SEED_DIR}/media/." "${CARD_BRICK_DATA_DIR}/media/" 2>>"$LAUNCH_LOG"
+        fi
+        log "seed install OK"
+    else
+        log "WARN: seed install failed — starting with an empty database instead"
+    fi
+fi
+
 log "=== CardBrick launch $(date) ==="
 
 [ -d "$APP_DIR" ] || fail "app directory not found: $APP_DIR"
