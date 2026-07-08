@@ -898,15 +898,15 @@ class CardBrickApp:
                 if vocab_detail["gendered_forms"]:
                     lines.append(vocab_detail["gendered_forms"])
                 lines.append(vocab_detail["definitions"] or "(no definition)")
-                if vocab_detail.get("word_en"):
+                if vocab_detail["word_en"]:
                     lines.append("EN: " + vocab_detail["word_en"])
-                if vocab_detail.get("word_jp"):
+                if vocab_detail["word_jp"]:
                     lines.append("JP: " + vocab_detail["word_jp"])
-                if vocab_detail.get("example_en"):
+                if vocab_detail["example_en"]:
                     lines.append("Example EN: " + vocab_detail["example_en"])
-                if vocab_detail.get("example_jp"):
+                if vocab_detail["example_jp"]:
                     lines.append("Example JP: " + vocab_detail["example_jp"])
-                if vocab_detail.get("report_link"):
+                if vocab_detail["report_link"]:
                     lines.append("Report: " + vocab_detail["report_link"])
                 print_block("\n".join(lines), self.font_small, FG)
 
