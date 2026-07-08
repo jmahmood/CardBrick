@@ -91,8 +91,10 @@ class ReviewApp:
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), flags)
         pygame.display.set_caption("CardBrick")
         pygame.mouse.set_visible(False)
-        for i in range(pygame.joystick.get_count()):
-            pygame.joystick.Joystick(i).init()
+        # Keep references: in pygame 2 a garbage-collected Joystick
+        # object closes the SDL device and its events stop arriving.
+        self._joysticks = [pygame.joystick.Joystick(i)
+                           for i in range(pygame.joystick.get_count())]
 
         self.font_big = _load_font(34)
         self.font = _load_font(24)

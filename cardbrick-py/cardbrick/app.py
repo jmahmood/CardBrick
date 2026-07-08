@@ -182,8 +182,12 @@ class CardBrickApp:
         self._init_display()
         pygame.display.set_caption("CardBrick — Spanish Practice")
         pygame.mouse.set_visible(False)
+        # In pygame 2 the SDL device closes again when a Joystick object
+        # is garbage collected, and SDL only delivers button/hat events
+        # for open devices — these references are what keeps input alive.
+        self._joysticks = {}
         for i in range(pygame.joystick.get_count()):
-            pygame.joystick.Joystick(i).init()
+            self._open_joystick(i)
 
         self.font_big = _load_font(38)
         self.font = _load_font(26)
@@ -328,6 +332,16 @@ class CardBrickApp:
 
     # -- input ---------------------------------------------------------------------
 
+    def _open_joystick(self, device_index):
+        """Open a joystick and retain the reference (see __init__)."""
+        try:
+            joy = pygame.joystick.Joystick(device_index)
+        except pygame.error as exc:
+            log.error("could not open joystick %d: %s", device_index, exc)
+            return None
+        self._joysticks[joy.get_instance_id()] = joy
+        return joy
+
     def poll(self):
         """Next semantic action, or None.
 
@@ -345,11 +359,12 @@ class CardBrickApp:
             if event.type == pygame.QUIT:
                 raise QuitApp
             if event.type == pygame.JOYDEVICEADDED:
-                joy = pygame.joystick.Joystick(event.device_index)
-                joy.init()
-                log.info("joystick connected: %r", joy.get_name())
+                joy = self._open_joystick(event.device_index)
+                if joy:
+                    log.info("joystick connected: %r", joy.get_name())
                 continue
             if event.type == pygame.JOYDEVICEREMOVED:
+                self._joysticks.pop(event.instance_id, None)
                 log.warning("joystick disconnected")
                 continue
             action = self.input.translate(event)
@@ -1551,7 +1566,7 @@ class CardBrickApp:
                     if abs(event.value) > 0.5:
                         raw = f"axis {event.axis} value={event.value:+.2f}"
                 elif event.type == pygame.JOYDEVICEADDED:
-                    pygame.joystick.Joystick(event.device_index).init()
+                    self._open_joystick(event.device_index)
                     raw = "joystick connected"
                 if raw is not None:
                     semantic = self.input.translate(event)
@@ -1640,7 +1655,7 @@ class CardBrickApp:
                 log.info("calibration cancelled")
                 return "INPUT_DIAG"
             if event.type == pygame.JOYDEVICEADDED:
-                pygame.joystick.Joystick(event.device_index).init()
+                self._open_joystick(event.device_index)
             if event.type == pygame.JOYHATMOTION and \
                     event.value != (0, 0):
                 if semantic.startswith("dpad_"):
