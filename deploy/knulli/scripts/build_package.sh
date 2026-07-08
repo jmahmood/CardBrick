@@ -60,16 +60,17 @@ echo "Staging CardBrick v${VERSION} -> ${STAGE}"
 rm -rf "$STAGE" "${DIST}/CardBrick.sh"
 mkdir -p "$STAGE"
 
-# Copy the app verbatim, minus things the device never needs. tar keeps
-# this portable (no rsync requirement on the host).
-( cd "${REPO_ROOT}" && tar cf - \
-      --exclude='cardbrick-py/tests' \
-      --exclude='cardbrick-py/data' \
-      --exclude='__pycache__' \
-      --exclude='.pytest_cache' \
-      --exclude='*.pyc' \
-      --exclude='.DS_Store' \
-      cardbrick-py ) | ( cd "$STAGE" && tar xf - )
+# Copy the app verbatim, then strip what the device never needs. Filter
+# AFTER copying rather than via `tar --exclude`: GNU tar and macOS's
+# bsdtar disagree on whether an unslashed exclude pattern prunes nested
+# directories, so relying on it silently ships __pycache__/tests on some
+# hosts. find+rm behaves identically everywhere.
+( cd "${REPO_ROOT}" && tar cf - cardbrick-py ) | ( cd "$STAGE" && tar xf - )
+rm -rf "${STAGE}/cardbrick-py/tests" "${STAGE}/cardbrick-py/data"
+find "${STAGE}/cardbrick-py" \
+    \( -type d -name '__pycache__' -o -type d -name '.pytest_cache' \) \
+    -exec rm -rf {} +
+find "${STAGE}/cardbrick-py" -type f \( -name '*.pyc' -o -name '.DS_Store' \) -delete
 
 install -m 755 "${KNULLI_DIR}/CardBrick.sh" "${DIST}/CardBrick.sh"
 
