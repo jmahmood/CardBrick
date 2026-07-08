@@ -4,7 +4,12 @@
 Usage:
     python main.py study [--fullscreen]     CardBrick-style study appliance
                                             (child/parent flow; the default)
-    python main.py import <deck.apkg>       Import an Anki package
+    python main.py import <deck.apkg|URL>   Import an Anki package (a
+                                            file path or an http(s) URL)
+    python main.py download [URL]           Download decks from a server
+                                            (URL or deck_server_url
+                                            setting) into the import
+                                            folder
     python main.py review [--deck NAME]     Legacy prototype reviewer
     python main.py decks                    List decks and due counts
     python main.py profile [...]            View/edit the child profile
@@ -61,8 +66,10 @@ def build_parser():
 
     p_import = sub.add_parser(
         "import", help="Import an .apkg file, or a vocab .csv "
-                       "(detected by extension)")
-    p_import.add_argument("apkg", help="Path to the .apkg or .csv file")
+                       "(detected by extension); .apkg may also be an "
+                       "http(s) URL, downloaded before import")
+    p_import.add_argument("apkg", help="Path or http(s) URL of the "
+                                       ".apkg (or path of a .csv) file")
     p_import.add_argument("--media-dir",
                           help="For .csv import: folder holding the audio/"
                                "image files it references, copied into "
@@ -70,6 +77,20 @@ def build_parser():
     p_import.add_argument("--deck", dest="import_deck",
                           help="For .csv import: deck name to file the "
                                "cards under (default: Vocabulario)")
+
+    p_download = sub.add_parser(
+        "download", help="Download decks from a server URL into the "
+                         "import folder (does not import them)")
+    p_download.add_argument("url", nargs="?", default=None,
+                            help="Deck URL or JSON deck-list URL "
+                                 "(default: the deck_server_url "
+                                 "setting)")
+    p_download.add_argument("--deck", action="append", dest="decks",
+                            metavar="NAME",
+                            help="Only download this deck from the "
+                                 "list (repeatable; default: all)")
+    p_download.add_argument("--list", action="store_true", dest="list_only",
+                            help="Show what the server offers and exit")
 
     p_review = sub.add_parser("review",
                               help="Legacy prototype reviewer (no limits)")
@@ -167,6 +188,15 @@ def main(argv=None):
             return _run_app(storage, scheduler, paths,
                             fullscreen=False, initial_state="INPUT_DIAG")
         if args.command == "import":
+            if args.apkg.lower().startswith(("http://", "https://")):
+                from cardbrick.deck_download import (DownloadError,
+                                                     download_deck)
+                try:
+                    args.apkg = download_deck(args.apkg, paths.import_dir)
+                except DownloadError as exc:
+                    print(f"Download failed: {exc}", file=sys.stderr)
+                    return 1
+                print(f"Downloaded to {args.apkg}")
             if args.apkg.lower().endswith(".csv"):
                 from cardbrick.vocab_csv import import_vocab_csv
                 kwargs = {"source_media_dir": args.media_dir}
@@ -178,6 +208,10 @@ def main(argv=None):
                 stats = import_apkg(args.apkg, storage, scheduler,
                                     paths.media_dir)
             print(stats.summary())
+        elif args.command == "download":
+            from cardbrick.settings import AppSettings
+            settings = AppSettings(paths.settings_path)
+            return _download_command(settings, paths, args)
         elif args.command == "decks":
             rows = storage.decks(iso(now_utc()))
             if not rows:
@@ -251,6 +285,59 @@ def _run_app(storage, scheduler, paths, fullscreen=None,
                                       "Restart the app to continue.")
         return 1
     return 0
+
+
+def _download_command(settings, paths, args):
+    """Fetch the server's deck list and download into the import
+    folder, where both `main.py import` and the parent-mode Import
+    screen will find the files."""
+    from cardbrick.deck_download import (DownloadError, download_deck,
+                                         fetch_deck_list, format_size)
+
+    url = args.url or settings.get("deck_server_url")
+    if not url:
+        print("No URL given and no deck_server_url setting configured.\n"
+              f"Either pass a URL or add \"deck_server_url\" to "
+              f"{paths.settings_path}", file=sys.stderr)
+        return 1
+
+    try:
+        decks = fetch_deck_list(url)
+    except DownloadError as exc:
+        print(f"Download failed: {exc}", file=sys.stderr)
+        return 1
+
+    if args.list_only:
+        for deck in decks:
+            size = format_size(deck["size"])
+            print(f"{deck['name']}{f'  ({size})' if size else ''}  "
+                  f"-> {deck['url']}")
+        return 0
+
+    wanted = decks
+    if args.decks:
+        by_name = {d["name"]: d for d in decks}
+        missing = [n for n in args.decks if n not in by_name]
+        if missing:
+            print(f"Not on the server: {', '.join(missing)}\n"
+                  f"Available: {', '.join(by_name)}", file=sys.stderr)
+            return 1
+        wanted = [by_name[n] for n in args.decks]
+
+    failures = 0
+    for deck in wanted:
+        print(f"Downloading {deck['name']}...")
+        try:
+            path = download_deck(deck["url"], paths.import_dir,
+                                 name=deck["name"])
+            print(f"  -> {path}")
+        except DownloadError as exc:
+            failures += 1
+            print(f"  failed: {exc}", file=sys.stderr)
+    if failures == 0:
+        print(f"Done. Import with: python main.py import <file>, or use "
+              f"the parent-mode Import screen.")
+    return 1 if failures else 0
 
 
 def _profile_command(storage, args):

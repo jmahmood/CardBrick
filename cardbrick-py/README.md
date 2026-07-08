@@ -12,7 +12,8 @@ is done. Parents configure everything else in a separate parent mode.
 The objective is *not* to recreate Anki. Anki's `.apkg` files are used
 as a **content format only** — after a one-time import, the application
 runs entirely from its own SQLite database with no Anki desktop, no
-AnkiConnect, no Rust backend, and no network access.
+AnkiConnect, no Rust backend, and no network access during study (the
+network is touched only by the optional parent-mode deck download).
 
 ## Architecture
 
@@ -91,8 +92,14 @@ exact player with `CARDBRICK_AUDIO_CMD="mpg123 -q {file}"`.
 pip install -r requirements.txt
 
 # One-time import (repeatable; progress is preserved). Also available
-# inside the app's parent mode.
+# inside the app's parent mode. A file path or an http(s) URL.
 python main.py import MyDeck.apkg
+python main.py import http://192.168.1.10:8000/MyDeck.apkg
+
+# Download decks from a server into the data folder's import/
+# directory without importing them (see "Downloading decks over WiFi")
+python main.py download http://192.168.1.10:8000/decks.json --list
+python main.py download                # uses the deck_server_url setting
 
 # The study appliance (child/parent flow) — this is the default command
 python main.py study                  # add --fullscreen on the handheld
@@ -226,7 +233,8 @@ of updating the old one's progress.
 ### Parent mode
 
 `SELECT` on the start screen. From there: import `.apkg` files found in
-the data folder (or `data/import/`, or the app folder), choose active
+the data folder (or `data/import/`, or the app folder), download decks
+from a configured server over WiFi (see below), choose active
 **decks** (which imported decks are *assigned* to the child at all)
 and active **categories** (Anki tags — a second, independent filter;
 both must match for a card to appear), set daily limits, review/restore
@@ -244,6 +252,47 @@ python main.py profile --decks "Español de México — Vocabulario"
 python main.py profile --decks all           # clear the deck filter
 python main.py profile --categories restaurant,greetings
 ```
+
+### Downloading decks over WiFi
+
+Getting an `.apkg` onto the device normally means pulling the SD card
+or setting up SSH. Instead, a parent can host decks on any plain
+HTTP(S) server — `python -m http.server` in a folder on the family PC,
+a NAS, nginx, a static bucket — and point the device at it once, in
+`settings.json` in the data folder:
+
+```json
+"deck_server_url": "http://192.168.1.10:8000/decks.json"
+```
+
+The URL is either a direct link to one `.apkg`, or a JSON deck list:
+
+```json
+{
+  "decks": [
+    {"name": "Español N5", "file": "n5.apkg", "size": 52428800},
+    {"name": "Español N4", "url": "http://elsewhere/n4.apkg"}
+  ]
+}
+```
+
+`file`/`url` may be relative to the deck list's own URL, so a
+`decks.json` can simply sit in the same folder as the decks it lists
+(`size` in bytes and `name` are optional, shown in the UI). Parent
+mode's **Download decks (WiFi)** screen then lists what the server
+offers; picking one downloads it with a progress readout and imports
+it immediately. The same plumbing is available from the CLI as
+`python main.py download` (fetch only, into `data/import/`) and
+`python main.py import <url>` (fetch + import).
+
+Everything uses the standard library (`urllib`) — no new dependencies.
+Downloads are streamed to a `.part` file, capped at 1 GiB, verified to
+be a real zip archive, and only then renamed into place, so a dropped
+connection or a captive-portal page never leaves a corrupt `.apkg`
+behind; only `http://`/`https://` URLs are followed, redirects
+included. There is deliberately no on-device URL keyboard — the URL is
+a set-once setting edited on the SD card, in keeping with
+`settings.json` being "durable and user-editable on purpose."
 
 ### Child-facing deck picker
 
