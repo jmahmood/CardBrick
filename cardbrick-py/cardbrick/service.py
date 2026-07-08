@@ -79,6 +79,46 @@ class ReviewService:
 
     # -- queue building --------------------------------------------------------
 
+    def _merged_limits(self, profile, limits):
+        """DEFAULT_LIMITS overlaid with explicit limits, then profile."""
+        limits = dict(DEFAULT_LIMITS, **(limits or {}))
+        if profile:
+            for key in DEFAULT_LIMITS:
+                if profile.get(key) is not None:
+                    limits[key] = profile[key]
+        return limits
+
+    def _day_budgets(self, limits, bonus):
+        """The filter-independent daily numbers every pool build needs:
+        (remaining_new, cards_done, answered-card-id set)."""
+        day_start = iso(local_day_start(self.now()))
+        new_done, review_done, _ = self.storage.daily_counts(day_start)
+        answered = self.storage.cards_answered_since(day_start)
+        if bonus:
+            # A bonus sprint can't use more than one sprint's worth.
+            remaining_new = limits["session_card_limit"]
+        elif limits["daily_new_cards"]:
+            remaining_new = max(limits["daily_new_cards"] - new_done, 0)
+        else:  # auto: whatever the goal has left paces new intake
+            remaining_new = max(limits["daily_goal_cards"]
+                                - new_done - review_done, 0)
+        return remaining_new, new_done + review_done, answered
+
+    def _pool_candidates(self, now, limits, deck_filter):
+        """The three candidate lists a sprint pool draws from, in pool
+        order: (due rows, new rows, study-ahead rows)."""
+        due = self.storage.queue_candidates(iso(now), new_cards=False,
+                                            decks=deck_filter)
+        new = self.storage.queue_candidates(iso(now), new_cards=True,
+                                            decks=deck_filter)
+        ahead = []
+        if limits["study_ahead_enabled"]:
+            horizon = next_local_midnight(now) + timedelta(
+                days=limits["study_ahead_days"])
+            ahead = self.storage.ahead_candidates(iso(now), iso(horizon),
+                                                  decks=deck_filter)
+        return due, new, ahead
+
     def _sprint_pool(self, profile=None, category_filter=None,
                      deck_filter=None, limits=None, bonus=False):
         """Everything today's sprints could still draw on, due-first.
@@ -99,50 +139,32 @@ class ReviewService:
         can budget the pool and tell fresh cards — which still advance
         the distinct-card goal — from repeats already counted today.
         """
-        limits = dict(DEFAULT_LIMITS, **(limits or {}))
+        limits = self._merged_limits(profile, limits)
         if profile:
-            for key in DEFAULT_LIMITS:
-                if profile.get(key) is not None:
-                    limits[key] = profile[key]
             if category_filter is None:
                 category_filter = profile.get("active_categories")
             if deck_filter is None:
                 deck_filter = profile.get("active_decks")
 
-        now = self.now()
-        day_start = iso(local_day_start(now))
-        new_done, review_done, _ = self.storage.daily_counts(day_start)
-        answered = self.storage.cards_answered_since(day_start)
-        if bonus:
-            # A bonus sprint can't use more than one sprint's worth.
-            remaining_new = limits["session_card_limit"]
-        elif limits["daily_new_cards"]:
-            remaining_new = max(limits["daily_new_cards"] - new_done, 0)
-        else:  # auto: whatever the goal has left paces new intake
-            remaining_new = max(limits["daily_goal_cards"]
-                                - new_done - review_done, 0)
+        remaining_new, cards_done, answered = self._day_budgets(limits, bonus)
+        due, new, ahead = self._pool_candidates(self.now(), limits,
+                                                deck_filter)
 
         pool = []
-        for row in self.storage.queue_candidates(iso(now), new_cards=False,
-                                                 decks=deck_filter):
+        for row in due:
             if card_matches_categories(row["tags"], category_filter):
                 pool.append(row)
-        for row in self.storage.queue_candidates(iso(now), new_cards=True,
-                                                 decks=deck_filter):
+        for row in new:
             if remaining_new <= 0:
                 break
             if card_matches_categories(row["tags"], category_filter):
                 pool.append(row)
                 remaining_new -= 1
-        if limits["study_ahead_enabled"]:
-            horizon = next_local_midnight(now) + timedelta(
-                days=limits["study_ahead_days"])
-            for row in self.storage.ahead_candidates(iso(now), iso(horizon),
-                                                     decks=deck_filter):
-                if card_matches_categories(row["tags"], category_filter):
-                    pool.append(row)
+        for row in ahead:
+            if card_matches_categories(row["tags"], category_filter):
+                pool.append(row)
 
-        return pool, limits, answered, new_done + review_done
+        return pool, limits, answered, cards_done
 
     def get_due_cards(self, profile=None, category_filter=None,
                       deck_filter=None, limits=None, bonus=False):
@@ -186,6 +208,71 @@ class ReviewService:
                                    limits, bonus=bonus)
         new = sum(1 for row in queue if row["reps"] == 0)
         return len(queue) - new, new
+
+    def counts_for_queue_many(self, filters, profile=None, limits=None,
+                              bonus=False):
+        """counts_for_queue for several (deck_filter, category_filter)
+        pairs, answered from ONE set of storage queries.
+
+        The child-facing pickers need a count for every menu entry, and
+        every entry only ever *narrows* the profile's scope — so all of
+        them can be served from a single profile-wide candidate fetch
+        with the per-entry filter applied in memory, instead of
+        re-running the full pool build per entry (which made opening a
+        picker O(entries × collection) and visibly slow on-device).
+
+        Each filter of None falls back to the profile's active decks /
+        categories, exactly as counts_for_queue would. Returns a list
+        of (review, new) tuples, one per input pair, in order.
+        """
+        limits = self._merged_limits(profile, limits)
+        profile_decks = profile.get("active_decks") if profile else None
+        profile_cats = profile.get("active_categories") if profile else None
+
+        remaining_new, cards_done, answered = self._day_budgets(limits, bonus)
+        due, new, ahead = self._pool_candidates(self.now(), limits,
+                                                profile_decks)
+        goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
+        sprint_size = limits["session_card_limit"]
+
+        results = []
+        for deck_filter, category_filter in filters:
+            if deck_filter is None:
+                deck_filter = profile_decks
+            if category_filter is None:
+                category_filter = profile_cats
+
+            def matches(row):
+                if deck_filter is not None and row["deck"] not in deck_filter:
+                    return False
+                return card_matches_categories(row["tags"], category_filter)
+
+            # Same pool assembly as _sprint_pool: due, then new capped
+            # by the day's new-card budget, then study-ahead. The SQL
+            # deck restriction _sprint_pool relies on preserves row
+            # order, so filtering the superset here is equivalent.
+            pool = [row for row in due if matches(row)]
+            budget = remaining_new
+            for row in new:
+                if budget <= 0:
+                    break
+                if matches(row):
+                    pool.append(row)
+                    budget -= 1
+            pool.extend(row for row in ahead if matches(row))
+
+            # Same budgeting as get_due_cards.
+            if bonus:
+                queue = pool[:sprint_size]
+            else:
+                fresh = sum(1 for row in pool if row["id"] not in answered)
+                if min(goal_left, fresh) == 0:
+                    queue = []
+                else:
+                    queue = pool[:min(goal_left, sprint_size)]
+            new_count = sum(1 for row in queue if row["reps"] == 0)
+            results.append((len(queue) - new_count, new_count))
+        return results
 
     def sprint_status(self, profile=None, category_filter=None,
                       deck_filter=None, limits=None):

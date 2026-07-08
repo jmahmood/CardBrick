@@ -130,6 +130,13 @@ _ROOT_FONT_DIR = os.path.join(
     "assets",
     "font",
 )
+_ROOT_ASSET_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "assets",
+)
+_BUNDLED_ASSET_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets"
+)
 
 FONT_CANDIDATES = [
     os.environ.get("CARDBRICK_FONT", ""),
@@ -149,6 +156,14 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/meiryo.ttc",
     os.path.join(_BUNDLED_FONT_DIR, "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+]
+
+ICON_CANDIDATES = [
+    os.environ.get("CARDBRICK_ICON", ""),
+    os.path.join(_ROOT_ASSET_DIR, "icon.png"),
+    os.path.join(_BUNDLED_ASSET_DIR, "icon.png"),
+    os.path.join(_ROOT_ASSET_DIR, "icon-large.png"),
+    os.path.join(_BUNDLED_ASSET_DIR, "icon-large.png"),
 ]
 
 _font_path_logged = False
@@ -204,6 +219,27 @@ def resolve_font_path():
         if path and os.path.exists(path):
             return path
     return None
+
+
+def resolve_icon_path():
+    """First existing app icon candidate, or None when no icon is bundled."""
+    for path in ICON_CANDIDATES:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def _set_window_icon():
+    path = resolve_icon_path()
+    if not path:
+        log.warning("no app icon found")
+        return
+    try:
+        icon = pygame.image.load(path)
+        pygame.display.set_icon(icon)
+        log.info("window icon: %s", path)
+    except pygame.error as exc:
+        log.warning("could not load window icon %s: %s", path, exc)
 
 
 def _load_font(size):
@@ -298,6 +334,7 @@ class CardBrickApp:
         if fullscreen is None:
             fullscreen = bool(settings.get("fullscreen"))
         self.fullscreen = fullscreen
+        _set_window_icon()
         self._init_display()
         pygame.display.set_caption("CardBrick — Spanish Practice")
         pygame.mouse.set_visible(False)
@@ -754,14 +791,15 @@ class CardBrickApp:
             (name, [name]) for name in available
         ]
         # Due/new counts computed once up front, not per frame — this
-        # screen redraws every tick like the other menus, and querying
-        # the DB per entry per frame would not be free on a big deck.
-        counts = [
-            self.service.counts_for_queue(
-                profile=self.profile, deck_filter=decks, bonus=self._session_bonus
-            )
-            for _label, decks in entries
-        ]
+        # screen redraws every tick like the other menus. One batched
+        # call: every entry shares the same candidate pool, so counting
+        # per entry with separate full pool builds would make the A
+        # press before this screen O(entries × collection).
+        counts = self.service.counts_for_queue_many(
+            [(decks, None) for _label, decks in entries],
+            profile=self.profile,
+            bonus=self._session_bonus,
+        )
         index = 0
         roll = self._deck_select_handoff_roll
         self._deck_select_handoff_roll = None
@@ -831,15 +869,14 @@ class CardBrickApp:
         entries = [("All assigned categories", None)] + [
             (name, [name]) for name in available
         ]
-        counts = [
-            self.service.counts_for_queue(
-                profile=self.profile,
-                deck_filter=self._session_deck_filter,
-                category_filter=cats,
-                bonus=self._session_bonus,
-            )
-            for _label, cats in entries
-        ]
+        # One batched call for the same reason as the deck picker: the
+        # A press that opens this screen shouldn't rebuild the full
+        # candidate pool once per topic.
+        counts = self.service.counts_for_queue_many(
+            [(self._session_deck_filter, cats) for _label, cats in entries],
+            profile=self.profile,
+            bonus=self._session_bonus,
+        )
         index = 0
         roll = self._category_select_handoff_roll
         self._category_select_handoff_roll = None
