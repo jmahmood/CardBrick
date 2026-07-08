@@ -581,9 +581,10 @@ class CardBrickApp:
             self._stub_surface(
                 "SPANISH PRACTICE",
                 self.service.now().astimezone().strftime("%a %b %d").upper(),
-            )
+            ),
+            reveal=False,
         )
-        roll.feed(self._rule_surface())
+        roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(14)
         roll.feed(self.font_big.render(self.profile["name"], True, FG))
         roll.feed_gap(8)
@@ -603,7 +604,7 @@ class CardBrickApp:
             )
         )
         roll.feed_gap(12)
-        roll.feed(self._rule_surface())
+        roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(14)
         if startable:
             # "Last sprint" only makes sense once earlier sprints
@@ -657,7 +658,7 @@ class CardBrickApp:
             )
         else:
             roll.feed_gap(10)
-            roll.feed(self._stamp_surface("All done for today!", GOOD))
+            roll.feed(self._stamp_surface("All done for today!", GOOD), reveal=False)
             roll.feed_gap(12)
             roll.feed(self.font.render("Come back tomorrow.", True, DIM))
         return roll
@@ -730,7 +731,7 @@ class CardBrickApp:
         roll.feed_gap(6)
         roll.feed(self.font_small.render("Which deck do you want to study?", True, DIM))
         roll.feed_gap(8)
-        roll.feed(self._rule_surface())
+        roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         for i in range(top, min(top + visible, len(entries))):
             label = entries[i][0]
@@ -827,7 +828,7 @@ class CardBrickApp:
             self.font_small.render("Want to focus on something specific?", True, DIM)
         )
         roll.feed_gap(8)
-        roll.feed(self._rule_surface())
+        roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         for i in range(top, min(top + visible, len(entries))):
             label = entries[i][0]
@@ -840,7 +841,7 @@ class CardBrickApp:
 
     def _print_topic_selected(self, roll, label):
         roll.feed_gap(10)
-        roll.feed(self._rule_surface())
+        roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         text = self._truncate_to_width(
             self.font_small, f"TOPIC SELECTED: {label}", self.w - 170
@@ -875,8 +876,6 @@ class CardBrickApp:
     # No separate Again/Hard/Good/Easy buttons for these cards.
     VOCAB_MAX_PHASE = 3
     VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
-    VOCAB_KNOWN_CONFIRM_SECONDS = 5.0
-
     def screen_review_printer_handoff(self):
         setup_roll = self._review_printer_handoff_roll
         self._review_printer_handoff_roll = None
@@ -989,8 +988,8 @@ class CardBrickApp:
                 else f"{session.remaining()} left"
             )
             roll.feed_gap(8)
-            roll.feed(self._stub_surface(left, right))
-            roll.feed(self._rule_surface())
+            roll.feed(self._stub_surface(left, right), reveal=False)
+            roll.feed(self._rule_surface(), reveal=False)
             roll.feed_gap(10)
 
         def print_audio_hint():
@@ -1022,7 +1021,7 @@ class CardBrickApp:
             stay on the paper — printing is additive by nature."""
             if p == 1:
                 roll.feed_gap(10)
-                roll.feed(self._rule_surface())
+                roll.feed(self._rule_surface(), reveal=False)
                 roll.feed_gap(8)
                 text = vocab_detail["example_es"] or "(no example sentence)"
                 for line in wrap_text(self.font, text, max_width):
@@ -1033,12 +1032,12 @@ class CardBrickApp:
                 roll.feed_gap(8)
                 image = self._vocab_image_surface(vocab_detail["image_filename"])
                 if image is not None:
-                    roll.feed(image)
+                    roll.feed(image, reveal=False)
                 else:
                     roll.feed(self.font_small.render("(no image)", True, DIM))
             elif p == 3:
                 roll.feed_gap(10)
-                roll.feed(self._rule_surface())
+                roll.feed(self._rule_surface(), reveal=False)
                 roll.feed_gap(8)
                 lines = []
                 if vocab_detail["gendered_forms"]:
@@ -1074,11 +1073,11 @@ class CardBrickApp:
             carries it away."""
             text, color = RATING_STAMPS[rating]
             roll.feed_gap(12)
-            roll.feed(self._stamp_surface(text, color))
+            roll.feed(self._stamp_surface(text, color), reveal=False)
 
         def print_small_stamp(text):
             roll.feed_gap(10)
-            roll.feed(self._stamp_surface(text, DIM, self.font_small))
+            roll.feed(self._stamp_surface(text, DIM, self.font_small), reveal=False)
 
         def play_vocab():
             """Replay whatever audio belongs to the current phase: the
@@ -1187,13 +1186,6 @@ class CardBrickApp:
             if card is None:
                 return end_session()
 
-            if (
-                known_confirmation is not None
-                and time.monotonic() >= known_confirmation["deadline"]
-            ):
-                confirm_known()
-                continue
-
             action = self.poll()
             if action:
                 needs_draw = True
@@ -1269,8 +1261,6 @@ class CardBrickApp:
                     known_confirmation = {
                         "phase": phase,
                         "elapsed_ms": elapsed,
-                        "deadline": time.monotonic()
-                        + self.VOCAB_KNOWN_CONFIRM_SECONDS,
                     }
                     phase = self.VOCAB_MAX_PHASE
                     print_up_to(phase)
@@ -1325,7 +1315,7 @@ class CardBrickApp:
             if known_confirmation is not None:
                 self._footer(
                     "A = Yes, I knew it   B = I made a mistake",
-                    "Auto-confirms in 5s   START = Menu",
+                    "START = Menu",
                 )
             elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
@@ -1502,15 +1492,16 @@ class CardBrickApp:
         roll = self._new_roll(print_y=self.h - 80)
         roll.feed_page(perf=False)
         roll.feed_gap(8)
-        roll.feed(self._stub_surface("SESSION RECEIPT", subtitle))
-        roll.feed(self._rule_surface())
+        roll.feed(self._stub_surface("SESSION RECEIPT", subtitle), reveal=False)
+        roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         roll.feed(
-            self._stamp_surface(headline, GOOD if status["goal_met"] or more else FG)
+            self._stamp_surface(headline, GOOD if status["goal_met"] or more else FG),
+            reveal=False,
         )
         roll.feed_gap(12)
         for label, value, color in rows:
-            roll.feed(self._receipt_row(label, value, color))
+            roll.feed(self._receipt_row(label, value, color), reveal=False)
             roll.feed_gap(4)
         roll.feed_gap(6)
         roll.feed_perf()
@@ -1603,7 +1594,7 @@ class CardBrickApp:
         counts = load(year, month)
         roll = self._new_roll(print_y=self.h - 74)
         roll.feed_page(perf=False)
-        roll.feed(self._calendar_sheet(year, month, counts, today))
+        roll.feed(self._calendar_sheet(year, month, counts, today), reveal=False)
         roll.finish()  # entering the calendar shows this month instantly
 
         def show_month(y, m):
@@ -1611,7 +1602,7 @@ class CardBrickApp:
             year, month = y, m
             counts = load(year, month)
             roll.feed_page()
-            roll.feed(self._calendar_sheet(year, month, counts, today))
+            roll.feed(self._calendar_sheet(year, month, counts, today), reveal=False)
 
         while True:
             action = self.poll()
@@ -2309,6 +2300,7 @@ class CardBrickApp:
             on_feed=self._paper_feed_sound,
         )
         roll.perf_color = DIVIDER
+        roll.head_color = FG
         return roll
 
     def _paper_feed_sound(self, event):

@@ -25,6 +25,18 @@ def make_roll(**kwargs):
     return PaperRoll(print_y=100, **kwargs)
 
 
+class FakeSurf:
+    def __init__(self, w=80, h=24):
+        self._w = w
+        self._h = h
+
+    def get_width(self):
+        return self._w
+
+    def get_height(self):
+        return self._h
+
+
 def test_starts_idle_at_blank_paper():
     roll = make_roll()
     assert not roll.busy
@@ -140,6 +152,64 @@ def test_reduced_motion_does_not_emit_feed_events():
     roll.feed_page()
 
     assert events == []
+
+
+def test_revealable_surface_starts_partially_hidden_after_commit():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    roll.feed(FakeSurf())
+
+    roll.update()
+
+    assert roll._active_reveal is roll._items[-1]
+    assert roll._items[-1].reveal
+    assert roll._items[-1].reveal_progress == 0.0
+    assert roll.busy
+
+
+def test_reveal_completes_and_clears_busy():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    roll.feed(FakeSurf())
+
+    settle(roll)
+
+    assert roll._active_reveal is None
+    assert roll._items[-1].reveal_progress == 1.0
+    assert not roll.busy
+
+
+def test_finish_reveals_everything_immediately():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    roll.feed(FakeSurf())
+
+    roll.finish()
+
+    assert roll._active_reveal is None
+    assert roll._items[-1].reveal_progress == 1.0
+    assert not roll.busy
+
+
+def test_reduced_motion_never_leaves_partial_reveal():
+    roll = make_roll(reduced_motion=True)
+    roll.feed_page(perf=False)
+    roll.feed(FakeSurf())
+
+    assert roll._active_reveal is None
+    assert roll._items[-1].reveal_progress == 1.0
+    assert not roll.busy
+
+
+def test_non_reveal_surface_behaves_like_regular_feed():
+    roll = make_roll()
+    roll.feed_page(perf=False)
+    roll.feed(FakeSurf(), reveal=False)
+    roll.update()
+
+    assert roll._active_reveal is None
+    assert roll._items[-1].reveal is False
+    assert roll._items[-1].reveal_progress == 1.0
 
 
 def test_rewind_page_rolls_back_to_previous_page_start():

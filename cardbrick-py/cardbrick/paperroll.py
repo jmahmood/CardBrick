@@ -37,17 +37,22 @@ KEEP_ABOVE_PX = 1600
 PERF_H = 18
 # Blank paper fed before/after the perforation on a page feed.
 PAGE_GAP = 36
+# Per-frame reveal speed for the tiny printer head. At 30 FPS this
+# makes a line appear in about 2-3 ticks: visible, but never precious.
+REVEAL_STEP = 0.45
 
 
 class _Item:
-    __slots__ = ("kind", "surf", "h", "x", "event")
+    __slots__ = ("kind", "surf", "h", "x", "event", "reveal", "reveal_progress")
 
-    def __init__(self, kind, surf, h, x=None, event=None):
+    def __init__(self, kind, surf, h, x=None, event=None, reveal=False):
         self.kind = kind  # "surf" | "perf" | "tear-perf" | "gap"
         self.surf = surf
         self.h = h
         self.x = x  # None = centred in the content span
         self.event = event
+        self.reveal = bool(reveal and surf is not None)
+        self.reveal_progress = 1.0
 
 
 class PaperRoll:
@@ -61,6 +66,7 @@ class PaperRoll:
         self._total = 0.0  # roll coordinate of the write point
         self.offset = -float(print_y)  # roll coordinate of screen y=0
         self._target = self.offset
+        self._active_reveal = None
         # Roll coordinate + committed-item index where each page's
         # content begins (right after its perforation group).
         self._pages = []
@@ -74,9 +80,17 @@ class PaperRoll:
 
     # -- feeding -----------------------------------------------------------------
 
-    def feed(self, surf, h=None, x=None):
+    def feed(self, surf, h=None, x=None, reveal=True):
         """Queue one printed line (or image, stamp, ...) for a line feed."""
-        self._queue.append(_Item("surf", surf, surf.get_height() if h is None else h, x))
+        self._queue.append(
+            _Item(
+                "surf",
+                surf,
+                surf.get_height() if h is None else h,
+                x,
+                reveal=reveal,
+            )
+        )
         self._maybe_snap()
 
     def feed_gap(self, h):
@@ -126,13 +140,20 @@ class PaperRoll:
 
     @property
     def busy(self):
-        return bool(self._queue) or abs(self._target - self.offset) > SNAP_PX
+        return (
+            bool(self._queue)
+            or abs(self._target - self.offset) > SNAP_PX
+            or self._active_reveal is not None
+        )
 
     def finish(self):
         """Snap to the fully-printed state (input interruption or
         reduced motion): commit the whole queue, land on the target."""
         while self._queue:
             self._commit(self._queue.popleft())
+        for item in self._items:
+            item.reveal_progress = 1.0
+        self._active_reveal = None
         self.offset = self._target
         self._prune()
 
@@ -142,7 +163,9 @@ class PaperRoll:
             was_busy = self.busy
             self.finish()
             return was_busy
-        if self._queue and abs(self._target - self.offset) <= RELEASE_PX:
+        if self._active_reveal is not None:
+            self._advance_reveal()
+        elif self._queue and abs(self._target - self.offset) <= RELEASE_PX:
             # Blank paper and page bookkeeping ride along for free: a
             # release commits up to one *printed* item (line, image,
             # perforation) so only real content paces the feed.
@@ -163,12 +186,23 @@ class PaperRoll:
         else:
             self._items.append(item)
             self._total += item.h
+            if item.reveal:
+                item.reveal_progress = 0.0
+                self._active_reveal = item
         self._target = self._total - self.print_y
         if notify and self.on_feed:
             if item.kind == "surf":
                 self.on_feed("line")
             elif item.event:
                 self.on_feed(item.event)
+
+    def _advance_reveal(self):
+        item = self._active_reveal
+        if item is None:
+            return
+        item.reveal_progress = min(item.reveal_progress + REVEAL_STEP, 1.0)
+        if item.reveal_progress >= 1.0:
+            self._active_reveal = None
 
     def _maybe_snap(self):
         if self.reduced_motion:
@@ -221,8 +255,36 @@ class PaperRoll:
                         )
             elif item.surf is not None:
                 x = item.x if item.x is not None else x0 + (x1 - x0 - item.surf.get_width()) // 2
-                screen.blit(item.surf, (x, int(top)))
+                if item.reveal and item.reveal_progress < 1.0:
+                    visible_w = int(item.surf.get_width() * item.reveal_progress)
+                    if visible_w > 0:
+                        area = pygame.Rect(
+                            0, 0, visible_w, item.surf.get_height()
+                        )
+                        screen.blit(item.surf, (x, int(top)), area)
+                    self._draw_head(screen, x + visible_w, int(top), item)
+                else:
+                    screen.blit(item.surf, (x, int(top)))
+
+    def _draw_head(self, screen, x, y, item):
+        import pygame
+
+        x = max(x, 0)
+        y = max(y - 3, 0)
+        head_w, head_h = 13, 7
+        rect = pygame.Rect(int(x) - head_w // 2, y, head_w, head_h)
+        pygame.draw.rect(screen, self.head_color, rect, border_radius=2)
+        pin_x = int(x)
+        pin_y = y + head_h
+        pygame.draw.line(
+            screen,
+            self.head_color,
+            (pin_x, pin_y),
+            (pin_x, min(pin_y + min(item.h, 10), y + item.h + 3)),
+            2,
+        )
 
     # Set by the app once at construction; kept as an attribute so this
     # module never imports the palette (and stays headless-testable).
     perf_color = (214, 207, 193)
+    head_color = (43, 45, 58)
