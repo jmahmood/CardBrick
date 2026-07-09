@@ -77,7 +77,7 @@ from .input_map import (
 from .paperroll import PAGE_GAP, PERF_H, PaperRoll
 from .scheduler import iso
 from .session import StudySession
-from .textutil import wrap_text
+from .textutil import format_tag_label, wrap_text
 
 log = logging.getLogger(__name__)
 
@@ -160,10 +160,10 @@ FONT_CANDIDATES = [
 
 ICON_CANDIDATES = [
     os.environ.get("CARDBRICK_ICON", ""),
-    os.path.join(_ROOT_ASSET_DIR, "icon.png"),
-    os.path.join(_BUNDLED_ASSET_DIR, "icon.png"),
     os.path.join(_ROOT_ASSET_DIR, "icon-large.png"),
     os.path.join(_BUNDLED_ASSET_DIR, "icon-large.png"),
+    os.path.join(_ROOT_ASSET_DIR, "icon.png"),
+    os.path.join(_BUNDLED_ASSET_DIR, "icon.png"),
 ]
 
 _font_path_logged = False
@@ -336,6 +336,12 @@ class CardBrickApp:
         self.fullscreen = fullscreen
         _set_window_icon()
         self._init_display()
+        # Present the paper background immediately: the launch script's
+        # framebuffer splash is gone once SDL takes the display, and the
+        # rest of startup (fonts, joysticks, db recovery) shouldn't show
+        # as a black screen.
+        self.canvas.fill(BG)
+        self.present()
         pygame.display.set_caption("CardBrick — Spanish Practice")
         pygame.mouse.set_visible(False)
         # In pygame 2 the SDL device closes again when a Joystick object
@@ -866,8 +872,10 @@ class CardBrickApp:
         "All assigned categories" next time) simply returns to
         studying everything in scope."""
         available = self._resolve_available_categories()
+        # Labels are prettified ("::" hierarchy, underscores) but the
+        # filter value stays the raw tag the cards are matched against.
         entries = [("All assigned categories", None)] + [
-            (name, [name]) for name in available
+            (format_tag_label(name), [name]) for name in available
         ]
         # One batched call for the same reason as the deck picker: the
         # A press that opens this screen shouldn't rebuild the full
@@ -1222,15 +1230,9 @@ class CardBrickApp:
 
         def print_stub():
             """Receipt stub at the top of each card's page."""
-            left = card["deck"]
-            if card["tags"]:
-                left += "  ·  " + " ".join(card["tags"].split()[:3])
-            right = (
-                f"{self._sprint_label}  ·  {session.remaining()} left"
-                if self._sprint_label
-                else f"{session.remaining()} left"
-            )
             roll.feed_gap(8)
+            left = self._sprint_label
+            right = f"{session.remaining()} left"
             roll.feed(self._stub_surface(left, right), reveal=False)
             roll.feed(self._rule_surface(), reveal=False)
             roll.feed_gap(10)
@@ -2138,6 +2140,7 @@ class CardBrickApp:
             items=self.storage.all_tags(),
             profile_field="active_categories",
             empty_message="No tags found — import a deck first.",
+            format_item=format_tag_label,
         )
 
     def screen_parent_decks(self):
@@ -2151,11 +2154,14 @@ class CardBrickApp:
         )
 
     def _screen_multi_select(
-        self, title, subtitle, all_label, items, profile_field, empty_message
+        self, title, subtitle, all_label, items, profile_field, empty_message,
+        format_item=None,
     ):
         """Shared toggle-list UI behind Categories and Decks: a
         "[ All ... ]" entry plus one per item, with the active subset
-        persisted to the profile (None means "all active")."""
+        persisted to the profile (None means "all active").
+        ``format_item`` prettifies labels for display only; toggling
+        and persistence always use the raw item."""
         active = self.profile[profile_field]
         selected = None if active is None else set(active)
         index = 0
@@ -2202,6 +2208,8 @@ class CardBrickApp:
                 else:
                     on = selected is None or label in selected
                     mark = "[x]" if on else "[ ]"
+                    if format_item is not None:
+                        label = format_item(label)
                 text = self._truncate_to_width(
                     self.font, f"{mark} {label}", self.w - 160
                 )

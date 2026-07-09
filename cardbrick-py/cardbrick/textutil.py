@@ -53,6 +53,19 @@ def clean_html(text):
     return "\n".join(out)
 
 
+def format_tag_label(tag):
+    """Human-friendly display form of a raw Anki tag.
+
+    Anki tags cannot contain spaces, so decks conventionally use
+    underscores ("Chapter_1") and "::" for hierarchy
+    ("JLPT::N5::Verbs_Group_1"). Neither reads well on screen, so
+    pickers show "JLPT › N5 › Verbs Group 1" instead. Display-only:
+    filtering and persistence always use the raw tag.
+    """
+    parts = [part.replace("_", " ").strip() for part in tag.split("::")]
+    return " › ".join(part for part in parts if part) or tag
+
+
 def wrap_text(font, text, max_width):
     """Wrap text to pixel width using a pygame font.
 
