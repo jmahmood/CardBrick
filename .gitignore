@@ -40,3 +40,6 @@ deploy/minui/decks/*
 
 # Python bytecode caches (e.g. deploy/knulli/scripts/__pycache__)
 __pycache__/
+
+# macOS app bundle build artifact
+/CardBrick.app/
