@@ -150,8 +150,11 @@ scripts/deploy_sdcard.sh /Volumes/SHARE --clean   # wipe old app dir first
 ```
 
 The script locates `roms/ports/` (SHARE root or bare roms partition),
-copies `CardBrick.sh` + `CardBrick/`, and runs `sync` before telling
-you it is safe to eject. On the device: if the Ports menu doesn't show
+copies `CardBrick.sh` + `CardBrick/`, merges the description/image
+metadata from the repo's `assets/gameinfo.xml` into the card's
+`roms/ports/gamelist.xml` (via `scripts/merge_gamelist.py`; ES-owned
+play stats are preserved), and runs `sync` before telling you it is
+safe to eject. On the device: if the Ports menu doesn't show
 CardBrick, Start menu → Games Settings → **Update Gamelists** (or
 reboot).
 
@@ -169,7 +172,14 @@ scripts/deploy_ssh.sh --host root@192.168.1.42 --no-runtime  # code only
 
 The script uploads with tar-over-ssh (no rsync needed on the device),
 skips the runtime upload when the on-device checksum already matches,
-verifies `PACKAGE_MANIFEST.sha256` on the device, pokes
+and deploys incrementally: it diffs the freshly built
+`PACKAGE_MANIFEST.sha256` against the copy left by the previous deploy
+and only transfers new/changed files (media-heavy bundles go from
+thousands of files to a handful). Pass `--full` to force a whole-bundle
+re-upload, e.g. after modifying files on the device by hand. It then
+verifies `PACKAGE_MANIFEST.sha256` on the device, merges the
+description/image metadata from the repo's `assets/gameinfo.xml` into
+the device's `roms/ports/gamelist.xml` (play stats preserved), pokes
 EmulationStation to reload the games list, and with `--smoke` runs
 the app's own `--smoke-test` on real hardware — one `[PASS]/[FAIL]`
 line per subsystem (display, font, DB, scheduler, controller, audio).
@@ -182,6 +192,7 @@ line per subsystem (display, font, DB, scheduler, controller, audio).
 ├── cardbrick-py/                        # the app, read-only
 ├── runtime/pygame-ce_*.squashfs         # mounted at /tmp/cardbrick-runtime
 ├── seed-data/cardbrick.db, media/       # OPTIONAL, only if built with --deck
+├── splash/splash-WxH-BPP.raw.gz         # boot splash framebuffer images
 ├── VERSION  BUILD_INFO  PACKAGE_MANIFEST.sha256
 
 /userdata/saves/cardbrick/               # ALL mutable data (auto-created)
@@ -189,7 +200,11 @@ line per subsystem (display, font, DB, scheduler, controller, audio).
 └── logs/launch.log + cardbrick.log      # start here when debugging
 ```
 
-The launch script mounts the newest `runtime/*.squashfs`, exports
+The launch script first paints a "Loading..." splash straight into
+`/dev/fb0` (picked from `splash/` by the panel geometry in
+`/sys/class/graphics/fb0`; rendered at build time by
+`scripts/make_splash.py`) so the several seconds of runtime mounting and
+Python startup aren't a black screen. It then mounts the newest `runtime/*.squashfs`, exports
 `PYTHONHOME`/`PYTHONPATH`/`LD_LIBRARY_PATH` into it, keeps `.pyc`
 files in the data dir (`PYTHONPYCACHEPREFIX` — the app tree stays
 read-only), installs the seed database on first boot if present (§2b),

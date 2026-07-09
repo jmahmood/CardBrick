@@ -24,6 +24,33 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 GAMEDIR="${SCRIPT_DIR}/CardBrick"
 APP_DIR="${GAMEDIR}/cardbrick-py"
 
+# --------------------------------------------------------------- splash
+# Mounting the runtime, the seed-db checks, and Python+pygame startup
+# add up to several seconds of black screen. Paint a pre-rendered image
+# (built by scripts/make_splash.py) straight into the framebuffer first
+# thing — no interpreter needed, and SDL replaces it when the app
+# presents its first frame. No matching image for this panel just means
+# the screen stays black like before; never a failed launch.
+show_splash() {
+    [ -w /dev/fb0 ] || return 0
+    local size bpp w h
+    size="$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)" || return 0
+    bpp="$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null)" || return 0
+    w="${size%,*}"
+    h="${size#*,}"
+    # virtual_size is often double-height for page flipping; the visible
+    # page (pan offset 0) is the panel itself.
+    local candidate img
+    for candidate in "$h" "$((h / 2))"; do
+        img="${GAMEDIR}/splash/splash-${w}x${candidate}-${bpp}.raw.gz"
+        if [ -f "$img" ]; then
+            zcat "$img" > /dev/fb0 2>/dev/null
+            return 0
+        fi
+    done
+}
+show_splash
+
 # ------------------------------------------------------------- data dir
 CARD_BRICK_DATA_DIR="${CARD_BRICK_DATA_DIR:-/userdata/saves/cardbrick}"
 export CARD_BRICK_DATA_DIR

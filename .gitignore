@@ -37,3 +37,6 @@ deploy/minui/scripts/.deckbuild-venv/
 # the package (see deploy/minui/decks/README.md) — not app content.
 deploy/minui/decks/*
 !deploy/minui/decks/README.md
+
+# Python bytecode caches (e.g. deploy/knulli/scripts/__pycache__)
+__pycache__/

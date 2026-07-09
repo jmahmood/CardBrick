@@ -90,6 +90,23 @@ else
 fi
 chmod +x "${PORTS_DIR}/CardBrick.sh" 2>/dev/null || true  # FAT has no exec bit; Knulli copes
 
+# Give the Ports entry a description and image: merge the metadata from
+# assets/gameinfo.xml (repo root) into the card's gamelist.xml, keeping
+# ES-owned play stats. Best-effort — never fails the deploy.
+REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
+GAMEINFO="${REPO_ROOT}/assets/gameinfo.xml"
+if [ -f "$GAMEINFO" ] && command -v python3 >/dev/null 2>&1; then
+    echo "Updating Ports gamelist metadata..."
+    GL_NEW="$(mktemp)"
+    if python3 "${HERE}/merge_gamelist.py" "$GAMEINFO" \
+            "${PORTS_DIR}/gamelist.xml" > "$GL_NEW"; then
+        cp "$GL_NEW" "${PORTS_DIR}/gamelist.xml"
+    else
+        echo "WARNING: gamelist merge failed — Ports entry will lack desc/image" >&2
+    fi
+    rm -f "$GL_NEW"
+fi
+
 echo "Flushing writes to the card (sync)..."
 sync
 

@@ -10,6 +10,8 @@
 #   │   │   ├── cardbrick.db             # copied into place by CardBrick.sh
 #   │   │   ├── media/                   # on first boot (only if no db
 #   │   │   └── SEED_INFO                # exists yet in the data dir)
+#   │   ├── splash/                      # boot splash framebuffer images
+#   │   │                                # (make_splash.py; needs Pillow)
 #   │   ├── VERSION  BUILD_INFO  PACKAGE_MANIFEST.sha256
 #   └── CardBrick-knulli-v<ver>.zip  # same content, zipped for SD card
 #
@@ -133,6 +135,43 @@ find "${STAGE}/cardbrick-py" \
     \( -type d -name '__pycache__' -o -type d -name '.pytest_cache' \) \
     -exec rm -rf {} +
 find "${STAGE}/cardbrick-py" -type f \( -name '*.pyc' -o -name '.DS_Store' \) -delete
+
+# EmulationStation artwork — the deploy scripts add a gamelist.xml entry
+# whose <image> points at ./CardBrick/icon-large.png.
+[ -f "${REPO_ROOT}/assets/icon-large.png" ] && \
+    cp "${REPO_ROOT}/assets/icon-large.png" "${STAGE}/icon-large.png"
+
+# ------------------------------------------------------------- splash
+# Pre-rendered framebuffer images CardBrick.sh paints while the runtime
+# mounts and Python starts (see make_splash.py). Cosmetic — a host
+# without Pillow ships a package without a splash, not a failed build.
+SPLASH_PY=""
+if python3 -c "import PIL" >/dev/null 2>&1; then
+    SPLASH_PY="python3"
+else
+    VENV_DIR="${HERE}/.deckbuild-venv"
+    if [ ! -x "${VENV_DIR}/bin/python3" ]; then
+        echo "Setting up a local venv for splash rendering (needs Pillow)..."
+        python3 -m venv "$VENV_DIR" \
+            && "${VENV_DIR}/bin/pip" install -q --upgrade pip
+    fi
+    if "${VENV_DIR}/bin/python3" -c "import PIL" >/dev/null 2>&1 \
+            || "${VENV_DIR}/bin/pip" install -q pillow 2>/dev/null; then
+        SPLASH_PY="${VENV_DIR}/bin/python3"
+    fi
+fi
+if [ -n "$SPLASH_PY" ] && [ -f "${REPO_ROOT}/assets/icon-large.png" ]; then
+    echo "Rendering boot splash images:"
+    if ! "$SPLASH_PY" "${HERE}/make_splash.py" \
+            --icon "${REPO_ROOT}/assets/icon-large.png" \
+            --font "${REPO_ROOT}/assets/font/PixelMplus10-Regular.ttf" \
+            --out-dir "${STAGE}/splash"; then
+        echo "WARN: splash rendering failed — package ships without a boot splash" >&2
+        rm -rf "${STAGE}/splash"
+    fi
+else
+    echo "WARN: Pillow not available — package ships without a boot splash" >&2
+fi
 
 install -m 755 "${KNULLI_DIR}/CardBrick.sh" "${DIST}/CardBrick.sh"
 
