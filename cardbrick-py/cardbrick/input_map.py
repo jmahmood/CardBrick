@@ -68,8 +68,11 @@ KEYBOARD_SEMANTICS = {
     "up": "dpad_up", "down": "dpad_down",
     "left": "dpad_left", "right": "dpad_right",
     "return": "east_button", "space": "east_button",
+    # Letter keys match the FACE_LABELS letters (north is X, west is
+    # Y). Swapping these silently exchanges Hard/Easy ratings on
+    # desktop and picks the wrong on-screen MCQ option.
     "a": "east_button", "b": "south_button",
-    "x": "west_button", "y": "north_button",
+    "x": "north_button", "y": "west_button",
     "1": "south_button",  # Again
     "2": "north_button",  # Hard
     "3": "east_button",   # Good

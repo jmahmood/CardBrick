@@ -126,3 +126,13 @@ def test_every_semantic_has_a_study_action():
         assert semantic in STUDY_ACTIONS
     assert STUDY_ACTIONS["select"] == "quit"
     assert STUDY_ACTIONS["start"] == "open_action_menu"
+
+
+def test_keyboard_letter_keys_match_face_labels():
+    """The keyboard fallback letters must pick the button carrying the
+    same printed label (north is X, west is Y) — a swap silently
+    exchanges Hard/Easy ratings and picks the wrong on-screen MCQ
+    option (X/Y/B are displayed next to the choices)."""
+    from cardbrick.input_map import FACE_LABELS, KEYBOARD_SEMANTICS
+    for semantic, label in FACE_LABELS.items():
+        assert KEYBOARD_SEMANTICS[label.lower()] == semantic
