@@ -119,6 +119,16 @@ RATING_FOR_SEMANTIC = {
     "west_button": 4,
 }
 
+# MCQ drill cards: the three options sit on the non-A face buttons, so
+# A keeps meaning "I know it" everywhere (and stays free for later
+# use). Slot n is the n-th *displayed* option, top to bottom.
+MCQ_SLOT_FOR_SEMANTIC = {
+    "north_button": 0,
+    "west_button": 1,
+    "south_button": 2,
+}
+MCQ_OPTION_LABELS = ("X", "Y", "B")
+
 DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
 LINE_FEED_SFX = "line-tick.wav"
 PAGE_FEED_SFX = "page-whirr.wav"
@@ -1178,9 +1188,12 @@ class CardBrickApp:
         auto_play = bool(self.settings.get("auto_play_audio", True))
 
         flipped = False
-        phase = 0  # vocab cards only: 0..VOCAB_MAX_PHASE
+        phase = 0  # vocab/pattern ladder: 0..VOCAB_MAX_PHASE
         vocab_detail = None  # vocab cards only: the vocab_cards row
-        known_confirmation = None  # vocab only: pending "I know this" confirmation
+        pattern_detail = None  # pattern cards only: the pattern_cards row
+        mcq_order = None  # mcq only: displayed option order (slots)
+        mcq_result = None  # mcq only: {"rating"} once answered/bailed
+        known_confirmation = None  # ladder: pending "I know this" confirmation
         shown_at = None
         audio_status = None
         menu = None  # action-menu overlay index, or None when closed
@@ -1203,6 +1216,10 @@ class CardBrickApp:
         def can_scroll_card():
             if menu is not None or roll.printing_busy:
                 return False
+            if pattern_detail is not None:
+                if pattern_detail["kind"] == "mcq":
+                    return mcq_result is not None
+                return known_confirmation is not None or phase >= drill.MAX_PHASE
             if vocab_detail is not None:
                 return known_confirmation is not None or phase >= self.VOCAB_MAX_PHASE
             return flipped
@@ -1247,6 +1264,9 @@ class CardBrickApp:
                 roll.feed(self.font_small.render("♪  L1 = replay", True, DIM))
 
         def print_front():
+            if pattern_detail is not None:
+                print_pattern_front()
+                return
             if vocab_detail is not None:
                 print_block(vocab_detail["word"], self.font_big, FG)
             else:
@@ -1307,6 +1327,67 @@ class CardBrickApp:
                 printed_phase += 1
                 print_vocab_phase(printed_phase)
 
+        def print_pattern_front():
+            """Task cue; for mcq also the three options, labeled with
+            the face buttons that pick them (A deliberately unused)."""
+            if pattern_detail["kind"] == "mcq":
+                print_block(pattern_detail["cue_en"], self.font, FG)
+                texts, _ = drill.parse_mcq_options(
+                    pattern_detail["options_json"])
+                roll.feed_gap(10)
+                roll.feed(self._rule_surface(), reveal=False)
+                for label, slot in zip(MCQ_OPTION_LABELS, mcq_order):
+                    roll.feed_gap(8)
+                    print_block(f"{label})  {texts[slot]}", self.font, FG)
+            else:
+                print_block(pattern_detail["prompt_en"], self.font_big, FG)
+
+        def print_pattern_phase(p):
+            """The production help ladder. 1: +sibling sentence (same
+            pattern, other content). 2: +skeleton with the answer's
+            slots blanked. 3: +model answer. Say it aloud at every
+            rung; the rung you needed is the rating."""
+            if p == 1:
+                roll.feed_gap(10)
+                roll.feed(self._rule_surface(), reveal=False)
+                roll.feed_gap(8)
+                roll.feed(self.font_small.render("same pattern:", True, DIM))
+                print_block(pattern_detail["sibling_es"], self.font, FG)
+            elif p == 2:
+                roll.feed_gap(10)
+                roll.feed(self.font_small.render("fill it in:", True, DIM))
+                print_block(pattern_detail["skeleton_es"], self.font, FG)
+            elif p == 3:
+                roll.feed_gap(10)
+                roll.feed(self.font_small.render("—  RESPUESTA  —", True,
+                                                 ACCENT))
+                roll.feed_gap(8)
+                print_block(pattern_detail["answer_es"], self.font, FG)
+
+        def print_pattern_up_to(target_phase):
+            nonlocal printed_phase
+            while printed_phase < target_phase:
+                printed_phase += 1
+                print_pattern_phase(printed_phase)
+
+        def print_mcq_feedback():
+            """After a wrong pick (or a 'show me' bail-out) the correct
+            sentence is re-printed as a result block — the paper roll
+            is append-only, so already-fed options can't be restyled."""
+            texts, correct = drill.parse_mcq_options(
+                pattern_detail["options_json"])
+            roll.feed_gap(10)
+            roll.feed(self._rule_surface(), reveal=False)
+            roll.feed_gap(8)
+            roll.feed(self.font_small.render("—  RESPUESTA  —", True,
+                                             ACCENT))
+            roll.feed_gap(6)
+            print_block(texts[correct], self.font, GOOD)
+            if pattern_detail["constraint_note"]:
+                roll.feed_gap(6)
+                print_block(pattern_detail["constraint_note"],
+                            self.font_small, DIM)
+
         RATING_STAMPS = {
             1: ("AGAIN", ACCENT),
             2: ("HARD", WARN),
@@ -1360,6 +1441,7 @@ class CardBrickApp:
         def begin_card(card, new_page=True):
             nonlocal flipped, phase, vocab_detail, known_confirmation
             nonlocal shown_at, audio_status, printed_phase, tear_next_page
+            nonlocal pattern_detail, mcq_order, mcq_result
             flipped = False
             phase = 0
             printed_phase = 0
@@ -1367,6 +1449,20 @@ class CardBrickApp:
             vocab_detail = (
                 self.storage.get_vocab_detail(card["id"])
                 if card["card_type"] == "vocab"
+                else None
+            )
+            # A pattern card without its satellite row degrades to the
+            # basic front/back flow, same as vocab.
+            pattern_detail = (
+                self.storage.get_pattern_detail(card["id"])
+                if card["card_type"] == "pattern"
+                else None
+            )
+            mcq_result = None
+            mcq_order = (
+                drill.mcq_option_order(card["id"])
+                if pattern_detail is not None
+                and pattern_detail["kind"] == "mcq"
                 else None
             )
             shown_at = self.service.now()
@@ -1434,19 +1530,17 @@ class CardBrickApp:
             return True
 
         def before_flip_controls_active():
-            return (
-                menu is None
-                and card is not None
-                and not roll.printing_busy
-                and (
-                    (vocab_detail is None and not flipped)
-                    or (
-                        vocab_detail is not None
-                        and known_confirmation is None
-                        and phase < self.VOCAB_MAX_PHASE
-                    )
-                )
-            )
+            if menu is not None or card is None or roll.printing_busy:
+                return False
+            if pattern_detail is not None:
+                if pattern_detail["kind"] == "mcq":
+                    return mcq_result is None
+                return (known_confirmation is None
+                        and phase < drill.MAX_PHASE)
+            if vocab_detail is not None:
+                return (known_confirmation is None
+                        and phase < self.VOCAB_MAX_PHASE)
+            return not flipped
 
         def end_session():
             self.audio.stop()
@@ -1558,6 +1652,88 @@ class CardBrickApp:
                 elif action == "r1":
                     discard_current("BURIED")
                     continue
+            elif pattern_detail is not None and pattern_detail["kind"] == "mcq":
+                if mcq_result is None:
+                    if action in MCQ_SLOT_FOR_SEMANTIC:
+                        _texts, correct = drill.parse_mcq_options(
+                            pattern_detail["options_json"])
+                        chosen = mcq_order[MCQ_SLOT_FOR_SEMANTIC[action]]
+                        elapsed = int(
+                            (self.service.now() - shown_at).total_seconds()
+                            * 1000
+                        )
+                        rating = drill.mcq_rating(chosen == correct, elapsed)
+                        # Durable at the moment of choice, like every
+                        # other card type.
+                        session.answer(rating, elapsed_ms=elapsed)
+                        if chosen == correct:
+                            prepare_for_next_print()
+                            print_stamp(rating)
+                            advance()
+                            continue
+                        print_mcq_feedback()
+                        mcq_result = {"rating": rating}
+                    elif action == "dpad_down":
+                        # "Show me" bail-out: full help = Again.
+                        elapsed = int(
+                            (self.service.now() - shown_at).total_seconds()
+                            * 1000
+                        )
+                        session.answer(1, elapsed_ms=elapsed)
+                        print_mcq_feedback()
+                        mcq_result = {"rating": 1}
+                    elif action == "r1":
+                        discard_current("BURIED")
+                        continue
+                else:
+                    if scroll_card(action):
+                        continue
+                    if action == "east_button":
+                        prepare_for_next_print()
+                        print_stamp(mcq_result["rating"])
+                        advance()
+                        continue
+                    # r1 deliberately ignored here: the answer is
+                    # already committed, burying would double-count.
+            elif pattern_detail is not None:
+                # Production scaffold: the vocab ladder grammar with
+                # drill content. confirm_known() is shared as-is.
+                if scroll_card(action):
+                    continue
+                if known_confirmation is not None:
+                    if action == "east_button":
+                        confirm_known()
+                        continue
+                    if action == "south_button":
+                        confirm_known(mistake=True)
+                        continue
+                    if action == "r1":
+                        discard_current("BURIED")
+                        continue
+                elif action == "dpad_down":
+                    if phase < drill.MAX_PHASE:
+                        phase += 1
+                        print_pattern_up_to(phase)
+                elif action == "east_button":
+                    elapsed = int(
+                        (self.service.now() - shown_at).total_seconds() * 1000
+                    )
+                    if phase >= drill.MAX_PHASE:
+                        prepare_for_next_print()
+                        print_stamp(self.VOCAB_PHASE_RATING[phase])
+                        session.answer(self.VOCAB_PHASE_RATING[phase],
+                                       elapsed_ms=elapsed)
+                        advance()
+                        continue
+                    known_confirmation = {
+                        "phase": phase,
+                        "elapsed_ms": elapsed,
+                    }
+                    phase = drill.MAX_PHASE
+                    print_pattern_up_to(phase)
+                elif action == "r1":
+                    discard_current("BURIED")
+                    continue
             elif not flipped:
                 if action == "dpad_down" or action in ("east_button", "unmapped"):
                     flipped = True
@@ -1592,18 +1768,48 @@ class CardBrickApp:
                     vocab=vocab_detail,
                     known_confirmation=known_confirmation,
                     roll=roll,
+                    pattern=pattern_detail,
+                    mcq_result=mcq_result,
                 )
                 needs_draw = False
                 heartbeat = 0
             self.clock.tick(FPS)
 
-    def _draw_review(self, flipped, menu, phase, vocab, known_confirmation, roll):
+    def _draw_review(self, flipped, menu, phase, vocab, known_confirmation,
+                     roll, pattern=None, mcq_result=None):
         """One frame of the review screen: the paper roll carries all
         card content (pre-rendered when printed); only the chrome —
         sprocket strips, chassis hints, overlay menu — is drawn here."""
         self._paper(roll)
         self._draw_roll(roll)
-        if vocab is not None:
+        if pattern is not None and pattern["kind"] == "mcq":
+            if mcq_result is None:
+                self._footer(
+                    "X / Y / B = Choose   Down = Show answer",
+                    "Hold Up = Undo   R1 = Bury   START = Menu",
+                )
+            else:
+                self._footer(
+                    "A = Continue",
+                    "D-pad = Scroll   START = Menu",
+                )
+        elif pattern is not None:
+            if known_confirmation is not None:
+                self._footer(
+                    "A = Yes, I knew it   B = I made a mistake",
+                    "D-pad up/down = Scroll   START = Menu",
+                )
+            elif phase < drill.MAX_PHASE:
+                self._footer(
+                    "Say it out loud!   A = I know this",
+                    "Down = More help   R1 = Bury   START = Menu",
+                )
+            else:
+                self._footer(
+                    "A = Go to next card",
+                    "D-pad=Scroll   R1=Bury   START=Menu",
+                )
+        elif vocab is not None:
             if known_confirmation is not None:
                 self._footer(
                     "A = Yes, I knew it   B = I made a mistake",
