@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -141,7 +141,10 @@ CREATE TABLE IF NOT EXISTS child_profiles (
     session_time_minutes INTEGER NOT NULL DEFAULT 10,
     study_direction      TEXT NOT NULL DEFAULT 'normal',
     study_ahead_days     INTEGER NOT NULL DEFAULT 1,
-    study_ahead_enabled  INTEGER NOT NULL DEFAULT 1
+    study_ahead_enabled  INTEGER NOT NULL DEFAULT 1,
+    drill_sprint_cards   INTEGER NOT NULL DEFAULT 6,
+    drill_sprint_minutes INTEGER NOT NULL DEFAULT 5,
+    drill_daily_new      INTEGER NOT NULL DEFAULT 3
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck);
@@ -167,6 +170,11 @@ _PROFILE_UPGRADES = {
     "daily_goal_cards": "INTEGER NOT NULL DEFAULT 150",
     "study_ahead_days": "INTEGER NOT NULL DEFAULT 1",
     "study_ahead_enabled": "INTEGER NOT NULL DEFAULT 1",
+    # Pattern drill sittings run on their own, much smaller economics
+    # (a production card takes minutes, not seconds).
+    "drill_sprint_cards": "INTEGER NOT NULL DEFAULT 6",
+    "drill_sprint_minutes": "INTEGER NOT NULL DEFAULT 5",
+    "drill_daily_new": "INTEGER NOT NULL DEFAULT 3",
 }
 _VOCAB_CARD_UPGRADES = {
     "word_en": "TEXT",
@@ -433,7 +441,8 @@ class Storage:
             tags.update(row["tags"].split())
         return sorted(tags)
 
-    def queue_candidates(self, now_iso, new_cards=False, decks=None):
+    def queue_candidates(self, now_iso, new_cards=False, decks=None,
+                         drill=False):
         """Cards eligible for the review queue, before tag filtering.
 
         Excludes suspended cards and cards buried until later than now.
@@ -442,6 +451,13 @@ class Storage:
         ``decks`` of None means every deck; otherwise a list of deck
         names to restrict to (unlike tags, a card has exactly one deck,
         so this filters in SQL rather than in Python).
+
+        ``drill`` splits the collection into two disjoint worlds:
+        False (a normal sitting) never serves pattern drill cards,
+        True (a drill sitting) serves nothing else. New drill cards are
+        ordered recognition-first — MCQ before production, then by
+        priority — so a pattern is recognized before it must be
+        produced.
         """
         base = """SELECT c.*, r.due, r.reps, r.lapses,
                          r.state AS fsrs_state, r.fsrs_json
@@ -450,24 +466,37 @@ class Storage:
                     AND (c.buried_until IS NULL OR c.buried_until <= :now)"""
         if decks is not None and len(decks) == 0:
             return []  # explicitly "no decks active": nothing is due
+        base += (" AND c.card_type = 'pattern'" if drill
+                 else " AND c.card_type <> 'pattern'")
         params = {"now": now_iso}
         if decks is not None:
             placeholders = ",".join(f":deck{i}" for i in range(len(decks)))
             base += f" AND c.deck IN ({placeholders})"
             params.update({f"deck{i}": name for i, name in enumerate(decks)})
-        if new_cards:
+        if new_cards and drill:
+            # DESC sorts priority_score NULLs last in SQLite.
+            query = base.replace(
+                "FROM cards c",
+                "FROM cards c LEFT JOIN pattern_cards p ON p.card_id = c.id",
+                1,
+            ) + """ AND r.reps = 0
+                    ORDER BY CASE WHEN p.kind = 'mcq' THEN 0 ELSE 1 END,
+                             p.priority_score DESC, c.id"""
+        elif new_cards:
             query = base + " AND r.reps = 0 ORDER BY c.id"
         else:
             query = base + " AND r.reps > 0 AND r.due <= :now ORDER BY r.due"
         return self.conn.execute(query, params).fetchall()
 
-    def ahead_candidates(self, now_iso, horizon_iso, decks=None):
+    def ahead_candidates(self, now_iso, horizon_iso, decks=None,
+                         drill=False):
         """Cards due after now but within the study-ahead horizon.
 
         Same eligibility rules as queue_candidates (no suspended cards,
-        no buried cards, optional deck restriction), ordered soonest-due
-        first so the most urgent cards are pulled forward first. Used to
-        top up a sprint when today's due pool runs dry.
+        no buried cards, optional deck restriction, drill/normal world
+        split), ordered soonest-due first so the most urgent cards are
+        pulled forward first. Used to top up a sprint when today's due
+        pool runs dry.
         """
         if decks is not None and len(decks) == 0:
             return []  # explicitly "no decks active": nothing to pull
@@ -477,6 +506,8 @@ class Storage:
                    WHERE c.suspended = 0
                      AND (c.buried_until IS NULL OR c.buried_until <= :now)
                      AND r.reps > 0 AND r.due > :now AND r.due <= :horizon"""
+        query += (" AND c.card_type = 'pattern'" if drill
+                  else " AND c.card_type <> 'pattern'")
         params = {"now": now_iso, "horizon": horizon_iso}
         if decks is not None:
             placeholders = ",".join(f":deck{i}" for i in range(len(decks)))
@@ -560,21 +591,30 @@ class Storage:
         self.conn.execute(
             "UPDATE review_log SET undone = 1 WHERE id = ?", (log_id,))
 
-    def daily_counts(self, day_start_iso):
+    def daily_counts(self, day_start_iso, drill=None):
         """Distinct cards introduced/reviewed since the local day start.
 
         Returns (new_count, review_count, new_card_ids). A card whose
         first-ever review happened today counts only as new, even if it
         was answered again later the same day.
+
+        ``drill`` of True counts only pattern drill cards, False only
+        everything else, None the whole collection — so drill sittings
+        and normal sittings keep separate daily budgets (drilling never
+        eats the vocab goal, vocab never eats the drill drip).
         """
+        type_clause = ""
+        if drill is True:
+            type_clause = " AND c.card_type = 'pattern'"
+        elif drill is False:
+            type_clause = " AND c.card_type <> 'pattern'"
+        base = f"""SELECT DISTINCT l.card_id FROM review_log l
+                   JOIN cards c ON c.id = l.card_id
+                   WHERE l.undone = 0 AND l.reviewed_at >= ?{type_clause}"""
         new_ids = {row["card_id"] for row in self.conn.execute(
-            """SELECT DISTINCT card_id FROM review_log
-               WHERE undone = 0 AND was_new = 1 AND reviewed_at >= ?""",
-            (day_start_iso,))}
+            base + " AND l.was_new = 1", (day_start_iso,))}
         all_ids = {row["card_id"] for row in self.conn.execute(
-            """SELECT DISTINCT card_id FROM review_log
-               WHERE undone = 0 AND reviewed_at >= ?""",
-            (day_start_iso,))}
+            base, (day_start_iso,))}
         return len(new_ids), len(all_ids - new_ids), new_ids
 
     def cards_answered_since(self, day_start_iso):
@@ -733,7 +773,9 @@ class Storage:
                    "daily_new_cards", "daily_review_cards",
                    "daily_goal_cards", "session_card_limit",
                    "session_time_minutes", "study_direction",
-                   "study_ahead_days", "study_ahead_enabled"}
+                   "study_ahead_days", "study_ahead_enabled",
+                   "drill_sprint_cards", "drill_sprint_minutes",
+                   "drill_daily_new"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown profile fields: {unknown}")
@@ -795,6 +837,15 @@ class Storage:
         """Distinct deck names, regardless of due status."""
         return [row["deck"] for row in self.conn.execute(
             "SELECT DISTINCT deck FROM cards ORDER BY deck")]
+
+    def pattern_deck_names(self):
+        """Deck names that contain pattern drill cards.
+
+        A sitting scoped entirely to these decks is a drill sitting and
+        runs on the profile's drill economics (see ReviewService).
+        """
+        return {row["deck"] for row in self.conn.execute(
+            "SELECT DISTINCT deck FROM cards WHERE card_type = 'pattern'")}
 
     def count_cards_in_decks(self, deck_names=None):
         """Card count for the given decks, or every card if None."""

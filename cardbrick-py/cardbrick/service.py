@@ -40,6 +40,12 @@ DEFAULT_LIMITS = {
     "session_time_minutes": 10,
     "study_ahead_days": 1,
     "study_ahead_enabled": 1,
+    # Drill sittings (pattern decks) run tiny sprints on a fixed
+    # new-card drip: a production card takes minutes, not seconds, and
+    # nothing here counts against the vocab goal.
+    "drill_sprint_cards": 6,
+    "drill_sprint_minutes": 5,
+    "drill_daily_new": 3,
 }
 
 
@@ -79,44 +85,68 @@ class ReviewService:
 
     # -- queue building --------------------------------------------------------
 
-    def _merged_limits(self, profile, limits):
-        """DEFAULT_LIMITS overlaid with explicit limits, then profile."""
+    def _merged_limits(self, profile, limits, drill=False):
+        """DEFAULT_LIMITS overlaid with explicit limits, then profile.
+
+        A drill sitting swaps in the drill economics: tiny sprints,
+        short time box, fixed new-pattern drip (never goal-paced).
+        """
         limits = dict(DEFAULT_LIMITS, **(limits or {}))
         if profile:
             for key in DEFAULT_LIMITS:
                 if profile.get(key) is not None:
                     limits[key] = profile[key]
+        if drill:
+            limits["session_card_limit"] = limits["drill_sprint_cards"]
+            limits["session_time_minutes"] = limits["drill_sprint_minutes"]
+            limits["daily_new_cards"] = limits["drill_daily_new"]
         return limits
 
-    def _day_budgets(self, limits, bonus):
+    def is_drill_filter(self, deck_filter):
+        """True when a sitting's deck scope is drill decks only.
+
+        Pattern drill cards live in a separate world from the daily
+        vocab loop: they appear only when the sitting explicitly names
+        drill deck(s), and such a sitting serves nothing else.
+        """
+        if not deck_filter:
+            return False  # None/[]: the normal world
+        drill_decks = self.storage.pattern_deck_names()
+        return all(deck in drill_decks for deck in deck_filter)
+
+    def _day_budgets(self, limits, bonus, drill=False):
         """The filter-independent daily numbers every pool build needs:
         (remaining_new, cards_done, answered-card-id set)."""
         day_start = iso(local_day_start(self.now()))
-        new_done, review_done, _ = self.storage.daily_counts(day_start)
+        new_done, review_done, _ = self.storage.daily_counts(day_start,
+                                                             drill=drill)
         answered = self.storage.cards_answered_since(day_start)
         if bonus:
             # A bonus sprint can't use more than one sprint's worth.
             remaining_new = limits["session_card_limit"]
-        elif limits["daily_new_cards"]:
+        elif limits["daily_new_cards"] or drill:
+            # Drill intake is always a fixed drip (0 = no new patterns),
+            # never goal-paced: production tasks must trickle in.
             remaining_new = max(limits["daily_new_cards"] - new_done, 0)
         else:  # auto: whatever the goal has left paces new intake
             remaining_new = max(limits["daily_goal_cards"]
                                 - new_done - review_done, 0)
         return remaining_new, new_done + review_done, answered
 
-    def _pool_candidates(self, now, limits, deck_filter):
+    def _pool_candidates(self, now, limits, deck_filter, drill=False):
         """The three candidate lists a sprint pool draws from, in pool
         order: (due rows, new rows, study-ahead rows)."""
         due = self.storage.queue_candidates(iso(now), new_cards=False,
-                                            decks=deck_filter)
+                                            decks=deck_filter, drill=drill)
         new = self.storage.queue_candidates(iso(now), new_cards=True,
-                                            decks=deck_filter)
+                                            decks=deck_filter, drill=drill)
         ahead = []
         if limits["study_ahead_enabled"]:
             horizon = next_local_midnight(now) + timedelta(
                 days=limits["study_ahead_days"])
             ahead = self.storage.ahead_candidates(iso(now), iso(horizon),
-                                                  decks=deck_filter)
+                                                  decks=deck_filter,
+                                                  drill=drill)
         return due, new, ahead
 
     def _sprint_pool(self, profile=None, category_filter=None,
@@ -135,20 +165,24 @@ class ReviewService:
         bonus sprint ignores both (the one place a keen child may pull
         extra new material, one sprint at a time).
 
-        Returns (pool, limits, answered_today, cards_done) so callers
-        can budget the pool and tell fresh cards — which still advance
-        the distinct-card goal — from repeats already counted today.
+        Returns (pool, limits, answered_today, cards_done, drill) so
+        callers can budget the pool and tell fresh cards — which still
+        advance the distinct-card goal — from repeats already counted
+        today. ``drill`` reports whether the resolved deck scope made
+        this a drill sitting (drill economics, pattern cards only).
         """
-        limits = self._merged_limits(profile, limits)
         if profile:
             if category_filter is None:
                 category_filter = profile.get("active_categories")
             if deck_filter is None:
                 deck_filter = profile.get("active_decks")
+        drill = self.is_drill_filter(deck_filter)
+        limits = self._merged_limits(profile, limits, drill=drill)
 
-        remaining_new, cards_done, answered = self._day_budgets(limits, bonus)
+        remaining_new, cards_done, answered = self._day_budgets(
+            limits, bonus, drill=drill)
         due, new, ahead = self._pool_candidates(self.now(), limits,
-                                                deck_filter)
+                                                deck_filter, drill=drill)
 
         pool = []
         for row in due:
@@ -164,7 +198,7 @@ class ReviewService:
             if card_matches_categories(row["tags"], category_filter):
                 pool.append(row)
 
-        return pool, limits, answered, cards_done
+        return pool, limits, answered, cards_done, drill
 
     def get_due_cards(self, profile=None, category_filter=None,
                       deck_filter=None, limits=None, bonus=False):
@@ -191,11 +225,15 @@ class ReviewService:
 
         Returns a list of card rows (joined with review state).
         """
-        pool, limits, answered, cards_done = self._sprint_pool(
+        pool, limits, answered, cards_done, drill = self._sprint_pool(
             profile, category_filter, deck_filter, limits, bonus=bonus)
         if bonus:
             return pool[:limits["session_card_limit"]]
-        goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
+        # A drill day has no card-count goal: it is simply the due
+        # patterns plus the day's small new-pattern drip, in tiny
+        # sprints. The vocab goal never budgets a drill sitting.
+        goal_left = (len(pool) if drill
+                     else max(limits["daily_goal_cards"] - cards_done, 0))
         # A normal sprint owes distinct cards, so do not let learning
         # cards already answered in an earlier sprint occupy its slots.
         # Intra-session learning repeats are still handled by StudySession's
@@ -205,6 +243,18 @@ class ReviewService:
         if min(goal_left, len(fresh_pool)) == 0:
             return []  # day done: goal met or nothing can advance it
         return fresh_pool[:min(goal_left, limits["session_card_limit"])]
+
+    def session_limits(self, profile=None, deck_filter=None, limits=None):
+        """The effective limits for a sitting scoped to ``deck_filter``.
+
+        Resolves the profile fallback and drill detection exactly like
+        queue building, so a StudySession can read its own sprint size
+        and time box (drill sittings run tiny, short sprints).
+        """
+        if profile and deck_filter is None:
+            deck_filter = profile.get("active_decks")
+        return self._merged_limits(profile, limits,
+                                   drill=self.is_drill_filter(deck_filter))
 
     def counts_for_queue(self, profile=None, category_filter=None,
                          deck_filter=None, limits=None, bonus=False):
@@ -230,15 +280,27 @@ class ReviewService:
         categories, exactly as counts_for_queue would. Returns a list
         of (review, new) tuples, one per input pair, in order.
         """
-        limits = self._merged_limits(profile, limits)
         profile_decks = profile.get("active_decks") if profile else None
         profile_cats = profile.get("active_categories") if profile else None
+        now = self.now()
 
-        remaining_new, cards_done, answered = self._day_budgets(limits, bonus)
-        due, new, ahead = self._pool_candidates(self.now(), limits,
-                                                profile_decks)
-        goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
-        sprint_size = limits["session_card_limit"]
+        # One candidate fetch per world actually needed: the normal
+        # world for vocab entries, the drill world only when some entry
+        # names drill deck(s). Both share the picker's superset-filter
+        # trick; they never mix in one queue.
+        worlds = {}
+
+        def world(drill):
+            if drill not in worlds:
+                w_limits = self._merged_limits(profile, limits, drill=drill)
+                remaining_new, cards_done, answered = self._day_budgets(
+                    w_limits, bonus, drill=drill)
+                candidates = self._pool_candidates(now, w_limits,
+                                                   profile_decks, drill=drill)
+                goal_left = max(w_limits["daily_goal_cards"] - cards_done, 0)
+                worlds[drill] = (w_limits, remaining_new, answered,
+                                 goal_left, candidates)
+            return worlds[drill]
 
         results = []
         for deck_filter, category_filter in filters:
@@ -246,6 +308,10 @@ class ReviewService:
                 deck_filter = profile_decks
             if category_filter is None:
                 category_filter = profile_cats
+            drill = self.is_drill_filter(deck_filter)
+            (w_limits, remaining_new, answered, goal_left,
+             (due, new, ahead)) = world(drill)
+            sprint_size = w_limits["session_card_limit"]
 
             def matches(row):
                 if deck_filter is not None and row["deck"] not in deck_filter:
@@ -266,7 +332,10 @@ class ReviewService:
                     budget -= 1
             pool.extend(row for row in ahead if matches(row))
 
-            # Same budgeting as get_due_cards.
+            # Same budgeting as get_due_cards (a drill day's goal is
+            # whatever the pool supplies).
+            if drill:
+                goal_left = len(pool)
             if bonus:
                 queue = pool[:sprint_size]
             else:
@@ -312,12 +381,15 @@ class ReviewService:
             bonus_cards        when the day is done: size of the
                                optional bonus sprint (0 otherwise)
         """
-        pool, limits, answered, done = self._sprint_pool(
+        pool, limits, answered, done, drill = self._sprint_pool(
             profile, category_filter, deck_filter, limits)
-        goal = limits["daily_goal_cards"]
+        fresh = sum(1 for row in pool if row["id"] not in answered)
+        # A drill day's "goal" is simply what the day supplies: due
+        # patterns plus the new-pattern drip already budgeted into the
+        # pool. Everything downstream then reads the same as vocab.
+        goal = done + fresh if drill else limits["daily_goal_cards"]
         sprint_size = max(limits["session_card_limit"], 1)
         goal_left = max(goal - done, 0)
-        fresh = sum(1 for row in pool if row["id"] not in answered)
         remaining = min(goal_left, fresh)
         goal_today = done + remaining
         next_sprint = 0 if remaining == 0 \

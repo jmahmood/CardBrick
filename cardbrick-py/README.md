@@ -231,8 +231,10 @@ of updating the old one's progress.
 
 Sentence-pattern production drills (say the Spanish out loud, not just
 recognize it), imported from a JSON "pattern pack". Two kinds share
-`card_type = 'pattern'` and mix freely into the same queue as basic
-and vocab cards. Neither kind ever shows a rating button.
+`card_type = 'pattern'`. Neither kind ever shows a rating button.
+Drill cards never mix into a regular sprint — they run in their own
+tiny drill sittings with a separate daily budget (see *Drill sprints
+& the ramp* below).
 
 **Production cards** use the vocab ladder with drill content — the
 help you needed *is* the rating:
@@ -278,6 +280,44 @@ renaming a `pattern_id` creates a new card. The schema includes audio
 filename fields; current packs ship them empty (the audio layer
 tolerates missing files), so drills are silent until a
 TTS-generated pack lands.
+
+### Drill sprints & the ramp
+
+A production card takes minutes, not seconds, so drill decks do not
+run on vocab economics. They live in a separate world with a gentle
+on-ramp:
+
+- **Separate sittings.** Pattern cards appear only when the child
+  explicitly picks a drill deck (any deck containing pattern cards)
+  in the deck picker; "All assigned decks" and single vocab decks
+  never serve them. The day ticket shows "Pattern drills ready: N
+  cards" alongside the vocab plan — or "Drill time!" when only
+  drills remain.
+- **Tiny sprints.** A drill sitting is capped by `drill_sprint_cards`
+  (default **6**) and `drill_sprint_minutes` (default **5**), not the
+  20-card vocab sprint. The review header says "Drill sprint 1/2".
+- **A fixed drip of new patterns.** `drill_daily_new` (default **3**)
+  new patterns per day, never goal-paced — a fresh 500-pattern pack
+  cannot flood anyone.
+- **Recognition before production.** New drill cards enter MCQ-first
+  (ordered by priority), so a pattern is *recognized* a few times
+  before it must be *produced*.
+- **Teach-first.** The very first time a production card appears it
+  opens fully revealed under a "NEW PATTERN — READ IT OUT LOUD"
+  banner: the child echoes the model sentence and presses A ("Got
+  it") — no grading, no AGAIN stamp. Behind the scenes it's rated
+  Again, so the learning step brings it back the same session for a
+  real attempt with the scaffold ladder.
+- **Separate accounting.** Drill reviews never advance (or consume)
+  the vocab daily goal, and vocab reviews never eat the drill drip.
+  Stamps still count drill sessions — a sprint is a sprint.
+
+Tune per profile in Parent Mode → Daily limits, or from the CLI:
+
+```bash
+python main.py profile --drill-sprint-cards 4 --drill-sprint-minutes 5 \
+    --drill-daily-new 2
+```
 
 ### Parent mode
 

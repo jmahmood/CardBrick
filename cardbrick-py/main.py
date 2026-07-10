@@ -95,6 +95,16 @@ def build_parser():
     p_profile.add_argument("--sprint-minutes", "--session-minutes",
                            type=int, dest="sprint_minutes",
                            help="Max minutes per sprint (0 = no limit)")
+    p_profile.add_argument("--drill-sprint-cards", type=int,
+                           help="Max cards per pattern-drill sprint "
+                                "(default 6 — production cards take "
+                                "minutes, not seconds)")
+    p_profile.add_argument("--drill-sprint-minutes", type=int,
+                           help="Max minutes per pattern-drill sprint "
+                                "(default 5, 0 = no limit)")
+    p_profile.add_argument("--drill-daily-new", type=int,
+                           help="Fixed drip of new drill patterns per "
+                                "day (default 3, 0 = none)")
     p_profile.add_argument("--study-ahead-days", type=int,
                            help="How many days ahead a sprint may pull "
                                 "soon-due cards from (default 1)")
@@ -275,6 +285,12 @@ def _profile_command(storage, args):
         updates["session_card_limit"] = args.sprint_cards
     if args.sprint_minutes is not None:
         updates["session_time_minutes"] = args.sprint_minutes
+    if args.drill_sprint_cards is not None:
+        updates["drill_sprint_cards"] = args.drill_sprint_cards
+    if args.drill_sprint_minutes is not None:
+        updates["drill_sprint_minutes"] = args.drill_sprint_minutes
+    if args.drill_daily_new is not None:
+        updates["drill_daily_new"] = args.drill_daily_new
     if args.study_ahead_days is not None:
         updates["study_ahead_days"] = args.study_ahead_days
     if args.study_ahead:

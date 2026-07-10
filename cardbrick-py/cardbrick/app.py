@@ -658,6 +658,18 @@ class CardBrickApp:
         active = self.profile["active_categories"]
         return self.storage.all_tags() if active is None else list(active)
 
+    def _drill_ticket_cards(self):
+        """Next-sprint drill count across the profile's drill decks (0
+        when none are assigned or nothing is due): pattern drills live
+        outside the vocab goal, so the day ticket asks separately."""
+        drill_decks = [name for name in self._resolve_available_decks()
+                       if self.service.is_drill_filter([name])]
+        if not drill_decks:
+            return 0
+        return self.service.sprint_status(
+            profile=self.profile,
+            deck_filter=drill_decks)["next_sprint_cards"]
+
     def _next_after_deck_choice(self):
         """Where to go once the deck for this sitting is settled: the
         topic/tag picker if there's a real choice to make, else
@@ -674,13 +686,18 @@ class CardBrickApp:
         self._session_bonus = False
         status = self.service.sprint_status(profile=self.profile)
         available_decks = self._resolve_available_decks()
-        startable = status["next_sprint_cards"] > 0
+        # Pattern drill decks live outside the vocab day: their work is
+        # reachable through the deck picker and keeps the A button
+        # alive even when the vocab goal is done (or absent).
+        drill_cards = self._drill_ticket_cards()
+        startable = status["next_sprint_cards"] > 0 or drill_cards > 0
         bonus = not startable and status["bonus_cards"] > 0
 
         roll = self._child_start_handoff_roll
         self._child_start_handoff_roll = None
         if roll is None:
-            roll = self._build_child_start_roll(status, startable, bonus)
+            roll = self._build_child_start_roll(status, startable, bonus,
+                                                drill_cards=drill_cards)
         if self._ticket_printed and not hasattr(roll, "_child_start_view_target"):
             roll.finish()
         self._ticket_printed = True
@@ -707,6 +724,12 @@ class CardBrickApp:
                 if len(available_decks) > 1:
                     self._deck_select_handoff_roll = roll
                     return "DECK_SELECT"
+                # Single assigned deck: name it explicitly so a drill
+                # deck is recognized as a drill sitting (deck_filter of
+                # None would fall into the normal, drill-free world).
+                self._session_deck_filter = (
+                    list(available_decks) if available_decks else None
+                )
                 next_state = self._next_after_deck_choice()
                 if next_state == "CATEGORY_SELECT":
                     self._category_select_handoff_roll = roll
@@ -724,7 +747,8 @@ class CardBrickApp:
             self.present()
             self.clock.tick(FPS)
 
-    def _build_child_start_roll(self, status, startable, bonus):
+    def _build_child_start_roll(self, status, startable, bonus,
+                                drill_cards=0):
         # The day's job ticket, printed onto the roll once on first
         # entry this run; later visits snap instantly so navigation
         # never animates in the child's way.
@@ -740,7 +764,7 @@ class CardBrickApp:
         )
         roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(14)
-        if startable:
+        if startable and status["next_sprint_cards"] > 0:
             # "Last sprint" only makes sense once earlier sprints
             # happened; an untouched day gets "today" phrasing.
             n = status["sprints_remaining"]
@@ -764,6 +788,26 @@ class CardBrickApp:
                 f" / about {minutes} min" if minutes else ""
             )
             roll.feed(self.font_small.render(sprint_line, True, DIM))
+            if drill_cards:
+                roll.feed_gap(4)
+                roll.feed(
+                    self.font_small.render(
+                        f"Pattern drills ready too: {drill_cards} cards",
+                        True,
+                        DIM,
+                    )
+                )
+            roll.feed_gap(18)
+            roll.feed(self.font.render("Press the A button to start!", True, GOOD))
+        elif startable:
+            # Only drill work remains (or exists): a tiny, honest day.
+            roll.feed(self.font_big.render("Drill time!", True, FG))
+            roll.feed_gap(8)
+            minutes = self.profile.get("drill_sprint_minutes")
+            drill_line = f"next drill sprint: {drill_cards} cards" + (
+                f" / about {minutes} min" if minutes else ""
+            )
+            roll.feed(self.font.render(drill_line, True, DIM))
             roll.feed_gap(18)
             roll.feed(self.font.render("Press the A button to start!", True, GOOD))
         elif bonus:
@@ -1149,12 +1193,23 @@ class CardBrickApp:
         if self._session_bonus:
             self._sprint_label = "Bonus sprint"
         else:
-            status = self.service.sprint_status(profile=self.profile)
+            # Drill sittings count their own tiny sprints; the label
+            # says so, and the numbers come from the drill day, not
+            # the vocab goal.
+            deck_scope = (self._session_deck_filter
+                          if self._session_deck_filter is not None
+                          else self.profile.get("active_decks"))
+            drill_sitting = self.service.is_drill_filter(deck_scope)
+            status = self.service.sprint_status(
+                profile=self.profile,
+                deck_filter=self._session_deck_filter)
             number = min(
                 status["sprints_planned"] - status["sprints_remaining"] + 1,
                 status["sprints_planned"],
             )
-            self._sprint_label = f"Sprint {number}/{status['sprints_planned']}"
+            word = "Drill sprint" if drill_sitting else "Sprint"
+            self._sprint_label = (
+                f"{word} {number}/{status['sprints_planned']}")
         session = StudySession(
             self.storage,
             self.service,
@@ -1193,6 +1248,7 @@ class CardBrickApp:
         pattern_detail = None  # pattern cards only: the pattern_cards row
         mcq_order = None  # mcq only: displayed option order (slots)
         mcq_result = None  # mcq only: {"rating"} once answered/bailed
+        teach_card = False  # production pattern seen for the first time
         known_confirmation = None  # ladder: pending "I know this" confirmation
         shown_at = None
         audio_status = None
@@ -1441,7 +1497,7 @@ class CardBrickApp:
         def begin_card(card, new_page=True):
             nonlocal flipped, phase, vocab_detail, known_confirmation
             nonlocal shown_at, audio_status, printed_phase, tear_next_page
-            nonlocal pattern_detail, mcq_order, mcq_result
+            nonlocal pattern_detail, mcq_order, mcq_result, teach_card
             flipped = False
             phase = 0
             printed_phase = 0
@@ -1465,6 +1521,15 @@ class CardBrickApp:
                 and pattern_detail["kind"] == "mcq"
                 else None
             )
+            # Teach-first ramp: a never-reviewed production pattern is
+            # met, not tested — everything is revealed for a read-aloud
+            # echo, rated Again so the learning step brings it back for
+            # a real attempt later this same session.
+            teach_card = (
+                pattern_detail is not None
+                and pattern_detail["kind"] == "production"
+                and card["reps"] == 0
+            )
             shown_at = self.service.now()
             audio_status = None
             if card["audio_filename"] and not self.audio.available(
@@ -1481,6 +1546,10 @@ class CardBrickApp:
             roll.feed_page(perf=new_page and roll.page_count > 0, tear=tear)
             print_stub()
             print_front()
+            if teach_card:
+                print_small_stamp("NEW PATTERN — READ IT OUT LOUD")
+                phase = drill.MAX_PHASE
+                print_pattern_up_to(phase)
 
         def confirm_known(mistake=False):
             rating = (
@@ -1720,7 +1789,13 @@ class CardBrickApp:
                     )
                     if phase >= drill.MAX_PHASE:
                         prepare_for_next_print()
-                        print_stamp(self.VOCAB_PHASE_RATING[phase])
+                        if teach_card:
+                            # First meeting, not a failure: no AGAIN
+                            # stamp, but the same rating so the
+                            # learning step brings it right back.
+                            print_small_stamp("SEE YOU AGAIN SOON")
+                        else:
+                            print_stamp(self.VOCAB_PHASE_RATING[phase])
                         session.answer(self.VOCAB_PHASE_RATING[phase],
                                        elapsed_ms=elapsed)
                         advance()
@@ -1766,6 +1841,7 @@ class CardBrickApp:
                     menu,
                     phase=phase,
                     vocab=vocab_detail,
+                    teach=teach_card,
                     known_confirmation=known_confirmation,
                     roll=roll,
                     pattern=pattern_detail,
@@ -1776,7 +1852,7 @@ class CardBrickApp:
             self.clock.tick(FPS)
 
     def _draw_review(self, flipped, menu, phase, vocab, known_confirmation,
-                     roll, pattern=None, mcq_result=None):
+                     roll, pattern=None, mcq_result=None, teach=False):
         """One frame of the review screen: the paper roll carries all
         card content (pre-rendered when printed); only the chrome —
         sprocket strips, chassis hints, overlay menu — is drawn here."""
@@ -1798,6 +1874,11 @@ class CardBrickApp:
                 self._footer(
                     "A = Yes, I knew it   B = I made a mistake",
                     "D-pad up/down = Scroll   START = Menu",
+                )
+            elif teach:
+                self._footer(
+                    "New pattern! Read it out loud",
+                    "A = Got it   D-pad = Scroll   START = Menu",
                 )
             elif phase < drill.MAX_PHASE:
                 self._footer(
@@ -2042,9 +2123,11 @@ class CardBrickApp:
             return "CHILD_START"
 
         status = self.service.sprint_status(profile=self.profile)
-        startable = status["next_sprint_cards"] > 0
+        drill_cards = self._drill_ticket_cards()
+        startable = status["next_sprint_cards"] > 0 or drill_cards > 0
         bonus = not startable and status["bonus_cards"] > 0
-        start_roll = self._build_child_start_roll(status, startable, bonus)
+        start_roll = self._build_child_start_roll(status, startable, bonus,
+                                                  drill_cards=drill_cards)
         start_roll.finish()
         self._ticket_printed = True
 
@@ -2433,12 +2516,17 @@ class CardBrickApp:
     def screen_parent_limits(self):
         # The goal/sprint pair defines the child's day: goal cards split
         # into sprints of session_card_limit. daily_new_cards paces new
-        # material; study-ahead settings are CLI-only for now.
+        # material; study-ahead settings are CLI-only for now. Pattern
+        # drill decks run on the separate, much smaller drill numbers
+        # (a production card takes minutes, not seconds).
         fields = [
             ("Daily goal (cards)", "daily_goal_cards", 10, 500),
             ("New cards per day (0 = auto)", "daily_new_cards", 0, 500),
             ("Cards per sprint", "session_card_limit", 1, 200),
             ("Minutes per sprint (0 = off)", "session_time_minutes", 0, 90),
+            ("Drill cards per sprint", "drill_sprint_cards", 1, 50),
+            ("Drill minutes (0 = off)", "drill_sprint_minutes", 0, 90),
+            ("New drill patterns per day", "drill_daily_new", 0, 50),
         ]
         values = {key: self.profile[key] for _, key, _, _ in fields}
         index = 0
@@ -2469,7 +2557,7 @@ class CardBrickApp:
                 self._menu_row(label, 84, y, i == index)
                 value = self.font.render(str(values[key]), True, FG)
                 self.screen.blit(value, (self.w - 130, y))
-                y += 52
+                y += 44  # seven rows must clear the footer at 480px
             self._footer("D-pad = Adjust   L1/R1 = +/-10   B = Save & back")
             self.present()
             self.clock.tick(FPS)

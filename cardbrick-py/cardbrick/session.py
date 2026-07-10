@@ -46,6 +46,10 @@ class StudySession:
                                      deck_filter=deck_filter,
                                      category_filter=category_filter,
                                      bonus=bonus)
+        # Drill sittings run on their own sprint size and time box;
+        # the service resolves which world this sitting is in.
+        self.limits = service.session_limits(profile,
+                                             deck_filter=deck_filter)
         self.queue = deque(row["id"] for row in rows)
         self.planned_total = len(rows)
         self.finished = False
@@ -141,7 +145,7 @@ class StudySession:
         return (self.service.now() - self.started_at).total_seconds()
 
     def time_limit_reached(self):
-        minutes = self.profile.get("session_time_minutes")
+        minutes = self.limits.get("session_time_minutes")
         if not minutes:
             return False
         return self.elapsed_seconds() >= minutes * 60
