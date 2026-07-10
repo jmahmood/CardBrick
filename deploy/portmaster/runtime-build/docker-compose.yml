@@ -1,0 +1,16 @@
+services:
+  runtime_builder:
+    image: debian:bullseye
+    platform: linux/arm64
+    command:
+      - /bin/bash
+      - -lc
+      - /local/build-runtime.sh 2>&1
+    env_file:
+      - build-config
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: .
+        target: /local

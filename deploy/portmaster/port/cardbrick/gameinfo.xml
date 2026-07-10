@@ -1,0 +1,12 @@
+<gameList>
+  <game>
+    <path>./CardBrick.sh</path>
+    <name>CardBrick</name>
+    <desc>An offline Spanish flashcard study appliance for ARM handhelds.</desc>
+    <image>./cardbrick/screenshot.png</image>
+    <developer>Jawaad Mahmood</developer>
+    <publisher>Open Source</publisher>
+    <genre>Educational</genre>
+    <players>1</players>
+  </game>
+</gameList>
