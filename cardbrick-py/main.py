@@ -32,6 +32,7 @@ from cardbrick import __version__
 from cardbrick.bootlog import log_environment, setup_logging
 from cardbrick.importer import ApkgError, import_apkg
 from cardbrick.paths import AppPaths
+from cardbrick.pattern_pack import PatternPackError
 from cardbrick.scheduler import ReviewScheduler, iso, now_utc
 from cardbrick.storage import Storage
 
@@ -63,16 +64,18 @@ def build_parser():
                          help="Run fullscreen (use on the handheld)")
 
     p_import = sub.add_parser(
-        "import", help="Import an .apkg file, or a vocab .csv "
-                       "(detected by extension)")
-    p_import.add_argument("apkg", help="Path to the .apkg or .csv file")
+        "import", help="Import an .apkg file, a vocab .csv, or a "
+                       "pattern-pack .json (detected by extension)")
+    p_import.add_argument("apkg", help="Path to the .apkg, .csv or "
+                                       ".json file")
     p_import.add_argument("--media-dir",
                           help="For .csv import: folder holding the audio/"
                                "image files it references, copied into "
                                "the app's media folder")
     p_import.add_argument("--deck", dest="import_deck",
-                          help="For .csv import: deck name to file the "
-                               "cards under (default: Vocabulario)")
+                          help="For .csv/.json import: deck name to file "
+                               "the cards under (default: the pack's own "
+                               "deck, or Vocabulario for .csv)")
 
     sub.add_parser("decks", help="List decks and due counts")
 
@@ -183,6 +186,10 @@ def main(argv=None):
                     kwargs["deck_name"] = args.import_deck
                 stats = import_vocab_csv(args.apkg, storage, scheduler,
                                          paths.media_dir, **kwargs)
+            elif args.apkg.lower().endswith(".json"):
+                from cardbrick.pattern_pack import import_pattern_pack
+                stats = import_pattern_pack(args.apkg, storage, scheduler,
+                                            deck_name=args.import_deck)
             else:
                 stats = import_apkg(args.apkg, storage, scheduler,
                                     paths.media_dir)
@@ -201,7 +208,7 @@ def main(argv=None):
         else:  # study
             return _run_app(storage, scheduler, paths,
                             fullscreen=args.fullscreen or None)
-    except ApkgError as exc:
+    except (ApkgError, PatternPackError) as exc:
         print(f"Import failed: {exc}", file=sys.stderr)
         return 1
     finally:
