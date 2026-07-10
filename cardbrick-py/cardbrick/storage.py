@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -58,6 +58,31 @@ CREATE TABLE IF NOT EXISTS vocab_cards (
     example_en      TEXT,
     example_jp      TEXT,
     report_link     TEXT
+);
+
+-- One row per 'pattern' card_type card: sentence-pattern drills. Two
+-- kinds share the table: 'production' (English cue -> sibling sentence
+-- -> skeleton -> model answer, rated by the phase ladder) and 'mcq'
+-- (cue + three options on X/Y/B, rated by correctness and latency —
+-- see cardbrick/drill.py). Audio columns exist for later packs and
+-- ship empty today.
+CREATE TABLE IF NOT EXISTS pattern_cards (
+    card_id         INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    pattern_id      TEXT NOT NULL,
+    kind            TEXT NOT NULL CHECK (kind IN ('production', 'mcq')),
+    tier            TEXT,
+    gate            TEXT,
+    priority_score  REAL,
+    template        TEXT,
+    prompt_en       TEXT,
+    sibling_es      TEXT,
+    skeleton_es     TEXT,
+    answer_es       TEXT,
+    answer_audio    TEXT,
+    sibling_audio   TEXT,
+    cue_en          TEXT,
+    options_json    TEXT,
+    constraint_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS review_state (
@@ -325,6 +350,52 @@ class Storage:
         """The phase-content row for a 'vocab' card, or None."""
         return self.conn.execute(
             "SELECT * FROM vocab_cards WHERE card_id = ?",
+            (card_id,)).fetchone()
+
+    def upsert_pattern_card(self, card_id, pattern_id, kind, tier=None,
+                            gate=None, priority_score=None, template=None,
+                            prompt_en=None, sibling_es=None,
+                            skeleton_es=None, answer_es=None,
+                            answer_audio=None, sibling_audio=None,
+                            cue_en=None, options_json=None,
+                            constraint_note=None):
+        """Insert or refresh the drill-content row for a 'pattern' card.
+
+        Re-importing updates the displayed content only; review_state
+        (FSRS progress) is untouched, same guarantee as vocab cards.
+        """
+        self.conn.execute(
+            """INSERT INTO pattern_cards
+               (card_id, pattern_id, kind, tier, gate, priority_score,
+                template, prompt_en, sibling_es, skeleton_es, answer_es,
+                answer_audio, sibling_audio, cue_en, options_json,
+                constraint_note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(card_id) DO UPDATE SET
+                   pattern_id=excluded.pattern_id,
+                   kind=excluded.kind,
+                   tier=excluded.tier,
+                   gate=excluded.gate,
+                   priority_score=excluded.priority_score,
+                   template=excluded.template,
+                   prompt_en=excluded.prompt_en,
+                   sibling_es=excluded.sibling_es,
+                   skeleton_es=excluded.skeleton_es,
+                   answer_es=excluded.answer_es,
+                   answer_audio=excluded.answer_audio,
+                   sibling_audio=excluded.sibling_audio,
+                   cue_en=excluded.cue_en,
+                   options_json=excluded.options_json,
+                   constraint_note=excluded.constraint_note""",
+            (card_id, pattern_id, kind, tier, gate, priority_score,
+             template, prompt_en, sibling_es, skeleton_es, answer_es,
+             answer_audio, sibling_audio, cue_en, options_json,
+             constraint_note))
+
+    def get_pattern_detail(self, card_id):
+        """The drill-content row for a 'pattern' card, or None."""
+        return self.conn.execute(
+            "SELECT * FROM pattern_cards WHERE card_id = ?",
             (card_id,)).fetchone()
 
     def init_review_state(self, state):
@@ -739,8 +810,9 @@ class Storage:
         """Permanently delete cards for the given decks (or all decks).
 
         Relies on ON DELETE CASCADE (foreign_keys=ON, set at connect
-        time) to remove the matching review_state, review_log, and
-        vocab_cards rows along with each card. Child profiles, app
+        time) to remove the matching review_state, review_log,
+        vocab_cards, and pattern_cards rows along with each card.
+        Child profiles, app
         settings, and historical session rows are untouched. Returns
         the number of cards deleted. Callers are responsible for
         confirmation and backups (see main.py's admin command) —
