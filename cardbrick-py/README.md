@@ -41,8 +41,10 @@ resolution), `cardbrick/bootlog.py` (file logging + startup
 diagnostics), `cardbrick/smoke.py` (`--smoke-test`),
 `cardbrick/errors.py` (visible fatal-error screens),
 `cardbrick/settings.py` (JSON app settings), `cardbrick/textutil.py`
-(HTML stripping, wrapping), and `cardbrick/paperroll.py` (the
-Paper & Ink spool animation behind the review screens).
+(HTML stripping, wrapping), `cardbrick/paperroll.py` (the
+Paper & Ink spool animation behind the review screens),
+`cardbrick/pattern_pack.py` (JSON importer for pattern drill packs),
+and `cardbrick/drill.py` (pygame-free rating logic for drill cards).
 
 ### Dependencies
 
@@ -224,6 +226,58 @@ media folder. **A CSV card's identity is a hash of its `Word` field**
 (there is no Anki note id to key on) — keep that field unique and
 unedited across re-imports, or a rename will create a new card instead
 of updating the old one's progress.
+
+### Pattern drill cards
+
+Sentence-pattern production drills (say the Spanish out loud, not just
+recognize it), imported from a JSON "pattern pack". Two kinds share
+`card_type = 'pattern'` and mix freely into the same queue as basic
+and vocab cards. Neither kind ever shows a rating button.
+
+**Production cards** use the vocab ladder with drill content — the
+help you needed *is* the rating:
+
+| Phase | Shown (cumulative) | Answering here means |
+|---|---|---|
+| 0 | English task cue ("Ask whether you have to pay here.") | Easy |
+| 1 | + a *sibling* sentence — same pattern, other content | Good |
+| 2 | + the skeleton — the answer with blanks | Hard |
+| 3 | + the model answer | Again |
+
+Say your answer aloud, press **A ("I know this")** — the full answer
+is revealed for comparison, then **A** confirms or **B** admits a
+mistake (Again). D-pad down descends the ladder, exactly like a vocab
+card.
+
+**Multiple-choice cards** show a cue plus three candidate sentences
+picked with **X / Y / B** — **A is deliberately not an option**, so
+it keeps meaning "I know it" everywhere (and can't be spammed).
+A correct pick rates Good, or Easy when answered within ~5 seconds;
+a wrong pick rates Again and re-prints the correct sentence with a
+short note on why the others are wrong (A continues). D-pad down
+before choosing is a "show me" bail-out: Again, same feedback.
+Option order is shuffled per card but stable across sessions.
+Keyboard note: the digit keys map to face buttons, so `1` (B) picks
+the third option and `3` (A) does nothing on these cards.
+
+Import (CLI only for now — parent mode's on-device import scans just
+`.apkg`):
+
+```bash
+python main.py import assets/patterns/sample_pack.json
+python main.py import mexico.json --deck "Drills (Maya)"
+```
+
+A starter pack ships in `assets/patterns/sample_pack.json` (Mexico
+City travel Spanish: 12 production + 6 MCQ). Each item's `tier` and
+`gate` become `tier:`/`gate:` tags automatically, so parent-mode
+category filters can gate drills with no extra setup. **A pattern
+card's identity is `pattern_id` + `kind` + `variant`** — re-importing
+an edited pack updates content without touching progress, but
+renaming a `pattern_id` creates a new card. The schema includes audio
+filename fields; current packs ship them empty (the audio layer
+tolerates missing files), so drills are silent until a
+TTS-generated pack lands.
 
 ### Parent mode
 
