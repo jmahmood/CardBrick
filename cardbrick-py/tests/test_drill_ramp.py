@@ -162,15 +162,17 @@ def test_drill_sprint_status_reports_the_drill_day(
 # -- recognition before production --------------------------------------------
 
 
-def test_new_drill_intake_orders_mcq_before_production(
+def test_new_drill_intake_recognizes_each_pattern_before_producing_it(
         tmp_path, storage, service, profile):
     items = [
-        production_item(pattern_id="P900", priority_score=0.99),
+        production_item(pattern_id="P901", priority_score=0.99),
         mcq_item(pattern_id="P901", priority_score=0.5),
-        mcq_item(pattern_id="P902", priority_score=0.9),
-        production_item(pattern_id="P903", priority_score=0.4),
+        mcq_item(pattern_id="P900", priority_score=0.9),
+        production_item(pattern_id="P900", priority_score=0.4),
     ]
     import_drill_items(tmp_path, storage, service, items)
+    storage.update_profile(profile["id"], drill_daily_new=4)
+    profile = storage.get_profile(profile["id"])
     queue = service.get_due_cards(profile=profile,
                                   deck_filter=[DRILL_DECK])
     kinds_and_ids = [
@@ -178,9 +180,12 @@ def test_new_drill_intake_orders_mcq_before_production(
          storage.get_pattern_detail(row["id"])["pattern_id"])
         for row in queue
     ]
-    # MCQs first (higher priority first), production only after.
+    # Inventory order (pattern id); within a pattern, its MCQ leads
+    # its production. Production is never deferred behind *other*
+    # patterns' MCQs — day one already produces.
     assert kinds_and_ids == [
-        ("mcq", "P902"), ("mcq", "P901"), ("production", "P900")]
+        ("mcq", "P900"), ("production", "P900"),
+        ("mcq", "P901"), ("production", "P901")]
 
 
 # -- picker counts & sessions --------------------------------------------------

@@ -454,10 +454,12 @@ class Storage:
 
         ``drill`` splits the collection into two disjoint worlds:
         False (a normal sitting) never serves pattern drill cards,
-        True (a drill sitting) serves nothing else. New drill cards are
-        ordered recognition-first — MCQ before production, then by
-        priority — so a pattern is recognized before it must be
-        produced.
+        True (a drill sitting) serves nothing else. New drill cards
+        enter in inventory order (pattern id), recognition-first
+        *within* each pattern — its MCQ, then its production variants
+        — so every pattern is recognized right before it must be
+        produced, and production work starts on day one instead of
+        after the whole pack's MCQs.
         """
         base = """SELECT c.*, r.due, r.reps, r.lapses,
                          r.state AS fsrs_state, r.fsrs_json
@@ -474,14 +476,14 @@ class Storage:
             base += f" AND c.deck IN ({placeholders})"
             params.update({f"deck{i}": name for i, name in enumerate(decks)})
         if new_cards and drill:
-            # DESC sorts priority_score NULLs last in SQLite.
             query = base.replace(
                 "FROM cards c",
                 "FROM cards c LEFT JOIN pattern_cards p ON p.card_id = c.id",
                 1,
             ) + """ AND r.reps = 0
-                    ORDER BY CASE WHEN p.kind = 'mcq' THEN 0 ELSE 1 END,
-                             p.priority_score DESC, c.id"""
+                    ORDER BY p.pattern_id,
+                             CASE WHEN p.kind = 'mcq' THEN 0 ELSE 1 END,
+                             c.id"""
         elif new_cards:
             query = base + " AND r.reps = 0 ORDER BY c.id"
         else:

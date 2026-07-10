@@ -299,9 +299,11 @@ on-ramp:
 - **A fixed drip of new patterns.** `drill_daily_new` (default **3**)
   new patterns per day, never goal-paced — a fresh 500-pattern pack
   cannot flood anyone.
-- **Recognition before production.** New drill cards enter MCQ-first
-  (ordered by priority), so a pattern is *recognized* a few times
-  before it must be *produced*.
+- **Recognition before production, per pattern.** New drill cards
+  enter in inventory order; within each pattern its MCQ leads its
+  production variants, so a pattern is *recognized* right before it
+  is *produced* — and production work starts on day one rather than
+  after the whole pack's multiple choice.
 - **Teach-first.** The very first time a production card appears it
   opens fully revealed under a "NEW PATTERN — READ IT OUT LOUD"
   banner: the child echoes the model sentence and presses A ("Got
