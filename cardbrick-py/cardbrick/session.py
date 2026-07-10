@@ -50,6 +50,7 @@ class StudySession:
         self.planned_total = len(rows)
         self.finished = False
         self._current = None
+        self._undo_stack = []
 
     # -- flow -------------------------------------------------------------------
 
@@ -75,17 +76,31 @@ class StudySession:
         _state, comes_back = self.service.answer_card(
             card["id"], rating, elapsed_ms=elapsed_ms,
             session_id=self.session_id)
+        self._undo_stack.append(("answer", card["id"], None))
         if comes_back:
             self.queue.append(card["id"])
         return comes_back
 
     def undo(self):
-        """Undo the previous answer and put that card back up front.
+        """Undo the previous answer, bury, or suspend action.
 
         Returns the restored card row, or None if there was nothing to
         undo in this session.
         """
-        card_id = self.service.undo_last_answer(self.session_id)
+        if self._undo_stack:
+            action, card_id, previous = self._undo_stack.pop()
+            if action == "answer":
+                card_id = self.service.undo_last_answer(self.session_id)
+            elif action == "bury":
+                self.service.restore_buried_card(
+                    card_id, previous, session_id=self.session_id)
+            else:  # suspend
+                self.service.restore_suspended_card(
+                    card_id, previous, session_id=self.session_id)
+        else:
+            # Preserve the durable answer-undo fallback for sessions
+            # reconstructed without the in-memory action stack.
+            card_id = self.service.undo_last_answer(self.session_id)
         if card_id is None:
             return None
         # Remove any requeued copy, then show the card again immediately.
@@ -99,11 +114,15 @@ class StudySession:
 
     def bury_current(self):
         card = self._pop_current()
+        previous = card["buried_until"]
         self.service.bury_card(card["id"], session_id=self.session_id)
+        self._undo_stack.append(("bury", card["id"], previous))
 
     def suspend_current(self):
         card = self._pop_current()
+        previous = card["suspended"]
         self.service.suspend_card(card["id"], session_id=self.session_id)
+        self._undo_stack.append(("suspend", card["id"], previous))
 
     def _pop_current(self):
         card = self.current_card()

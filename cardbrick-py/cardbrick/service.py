@@ -196,10 +196,15 @@ class ReviewService:
         if bonus:
             return pool[:limits["session_card_limit"]]
         goal_left = max(limits["daily_goal_cards"] - cards_done, 0)
-        fresh = sum(1 for row in pool if row["id"] not in answered)
-        if min(goal_left, fresh) == 0:
+        # A normal sprint owes distinct cards, so do not let learning
+        # cards already answered in an earlier sprint occupy its slots.
+        # Intra-session learning repeats are still handled by StudySession's
+        # requeue; this only prevents back-to-back sprints from serving the
+        # same batch forever without advancing "cards done".
+        fresh_pool = [row for row in pool if row["id"] not in answered]
+        if min(goal_left, len(fresh_pool)) == 0:
             return []  # day done: goal met or nothing can advance it
-        return pool[:min(goal_left, limits["session_card_limit"])]
+        return fresh_pool[:min(goal_left, limits["session_card_limit"])]
 
     def counts_for_queue(self, profile=None, category_filter=None,
                          deck_filter=None, limits=None, bonus=False):
@@ -265,11 +270,12 @@ class ReviewService:
             if bonus:
                 queue = pool[:sprint_size]
             else:
-                fresh = sum(1 for row in pool if row["id"] not in answered)
-                if min(goal_left, fresh) == 0:
+                fresh_pool = [row for row in pool
+                              if row["id"] not in answered]
+                if min(goal_left, len(fresh_pool)) == 0:
                     queue = []
                 else:
-                    queue = pool[:min(goal_left, sprint_size)]
+                    queue = fresh_pool[:min(goal_left, sprint_size)]
             new_count = sum(1 for row in queue if row["reps"] == 0)
             results.append((len(queue) - new_count, new_count))
         return results
@@ -315,7 +321,7 @@ class ReviewService:
         remaining = min(goal_left, fresh)
         goal_today = done + remaining
         next_sprint = 0 if remaining == 0 \
-            else min(len(pool), goal_left, sprint_size)
+            else min(fresh, goal_left, sprint_size)
         bonus = 0
         if next_sprint == 0:
             bonus = len(self.get_due_cards(profile, category_filter,
@@ -392,12 +398,28 @@ class ReviewService:
         if session_id is not None:
             self.storage.bump_session_counter(session_id, "buried_count")
 
+    def restore_buried_card(self, card_id, buried_until, session_id=None):
+        """Restore a bury action so the session can undo it."""
+        self.storage.set_buried_until(
+            card_id, buried_until, now_iso=iso(self.now()))
+        if session_id is not None:
+            self.storage.bump_session_counter(
+                session_id, "buried_count", delta=-1)
+
     def suspend_card(self, card_id, session_id=None):
         """Hide a card indefinitely ("bad card, parent should fix")."""
         now_iso = iso(self.now())
         self.storage.set_suspended(card_id, True, now_iso=now_iso)
         if session_id is not None:
             self.storage.bump_session_counter(session_id, "suspended_count")
+
+    def restore_suspended_card(self, card_id, suspended, session_id=None):
+        """Restore a suspend action so the session can undo it."""
+        self.storage.set_suspended(
+            card_id, bool(suspended), now_iso=iso(self.now()))
+        if session_id is not None:
+            self.storage.bump_session_counter(
+                session_id, "suspended_count", delta=-1)
 
     def unsuspend_card(self, card_id):
         self.storage.set_suspended(card_id, False, now_iso=iso(self.now()))

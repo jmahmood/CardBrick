@@ -1095,7 +1095,7 @@ class CardBrickApp:
     # -- review ----------------------------------------------------------------------
 
     MENU_ENTRIES = (
-        "Undo last answer",
+        "Undo last action",
         "Bury card (back tomorrow)",
         "Suspend card (parent will check)",
         "End session",

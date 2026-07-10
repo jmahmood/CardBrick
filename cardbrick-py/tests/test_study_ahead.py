@@ -154,6 +154,27 @@ def test_going_ahead_decrements_sprints_remaining(storage, service, clock):
     assert status["next_sprint_cards"] == 0  # goal met: nothing owed
 
 
+def test_back_to_back_sprints_do_not_repeat_already_counted_cards(
+        storage, service, clock):
+    """Soon-due learning cards must not crowd unseen cards out of the
+    next sprint; every normal sprint advances the distinct-card goal."""
+    for i in range(1, 61):
+        seed_card(storage, service, i)
+    limits = _limits(daily_goal_cards=60, daily_new_cards=0,
+                     session_card_limit=20, study_ahead_enabled=1)
+
+    seen = set()
+    for expected_done in (20, 40, 60):
+        queue = service.get_due_cards(limits=limits)
+        ids = {row["id"] for row in queue}
+        assert len(ids) == 20
+        assert ids.isdisjoint(seen)
+        for row in queue:
+            service.answer_card(row["id"], 3)
+        seen.update(ids)
+        assert service.sprint_status(limits=limits)["cards_done"] == expected_done
+
+
 def test_partial_sprint_earns_partial_credit(storage, service, clock):
     # Quitting a sprint early only banks the cards actually answered;
     # the remaining count stays honest.

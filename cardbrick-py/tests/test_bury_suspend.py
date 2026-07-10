@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 from conftest import seed_card
+from cardbrick.session import StudySession
 
 
 def _queue_ids(service, **limits):
@@ -33,6 +34,32 @@ def test_bury_counts_in_session_row(storage, service, clock):
     session_id = storage.create_session(None, iso(clock.now()), None)
     service.bury_card(1, session_id=session_id)
     assert storage.session_row(session_id)["buried_count"] == 1
+
+
+def test_bury_can_be_undone_in_session(storage, service, clock, profile):
+    seed_card(storage, service, 1)
+    seed_card(storage, service, 2)
+    session = StudySession(storage, service, profile)
+
+    session.bury_current()
+    assert session.current_card()["id"] == 2
+    restored = session.undo()
+
+    assert restored["id"] == 1
+    assert restored["buried_until"] is None
+    assert storage.session_row(session.session_id)["buried_count"] == 0
+
+
+def test_suspend_can_be_undone_in_session(storage, service, clock, profile):
+    seed_card(storage, service, 1)
+    session = StudySession(storage, service, profile)
+
+    session.suspend_current()
+    restored = session.undo()
+
+    assert restored["id"] == 1
+    assert restored["suspended"] == 0
+    assert storage.session_row(session.session_id)["suspended_count"] == 0
 
 
 def test_suspended_card_never_appears(storage, service, clock):

@@ -606,12 +606,12 @@ class Storage:
         self.conn.commit()
         return cur.lastrowid
 
-    def bump_session_counter(self, session_id, field):
+    def bump_session_counter(self, session_id, field, delta=1):
         if field not in ("buried_count", "suspended_count"):
             raise ValueError(field)
         self.conn.execute(
-            f"UPDATE sessions SET {field} = {field} + 1 WHERE id = ?",
-            (session_id,))
+            f"UPDATE sessions SET {field} = MAX({field} + ?, 0) WHERE id = ?",
+            (delta, session_id))
         self.conn.commit()
 
     def session_row(self, session_id):
