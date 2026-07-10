@@ -38,6 +38,13 @@ deploy/minui/scripts/.deckbuild-venv/
 deploy/minui/decks/*
 !deploy/minui/decks/README.md
 
+# Experimental PortMaster packaging outputs.
+deploy/portmaster/dist/
+deploy/portmaster/runtime-build/build/
+deploy/portmaster/scripts/.deckbuild-venv/
+deploy/portmaster/decks/*
+!deploy/portmaster/decks/README.md
+
 # Python bytecode caches (e.g. deploy/knulli/scripts/__pycache__)
 __pycache__/
 

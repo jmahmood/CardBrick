@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "name": "cardbrick.zip",
+  "items": [
+    "CardBrick.sh",
+    "cardbrick"
+  ],
+  "items_opt": null,
+  "attr": {
+    "title": "CardBrick",
+    "desc": "An offline Spanish flashcard study appliance for ARM handhelds.",
+    "inst": "Ready to run. Requires aarch64, glibc 2.31 or newer, and a 640x480-or-larger display.",
+    "genres": [
+      "educational"
+    ],
+    "porter": [
+      "Jawaad Mahmood"
+    ],
+    "image": {},
+    "rtr": true,
+    "runtime": null,
+    "reqs": [],
+    "arch": [
+      "aarch64"
+    ]
+  }
+}

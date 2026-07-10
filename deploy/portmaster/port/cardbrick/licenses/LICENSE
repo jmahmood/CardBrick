@@ -1,0 +1,5 @@
+CardBrick is distributed under the license in the repository root.
+
+The bundled runtime contains CPython, pygame-ce, FSRS, typing-extensions,
+SQLite, and their associated third-party licenses. The package builder adds
+their license texts to this directory when it creates a package.
