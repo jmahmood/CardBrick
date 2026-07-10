@@ -64,6 +64,7 @@ import time
 
 import pygame
 
+from . import drill
 from .bootlog import log_display_diagnostics, log_pygame_versions
 from .importer import ApkgError, import_apkg
 from .input_map import (
@@ -1093,9 +1094,11 @@ class CardBrickApp:
 
     # Four-phase vocab cards (word -> example -> image -> definition):
     # the phase reached when "I know this" is pressed *is* the rating.
-    # No separate Again/Hard/Good/Easy buttons for these cards.
-    VOCAB_MAX_PHASE = 3
-    VOCAB_PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}  # Easy, Good, Hard, Again
+    # No separate Again/Hard/Good/Easy buttons for these cards. The
+    # same ladder rates pattern drill cards (cue -> sibling ->
+    # skeleton -> answer); the shared map lives in drill.py.
+    VOCAB_MAX_PHASE = drill.MAX_PHASE
+    VOCAB_PHASE_RATING = drill.PHASE_RATING  # Easy, Good, Hard, Again
     def screen_review_printer_handoff(self):
         setup_roll = self._review_printer_handoff_roll
         self._review_printer_handoff_roll = None
