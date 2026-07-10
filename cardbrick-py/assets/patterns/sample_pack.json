@@ -1,0 +1,219 @@
+{
+  "format": "cardbrick-pattern-pack",
+  "version": 1,
+  "deck": "Mexico City — Drills",
+  "items": [
+    {
+      "pattern_id": "P012", "kind": "production", "variant": 1,
+      "tier": "core", "gate": "A1", "priority_score": 0.96,
+      "template": "¿[S] tener que [Inf]?",
+      "tags": "topic:transactions",
+      "prompt_en": "Ask whether you have to pay here.",
+      "sibling_es": "¿Tengo que salir temprano?",
+      "skeleton_es": "¿ ___ que pagar aquí?",
+      "answer_es": "¿Tengo que pagar aquí?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P019", "kind": "production", "variant": 1,
+      "tier": "core", "gate": "A1", "priority_score": 0.95,
+      "template": "a [S] le gusta [Inf]",
+      "tags": "topic:smalltalk",
+      "prompt_en": "Say that you like walking.",
+      "sibling_es": "Me gusta comer temprano.",
+      "skeleton_es": "Me ___ caminar.",
+      "answer_es": "Me gusta caminar.",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P044", "kind": "production", "variant": 1,
+      "tier": "core", "gate": "A0", "priority_score": 0.91,
+      "template": "¿dónde está [N]?",
+      "tags": "topic:transit",
+      "prompt_en": "Ask where the exit is.",
+      "sibling_es": "¿Dónde está el baño?",
+      "skeleton_es": "¿Dónde ___ la salida?",
+      "answer_es": "¿Dónde está la salida?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P109", "kind": "production", "variant": 1,
+      "tier": "interaction", "gate": "A1", "priority_score": 0.93,
+      "template": "¿me puede [Inf]?",
+      "tags": "topic:requests",
+      "prompt_en": "Politely ask someone (formal) to help you.",
+      "sibling_es": "¿Me puede esperar?",
+      "skeleton_es": "¿Me ___ ayudar?",
+      "answer_es": "¿Me puede ayudar?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P117", "kind": "production", "variant": 1,
+      "tier": "interaction", "gate": "A1", "priority_score": 0.92,
+      "template": "¿cómo llego a [Loc]?",
+      "tags": "topic:transit",
+      "prompt_en": "Ask how to get to the Zócalo.",
+      "sibling_es": "¿Cómo llego a Chapultepec?",
+      "skeleton_es": "¿Cómo ___ al Zócalo?",
+      "answer_es": "¿Cómo llego al Zócalo?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P127", "kind": "production", "variant": 1,
+      "tier": "interaction", "gate": "A0", "priority_score": 0.91,
+      "template": "¿puedo pagar con [N]?",
+      "tags": "topic:transactions",
+      "prompt_en": "Ask if you can pay by card.",
+      "sibling_es": "¿Puedo entrar ahora?",
+      "skeleton_es": "¿ ___ pagar con tarjeta?",
+      "answer_es": "¿Puedo pagar con tarjeta?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P244", "kind": "production", "variant": 1,
+      "tier": "transactional", "gate": "A0", "priority_score": 0.88,
+      "template": "¿cuánto cuesta [N]?",
+      "tags": "topic:shopping",
+      "prompt_en": "Ask how much this costs.",
+      "sibling_es": "¿Cuánto cuesta el boleto?",
+      "skeleton_es": "¿Cuánto ___ esto?",
+      "answer_es": "¿Cuánto cuesta esto?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P265", "kind": "production", "variant": 1,
+      "tier": "transactional", "gate": "A2", "priority_score": 0.85,
+      "template": "quisiera reservar [N]",
+      "tags": "topic:restaurant",
+      "prompt_en": "Say you'd like to reserve a table for four.",
+      "sibling_es": "Quisiera pedir enchiladas.",
+      "skeleton_es": "Quisiera ___ una mesa para cuatro.",
+      "answer_es": "Quisiera reservar una mesa para cuatro.",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P339", "kind": "production", "variant": 1,
+      "tier": "travel_safety", "gate": "A2", "priority_score": 0.96,
+      "template": "perdí mi [N]",
+      "tags": "topic:emergency",
+      "prompt_en": "Say that you lost your passport.",
+      "sibling_es": "Perdí mi cartera.",
+      "skeleton_es": " ___ mi pasaporte.",
+      "answer_es": "Perdí mi pasaporte.",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P342", "kind": "production", "variant": 1,
+      "tier": "travel_safety", "gate": "A2", "priority_score": 0.96,
+      "template": "me robaron [N]",
+      "tags": "topic:emergency",
+      "prompt_en": "Tell a police officer your phone was stolen.",
+      "sibling_es": "Me robaron la cartera.",
+      "skeleton_es": "Me ___ el celular.",
+      "answer_es": "Me robaron el celular.",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P423", "kind": "production", "variant": 1,
+      "tier": "emergency_health_legal", "gate": "A1",
+      "priority_score": 0.97,
+      "template": "me duele [body part]",
+      "tags": "topic:health",
+      "prompt_en": "Tell the pharmacist your head hurts.",
+      "sibling_es": "Me duele el estómago.",
+      "skeleton_es": "Me ___ la cabeza.",
+      "answer_es": "Me duele la cabeza.",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P434", "kind": "production", "variant": 1,
+      "tier": "emergency_health_legal", "gate": "A1",
+      "priority_score": 0.97,
+      "template": "¿puede llamar a [N]?",
+      "tags": "topic:emergency",
+      "prompt_en": "Ask someone to call an ambulance.",
+      "sibling_es": "¿Puede llamar a la policía?",
+      "skeleton_es": "¿Puede ___ a una ambulancia?",
+      "answer_es": "¿Puede llamar a una ambulancia?",
+      "answer_audio": "", "sibling_audio": ""
+    },
+    {
+      "pattern_id": "P018", "kind": "mcq", "variant": 1,
+      "tier": "core", "gate": "A1", "priority_score": 0.95,
+      "template": "a [S] le gusta(n) [N]",
+      "tags": "topic:smalltalk",
+      "cue_en": "Say that your daughter likes tacos. Which is correct?",
+      "options": [
+        {"text": "A mi hija le gustan los tacos.", "correct": true},
+        {"text": "A mi hija le gusta los tacos.", "correct": false},
+        {"text": "Mi hija gusta los tacos.", "correct": false}
+      ],
+      "constraint_note": "gustar agrees with the thing liked (los tacos → gustan), and the person takes 'a … le'."
+    },
+    {
+      "pattern_id": "P007", "kind": "mcq", "variant": 1,
+      "tier": "core", "gate": "A0", "priority_score": 0.98,
+      "template": "[S] estar en [Loc]",
+      "tags": "topic:transit",
+      "cue_en": "Say that you are in Coyoacán. Which is correct?",
+      "options": [
+        {"text": "Estoy en Coyoacán.", "correct": true},
+        {"text": "Soy en Coyoacán.", "correct": false},
+        {"text": "Estoy a Coyoacán.", "correct": false}
+      ],
+      "constraint_note": "Being located somewhere uses estar (never ser) plus 'en'."
+    },
+    {
+      "pattern_id": "P003", "kind": "mcq", "variant": 1,
+      "tier": "core", "gate": "A0", "priority_score": 0.99,
+      "template": "[S] ser de [Loc]",
+      "tags": "topic:smalltalk",
+      "cue_en": "Say that you are from Canada. Which is correct?",
+      "options": [
+        {"text": "Soy de Canadá.", "correct": true},
+        {"text": "Soy en Canadá.", "correct": false},
+        {"text": "Estoy de Canadá.", "correct": false}
+      ],
+      "constraint_note": "Origin is ser + de: where you're FROM is ser, where you ARE right now is estar en."
+    },
+    {
+      "pattern_id": "P118", "kind": "mcq", "variant": 1,
+      "tier": "interaction", "gate": "A1", "priority_score": 0.92,
+      "template": "¿qué línea tomo para [Loc]?",
+      "tags": "topic:transit",
+      "cue_en": "Ask which Metro line to take to get to Chapultepec. Which is correct?",
+      "options": [
+        {"text": "¿Qué línea tomo para Chapultepec?", "correct": true},
+        {"text": "¿Qué línea tomo por Chapultepec?", "correct": false},
+        {"text": "¿Qué línea tomo en Chapultepec?", "correct": false}
+      ],
+      "constraint_note": "The destination of a route takes para; por would mean passing through."
+    },
+    {
+      "pattern_id": "P307", "kind": "mcq", "variant": 1,
+      "tier": "travel_safety", "gate": "A2", "priority_score": 0.95,
+      "template": "lléveme a [Loc], por favor",
+      "tags": "topic:taxi",
+      "cue_en": "Politely tell the taxi driver (formal usted) to take you to the hotel. Which is correct?",
+      "options": [
+        {"text": "Lléveme al hotel, por favor.", "correct": true},
+        {"text": "Llévame al hotel, por favor.", "correct": false},
+        {"text": "Lléveme a el hotel, por favor.", "correct": false}
+      ],
+      "constraint_note": "Formal usted imperative is lleve (not tú llévame), and a + el always contracts to al."
+    },
+    {
+      "pattern_id": "P077", "kind": "mcq", "variant": 1,
+      "tier": "core", "gate": "A0", "priority_score": 0.87,
+      "template": "[S] buscar a [person]",
+      "tags": "topic:requests",
+      "cue_en": "Say that you are looking for your friend. Which is correct?",
+      "options": [
+        {"text": "Busco a mi amigo.", "correct": true},
+        {"text": "Busco mi amigo.", "correct": false},
+        {"text": "Busco por mi amigo.", "correct": false}
+      ],
+      "constraint_note": "People as direct objects take the personal a; buscar already means 'look FOR' — no por."
+    }
+  ]
+}

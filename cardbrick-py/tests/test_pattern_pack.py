@@ -1,6 +1,7 @@
 """JSON pattern-pack import for the 'pattern' drill card type."""
 
 import json
+import os
 
 import pytest
 
@@ -184,3 +185,13 @@ def test_unreadable_json_raises(tmp_path, storage, service):
     path.write_text("{not json", encoding="utf-8")
     with pytest.raises(PatternPackError):
         import_pattern_pack(str(path), storage, service.scheduler)
+
+
+def test_shipped_sample_pack_imports_cleanly(storage, service):
+    pack = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "assets", "patterns",
+        "sample_pack.json")
+    stats = import_pattern_pack(pack, storage, service.scheduler)
+    assert stats.skipped_cards == 0
+    assert stats.cards == 18
+    assert stats.decks == {"Mexico City — Drills"}
