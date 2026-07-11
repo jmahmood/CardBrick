@@ -7,6 +7,9 @@ Usage:
     python main.py import <deck.apkg>       Import an Anki package
     python main.py decks                    List decks and due counts
     python main.py profile [...]            View/edit the child profile
+    python main.py sync --name DEVICE       Configure and run LAN sync
+    python main.py sync-status              Show local sync configuration
+    python main.py sync-restore FILE        Restore a server backup archive
     python main.py admin purge-decks [...]  Permanently delete imported decks
     python main.py admin reset [--yes]      Wipe ALL study context (decks,
                                             progress, profiles, media) for
@@ -146,6 +149,22 @@ def build_parser():
     p_reset.add_argument("--yes", action="store_true",
                          help="Skip the confirmation prompt (for "
                               "scripts/automation)")
+
+    p_sync = sub.add_parser(
+        "sync", help="Back up this device and install assigned content")
+    p_sync.add_argument("--name", help="Set this device's family name")
+    p_sync.add_argument("--server", help="Server URL (default: "
+                                          "http://10.0.0.30:6429)")
+    p_sync.add_argument("--backup-only", action="store_true")
+    p_sync.add_argument("--content-only", action="store_true")
+    p_sync.add_argument("--force-backup", action="store_true")
+
+    sub.add_parser("sync-status", help="Show local sync configuration")
+    p_restore = sub.add_parser(
+        "sync-restore", help="Restore a local CardBrick backup .tar.gz")
+    p_restore.add_argument("archive")
+    p_restore.add_argument("--yes", action="store_true",
+                           help="Skip the destructive confirmation")
     return parser
 
 
@@ -164,6 +183,26 @@ def main(argv=None):
         print(f"FATAL: cannot create data directory {paths.data_dir}: "
               f"{exc}", file=sys.stderr)
         return 1
+
+    # Restore must happen before logging or SQLite opens files under the data
+    # root.  The current sync identity is preserved by restore_backup().
+    if args.command == "sync-restore":
+        if not args.yes:
+            answer = input("Replace current CardBrick data from this backup? "
+                           "Type 'yes': ").strip().lower()
+            if answer != "yes":
+                print("Restore cancelled.")
+                return 1
+        from cardbrick.sync import restore_backup
+        try:
+            rollback = restore_backup(args.archive, paths.data_dir)
+            print("Restore complete. Previous data retained at:\n  %s" %
+                  rollback)
+            return 0
+        except Exception as exc:
+            print("Restore failed: %s" % exc, file=sys.stderr)
+            return 1
+
     setup_logging(paths.log_path, verbose=args.verbose)
     log_environment(paths, __version__)
 
@@ -213,6 +252,27 @@ def main(argv=None):
                       f"{row['total']} total")
         elif args.command == "profile":
             _profile_command(storage, args)
+        elif args.command == "sync":
+            from cardbrick.sync import sync_once
+            if args.backup_only and args.content_only:
+                print("--backup-only and --content-only cannot be combined",
+                      file=sys.stderr)
+                return 1
+            try:
+                result = sync_once(
+                    storage, scheduler, paths, __version__, name=args.name,
+                    server=args.server, backup_only=args.backup_only,
+                    content_only=args.content_only,
+                    force_backup=args.force_backup)
+            except Exception as exc:  # sync must never fail with a traceback
+                log.warning("sync failed: %s", exc)
+                print("Sync unavailable: %s" % exc, file=sys.stderr)
+                return 1
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif args.command == "sync-status":
+            from cardbrick.sync import sync_status
+            print(json.dumps(sync_status(paths.data_dir), indent=2,
+                             sort_keys=True))
         elif args.command == "admin":
             return _admin_command(storage, paths, args)
         else:  # study

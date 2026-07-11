@@ -1,0 +1,14 @@
+[Unit]
+Description=CardBrick family sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/cardbrick-sync
+ExecStart=/usr/bin/python3 -m cardbrick_server.server --root %h/cardbrick-data --port 6429
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

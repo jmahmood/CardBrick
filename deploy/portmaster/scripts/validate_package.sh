@@ -52,6 +52,7 @@ for file in \
     cardbrick/cardbrick-py/cardbrick/__init__.py \
     cardbrick/cardbrick-py/cardbrick/app.py \
     cardbrick/cardbrick-py/cardbrick/paths.py \
+    cardbrick/cardbrick-py/cardbrick/sync.py \
     cardbrick/runtime/bin/python3 \
     cardbrick/runtime/runtime-manifest.txt \
     cardbrick/BUILD_INFO \

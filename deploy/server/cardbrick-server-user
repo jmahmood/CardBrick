@@ -1,0 +1,5 @@
+#!/bin/sh
+APP_DIR="${CARDBRICK_SERVER_APP:-$HOME/.local/share/cardbrick-sync}"
+DATA_DIR="${CARDBRICK_SERVER_ROOT:-$HOME/cardbrick-data}"
+cd "$APP_DIR" || exit 1
+exec /usr/bin/python3 -m cardbrick_server.admin --root "$DATA_DIR" "$@"

@@ -118,7 +118,26 @@ python main.py decks                  # list decks + due counts
 python main.py --smoke-test           # non-interactive sanity checks
 python main.py --input-diagnostic     # controller test + calibration
 python main.py --desktop|--knulli     # force platform mode
+
+# Optional family-LAN backup/content server (see docs/SYNC_SERVER.md)
+python main.py sync --name maya
+python main.py sync-status
 ```
+
+The same client is available on the handheld under **Parent Mode →
+Server sync**. Choose the device name (Jawaad, Yumiko, Maria, Nadia,
+Maysa, or Zak) once, then use **Sync now** to back up changed local data
+and install content assigned by the family server. **Force backup**
+uploads a fresh backup without downloading content. The screen shows
+the configured server, successful sync/backup times, installed package
+count, and the last error. New devices use
+`http://10.0.0.30:6429`; the CLI, `sync.json`, or
+`CARDBRICK_SYNC_URL` can still override it for troubleshooting.
+
+Handheld launchers continue to perform their automatic pre-study sync
+and post-study backup once a device name has been configured. Full-data
+restore remains an admin CLI/SSH operation because it replaces the live
+data directory.
 
 No deck handy? Generate a test one:
 `python scripts/make_sample_apkg.py sample.apkg`
@@ -127,7 +146,8 @@ The writable data root is resolved in this priority order and logged
 at startup: `--data-dir` → `CARD_BRICK_DATA_DIR` env → `CARDBRICK_DATA`
 env (legacy) → `/userdata/saves/cardbrick` on Knulli-style devices →
 `./data` next to `main.py`. It contains `cardbrick.db` (SQLite),
-`settings.json` and `input_mapping.json` (hand-editable JSON),
+`settings.json`, `input_mapping.json`, and optional `sync.json`
+(hand-editable JSON),
 `media/`, and `logs/cardbrick.log` (rotating). Nothing mutable is ever
 written into the app folder, so the app itself can live on a read-only
 mount.
@@ -513,8 +533,9 @@ root. The short version:
 
 ## Scope (deliberately excluded)
 
-No sync, no cloze, no image occlusion, no images at all, no HTML
+No online accounts, no cloze, no image occlusion, no HTML
 rendering beyond tag stripping, no card templates, no `.apkg` export, no
 TTS (the audio layer is structured so it can be added later), no
 gamification. This is a focused daily study appliance:
-**apkg → local DB → py-fsrs → pygame**.
+**content archive → local DB → py-fsrs → pygame**, with optional plain
+HTTP backup/content exchange on the family LAN.

@@ -20,7 +20,7 @@ entirely. Screens:
                  -> or back to ChildStart
     ChildStart / SessionSummary -> Calendar (stamp calendar) -> back
     ChildStart -> ParentMode (import / decks / categories / limits /
-                              suspended / progress / calendar /
+                              suspended / progress / server sync / calendar /
                               controller setup) -> ChildStart
 
 Parent Mode's Decks/Categories screens configure which decks and tags
@@ -62,10 +62,11 @@ import logging
 import os
 import time
 import zlib
+from datetime import datetime
 
 import pygame
 
-from . import drill
+from . import __version__, drill
 from .bootlog import log_display_diagnostics, log_pygame_versions
 from .importer import ApkgError, import_apkg
 from .input_map import (
@@ -79,6 +80,7 @@ from .input_map import (
 from .paperroll import PAGE_GAP, PERF_H, PaperRoll
 from .scheduler import iso
 from .session import StudySession
+from .sync import SyncError, SyncState, sync_once
 from .textutil import format_tag_label, wrap_text
 
 log = logging.getLogger(__name__)
@@ -136,6 +138,29 @@ DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
 LINE_FEED_SFX = "line-tick.wav"
 PAGE_FEED_SFX = "page-whirr.wav"
 STAPLE_SFX = "staple-clack.wav"
+SYNC_DEVICE_NAMES = (
+    ("Jawaad", "jawaad"),
+    ("Yumiko", "yumiko"),
+    ("Maria", "maria"),
+    ("Nadia", "nadia"),
+    ("Maysa", "maysa"),
+    ("Zak", "zak"),
+)
+
+
+def _friendly_sync_name(value):
+    names = {identity: label for label, identity in SYNC_DEVICE_NAMES}
+    return names.get(value, value) if value else "Not configured"
+
+
+def _format_sync_time(value):
+    if not value:
+        return "Never"
+    try:
+        parsed = datetime.fromisoformat(value).astimezone()
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _autoplay_vocab_phase(previous_phase, current_phase):
@@ -582,6 +607,8 @@ class CardBrickApp:
             "PARENT_AUDIO": self.screen_parent_audio,
             "PARENT_SUSPENDED": self.screen_parent_suspended,
             "PARENT_PROGRESS": self.screen_parent_progress,
+            "PARENT_SYNC": self.screen_parent_sync,
+            "PARENT_SYNC_NAME": self.screen_parent_sync_name,
             "INPUT_DIAG": self.screen_input_diagnostic,
             "CALIBRATE": self.screen_calibrate,
         }
@@ -2453,6 +2480,7 @@ class CardBrickApp:
             (self._jp("Paper feed sound", "紙送り音"), "PARENT_AUDIO"),
             (self._jp("Suspended cards", "停止中のカード"), "PARENT_SUSPENDED"),
             (self._jp("Progress", "進捗"), "PARENT_PROGRESS"),
+            (self._jp("Server sync", "サーバー同期"), "PARENT_SYNC"),
             (self._jp("Calendar (stamps)", "カレンダー（スタンプ）"), "CALENDAR"),
             (self._jp("Controller test & setup", "コントローラー設定"), "INPUT_DIAG"),
             (self._jp("Language: English", "言語：日本語"), "TOGGLE_LANGUAGE"),
@@ -2506,6 +2534,159 @@ class CardBrickApp:
             self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
+
+    def screen_parent_sync(self):
+        index = 0
+        message = None
+        entries = (
+            (self._jp("Device name", "端末名"), "PARENT_SYNC_NAME"),
+            (self._jp("Sync now", "今すぐ同期"), "SYNC"),
+            (self._jp("Force backup", "強制バックアップ"), "BACKUP"),
+            (self._jp("Back", "戻る"), "PARENT_MENU"),
+        )
+        while True:
+            status = SyncState(self.paths.data_dir).data
+            action = self.poll()
+            if action in ("start", "south_button", "select"):
+                return "PARENT_MENU"
+            if action == "dpad_up":
+                index = (index - 1) % len(entries)
+            elif action == "dpad_down":
+                index = (index + 1) % len(entries)
+            elif action == "east_button":
+                target = entries[index][1]
+                if target in ("PARENT_SYNC_NAME", "PARENT_MENU"):
+                    return target
+                if not status.get("device_name"):
+                    return "PARENT_SYNC_NAME"
+                message = self._run_parent_sync(force_backup=target == "BACKUP")
+                status = SyncState(self.paths.data_dir).data
+
+            self._draw_parent_sync(status, index, message)
+            self.present()
+            self.clock.tick(FPS)
+
+    def screen_parent_sync_name(self):
+        state = SyncState(self.paths.data_dir)
+        current = state.data.get("device_name")
+        identities = [identity for _, identity in SYNC_DEVICE_NAMES]
+        index = identities.index(current) if current in identities else 0
+        message = None
+        while True:
+            action = self.poll()
+            if action in ("start", "south_button", "select"):
+                return "PARENT_SYNC"
+            if action == "dpad_up":
+                index = (index - 1) % len(SYNC_DEVICE_NAMES)
+            elif action == "dpad_down":
+                index = (index + 1) % len(SYNC_DEVICE_NAMES)
+            elif action == "east_button":
+                try:
+                    state.configure(name=SYNC_DEVICE_NAMES[index][1])
+                    return "PARENT_SYNC"
+                except (OSError, SyncError) as exc:
+                    message = "Could not save device name: %s" % exc
+
+            self._draw_parent_sync_name(SYNC_DEVICE_NAMES, index, current, message)
+            self.present()
+            self.clock.tick(FPS)
+
+    def _draw_parent_sync(self, status, index, message=None):
+        self._paper()
+        self._page_header(self._jp("Server Sync", "サーバー同期"))
+        left = self.content_x0 + 52
+        width = self.content_x1 - self.content_x0 - 104
+        values = (
+            ("Device", _friendly_sync_name(status.get("device_name"))),
+            ("Server", status.get("server") or "Not configured"),
+            ("Last sync", _format_sync_time(status.get("last_sync_at"))),
+            ("Last backup", _format_sync_time(status.get("last_backup_at"))),
+            ("Packages", str(len(status.get("installed") or {}))),
+        )
+        y = 98
+        for label, value in values:
+            text = "%s: %s" % (label, value)
+            text = self._truncate_to_width(self.font_small, text, width)
+            self.screen.blit(self.font_small.render(text, True, DIM), (left, y))
+            y += 22
+
+        feedback = message or status.get("last_error")
+        if feedback:
+            color = GOOD if message and not message.startswith("Sync failed") else WARN
+            for line in wrap_text(self.font_small, feedback, width)[:2]:
+                self.screen.blit(self.font_small.render(line, True, color), (left, y))
+                y += 22
+        y = max(y + 4, 222)
+        labels = (
+            self._jp("Device name", "端末名"),
+            self._jp("Sync now", "今すぐ同期"),
+            self._jp("Force backup", "強制バックアップ"),
+            self._jp("Back", "戻る"),
+        )
+        for row, label in enumerate(labels):
+            self._menu_row(label, left + 16, y, row == index)
+            y += 38
+        self._footer("Up/Down = Choose   A = Select   B = Back")
+
+    def _draw_parent_sync_name(self, names, index, current_name, message=None):
+        self._paper()
+        current = _friendly_sync_name(current_name)
+        self._page_header(
+            self._jp("Choose Device Name", "端末名を選択"),
+            "Current: %s" % current,
+        )
+        y = 120
+        for row, (label, identity) in enumerate(names):
+            suffix = "  ✓" if identity == current_name else ""
+            self._menu_row(label + suffix, 112, y, row == index)
+            y += 42
+        if message:
+            text = self._truncate_to_width(
+                self.font_small, message, self.w - 120)
+            self._center(self.font_small.render(text, True, WARN), y + 4)
+        self._footer("Up/Down = Choose   A = Save   B = Cancel")
+
+    def _draw_sync_progress(self, phase, message):
+        self._paper()
+        self._page_header(self._jp("Server Sync", "サーバー同期"))
+        phase_label = phase.replace("-", " ").upper()
+        self._center(self.font_small.render(phase_label, True, ACCENT), 150)
+        y = 200
+        for line in wrap_text(self.font, message, self.w - 140):
+            self._center(self.font.render(line, True, FG), y)
+            y += self.font.get_linesize() + 4
+        self._footer("Please wait — do not turn off the device")
+        self.present()
+        pygame.event.pump()
+
+    def _run_parent_sync(self, force_backup=False):
+        try:
+            result = sync_once(
+                self.storage,
+                self.service.scheduler,
+                self.paths,
+                __version__,
+                backup_only=force_backup,
+                force_backup=force_backup,
+                progress=self._draw_sync_progress,
+            )
+            if not force_backup:
+                self._reload_profile()
+            if force_backup:
+                return "Backup uploaded successfully."
+            details = []
+            if result["backed_up"]:
+                details.append("backup uploaded")
+            if result["installed"]:
+                details.append("%d package%s installed" % (
+                    result["installed"],
+                    "" if result["installed"] == 1 else "s",
+                ))
+            return "Sync complete — %s." % (
+                ", ".join(details) if details else "already up to date")
+        except (OSError, SyncError) as exc:
+            log.error("parent sync failed: %s", exc)
+            return "Sync failed: %s" % exc
 
     def settings_dir(self):
         return os.path.dirname(os.path.abspath(self.settings.path))

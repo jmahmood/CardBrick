@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cardbrick-publish"
+version = "0.1.0"
+description = "Upload and assign CardBrick content over SSH"
+requires-python = ">=3.9"
+dependencies = ["click>=8.1"]
+
+[project.scripts]
+cardbrick-publish = "cardbrick_publish:main"
+
+[tool.setuptools]
+py-modules = ["cardbrick_publish"]

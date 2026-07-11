@@ -212,9 +212,9 @@ clean_cache() {
 clean_build() {
     if [ -n "$BUILD_DIR" ] && [ -d "$BUILD_DIR" ]; then
         echo -e "${YELLOW}Removing build artifacts: $BUILD_DIR${NC}"
-        echo "  This includes: compilation cache, dependencies, target binaries"
+        echo "  This includes: cached build dependencies and generated binaries"
         rm -rf "$BUILD_DIR" && echo -e "${GREEN}✓ Build artifacts cleaned${NC}" || echo -e "${RED}✗ Failed to clean build artifacts${NC}"
-        echo -e "${BLUE}Note: Next 'cargo build' will take longer${NC}"
+        echo -e "${BLUE}Note: The next build will take longer${NC}"
     else
         echo "  No build artifacts found to clean (not applicable on this device)"
     fi

@@ -243,5 +243,15 @@ fi
 if [ "$#" -gt 0 ]; then
     "$PYTHON" main.py --knulli "$@"
 else
+    if [ -f "$CONFDIR/sync.json" ]; then
+        "$PYTHON" main.py --knulli sync || \
+            echo "WARN: pre-launch sync unavailable"
+    fi
     "$PYTHON" main.py --knulli study --fullscreen
+    app_status=$?
+    if [ -f "$CONFDIR/sync.json" ]; then
+        "$PYTHON" main.py --knulli sync --backup-only || \
+            echo "WARN: post-session backup unavailable"
+    fi
+    exit "$app_status"
 fi

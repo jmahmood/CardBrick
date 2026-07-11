@@ -1,0 +1,16 @@
+[Unit]
+Description=CardBrick family sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cardbrick
+ExecStart=/usr/bin/python3 -m cardbrick_server.server --root /srv/cardbrick --port 6429
+Restart=on-failure
+RestartSec=3
+User=cardbrick
+Group=cardbrick
+
+[Install]
+WantedBy=multi-user.target

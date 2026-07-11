@@ -42,6 +42,7 @@ for f in \
     "cardbrick-py/cardbrick/__init__.py" \
     "cardbrick-py/cardbrick/app.py" \
     "cardbrick-py/cardbrick/paths.py" \
+    "cardbrick-py/cardbrick/sync.py" \
     "cardbrick-py/cardbrick/smoke.py" \
     "cardbrick-py/assets/fonts/DejaVuSans.ttf" \
     "cardbrick-py/assets/fonts/NotoSansJP-Regular.otf" \
@@ -66,14 +67,19 @@ fi
 
 # All Python sources must at least compile with the host interpreter.
 if command -v python3 >/dev/null 2>&1; then
+    PYCACHE="/tmp/cardbrick-package-pycache-$$"
+    rm -rf "$PYCACHE"
     if ( cd "${STAGE}/cardbrick-py" && \
-         find . -name '*.py' -print0 | xargs -0 python3 -m py_compile 2>/tmp/pyc.err ); then
+         find . -name '*.py' -print0 | \
+         xargs -0 env PYTHONPYCACHEPREFIX="$PYCACHE" \
+             python3 -m py_compile 2>/tmp/pyc.err ); then
         pass "python sources compile (host python3)"
     else
         fail "py_compile errors: $(head -n 3 /tmp/pyc.err 2>/dev/null | tr '\n' ' ')"
     fi
     # py_compile with default args writes __pycache__ next to sources — undo.
     find "${STAGE}/cardbrick-py" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+    rm -rf "$PYCACHE"
 else
     warn "python3 not on host — skipped source compile check"
 fi

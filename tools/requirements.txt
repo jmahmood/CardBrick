@@ -1,0 +1,2 @@
+# Dependency for the cross-platform content publisher CLI.
+click>=8.1

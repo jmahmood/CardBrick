@@ -284,4 +284,16 @@ if [ "$#" -gt 0 ]; then
     exit "$exit_code"
 fi
 
+# Sync is opt-in: the first `CardBrick.sh sync --name NAME` creates sync.json.
+# Network failure never prevents study or changes the app's exit status.
+if [ -f "${CARD_BRICK_DATA_DIR}/sync.json" ]; then
+    "$PYTHON" main.py --knulli sync >> "$LAUNCH_LOG" 2>&1 \
+        || log "WARN: pre-launch sync unavailable"
+fi
 "$PYTHON" main.py --knulli study --fullscreen >> "$LAUNCH_LOG" 2>&1
+app_status=$?
+if [ -f "${CARD_BRICK_DATA_DIR}/sync.json" ]; then
+    "$PYTHON" main.py --knulli sync --backup-only >> "$LAUNCH_LOG" 2>&1 \
+        || log "WARN: post-session backup unavailable"
+fi
+exit "$app_status"
