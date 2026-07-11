@@ -360,6 +360,7 @@ class CardBrickApp:
         self.service = service
         self.audio = audio
         self.settings = settings
+        self.language = settings.get("language", "en")
         self.paths = paths
         self.initial_state = initial_state
 
@@ -430,6 +431,16 @@ class CardBrickApp:
                 "recovered %d interrupted session(s): %s", len(recovered), recovered
             )
         self.profile = self._boot_profile()
+
+    def _jp(self, value, japanese=None):
+        """Select the device's two-state UI/content language."""
+        if self.language == "ja" and japanese:
+            return japanese
+        return value
+
+    def _set_language(self):
+        self.language = "ja" if self.language != "ja" else "en"
+        self.settings.set("language", self.language)
 
     # -- display / scaling -------------------------------------------------------
 
@@ -1395,7 +1406,10 @@ class CardBrickApp:
                 print_block(vocab_detail["word"], self.font_big, FG)
             else:
                 print_block(
-                    card["back"] if reversed_mode else card["front"],
+                    (card["back_jp"] if reversed_mode else card["front_jp"])
+                    if self.language == "ja" and
+                    ((card["back_jp"] if reversed_mode else card["front_jp"]) or "").strip()
+                    else (card["back"] if reversed_mode else card["front"]),
                     self.font_big,
                     FG,
                 )
@@ -1438,11 +1452,11 @@ class CardBrickApp:
                 if vocab_detail["word_en"]:
                     lines.append("EN: " + vocab_detail["word_en"])
                 if vocab_detail["word_jp"]:
-                    lines.append("JP: " + vocab_detail["word_jp"])
+                    lines.append(self._jp("JP: ", "日本語：") + vocab_detail["word_jp"])
                 if vocab_detail["example_en"]:
                     lines.append("Example EN: " + vocab_detail["example_en"])
                 if vocab_detail["example_jp"]:
-                    lines.append("Example JP: " + vocab_detail["example_jp"])
+                    lines.append(self._jp("Example JP: ", "例文（日本語）：") + vocab_detail["example_jp"])
                 if vocab_detail["report_link"]:
                     lines.append("Report: " + vocab_detail["report_link"])
                 print_block("\n".join(lines), self.font_small, FG)
@@ -1457,7 +1471,7 @@ class CardBrickApp:
             """Task cue; for mcq also the three options, labeled with
             the face buttons that pick them (A deliberately unused)."""
             if pattern_detail["kind"] == "mcq":
-                print_block(pattern_detail["cue_en"], self.font, FG)
+                print_block(self._jp(pattern_detail["cue_en"], pattern_detail["cue_jp"]), self.font, FG)
                 texts, _ = drill.parse_mcq_options(
                     pattern_detail["options_json"])
                 roll.feed_gap(10)
@@ -1466,7 +1480,7 @@ class CardBrickApp:
                     roll.feed_gap(8)
                     print_block(f"{label})  {texts[slot]}", self.font, FG)
             else:
-                print_block(pattern_detail["prompt_en"], self.font_big, FG)
+                print_block(self._jp(pattern_detail["prompt_en"], pattern_detail["prompt_jp"]), self.font_big, FG)
 
         def print_pattern_phase(p):
             """The production help ladder. 1: +sibling sentence (same
@@ -1511,7 +1525,7 @@ class CardBrickApp:
             print_block(texts[correct], self.font, GOOD)
             if pattern_detail["constraint_note"]:
                 roll.feed_gap(6)
-                print_block(pattern_detail["constraint_note"],
+                print_block(self._jp(pattern_detail["constraint_note"], pattern_detail["constraint_note_jp"]),
                             self.font_small, DIM)
 
         RATING_STAMPS = {
@@ -2423,21 +2437,22 @@ class CardBrickApp:
     def screen_parent_menu(self):
         direction = self.profile.get("study_direction", "normal")
         entries = [
-            ("Import deck (.apkg)", "PARENT_IMPORT"),
-            ("Decks", "PARENT_DECKS"),
-            ("Categories", "PARENT_CATEGORIES"),
-            ("Daily goal & sprints", "PARENT_LIMITS"),
-            ("Paper feed sound", "PARENT_AUDIO"),
-            ("Suspended cards", "PARENT_SUSPENDED"),
-            ("Progress", "PARENT_PROGRESS"),
-            ("Calendar (stamps)", "CALENDAR"),
-            ("Controller test & setup", "INPUT_DIAG"),
+            (self._jp("Import deck (.apkg)", "デッキをインポート (.apkg)"), "PARENT_IMPORT"),
+            (self._jp("Decks", "デッキ"), "PARENT_DECKS"),
+            (self._jp("Categories", "カテゴリー"), "PARENT_CATEGORIES"),
+            (self._jp("Daily goal & sprints", "毎日の目標とスプリント"), "PARENT_LIMITS"),
+            (self._jp("Paper feed sound", "紙送り音"), "PARENT_AUDIO"),
+            (self._jp("Suspended cards", "停止中のカード"), "PARENT_SUSPENDED"),
+            (self._jp("Progress", "進捗"), "PARENT_PROGRESS"),
+            (self._jp("Calendar (stamps)", "カレンダー（スタンプ）"), "CALENDAR"),
+            (self._jp("Controller test & setup", "コントローラー設定"), "INPUT_DIAG"),
+            (self._jp("Language: English", "言語：日本語"), "TOGGLE_LANGUAGE"),
             (
                 f"Direction: "
                 f"{'Reversed (back first)' if direction == 'reversed' else 'Normal (front first)'}",
                 "TOGGLE_DIRECTION",
             ),
-            ("Back to study", "CHILD_START"),
+            (self._jp("Back to study", "学習に戻る"), "CHILD_START"),
         ]
         index = 0
         top = 0
@@ -2461,13 +2476,16 @@ class CardBrickApp:
                     self.storage.update_profile(self.profile["id"], study_direction=new)
                     self._reload_profile()
                     return "PARENT_MENU"
+                if target == "TOGGLE_LANGUAGE":
+                    self._set_language()
+                    return "PARENT_MENU"
                 if target == "CALENDAR":
                     self._calendar_return = "PARENT_MENU"
                 return target
             top = min(max(top, index - visible + 1), index)
 
             self._paper()
-            self._page_header("Parent Mode", f"Profile: {self.profile['name']}")
+            self._page_header(self._jp("Parent Mode", "保護者モード"), f"Profile: {self.profile['name']}")
             y = 124
             for i in range(top, min(top + visible, len(entries))):
                 self._menu_row(entries[i][0], 100, y, i == index)

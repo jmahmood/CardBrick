@@ -120,7 +120,8 @@ def import_vocab_csv(csv_path, storage, scheduler, media_dir,
             tags=tags,
             audio_filename=word_audio,
             audio_side="front" if word_audio else None,
-            now_iso=iso(now_utc()), card_type="vocab")
+            now_iso=iso(now_utc()), card_type="vocab",
+            front_jp=word_jp or None, back_jp=example_jp or None)
         storage.upsert_vocab_card(
             card_id=card_id, word=word,
             word_en=word_en or None,

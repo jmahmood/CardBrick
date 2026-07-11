@@ -18,7 +18,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS cards (
     buried_until   TEXT,
     created_at     TEXT,
     updated_at     TEXT,
-    card_type      TEXT NOT NULL DEFAULT 'basic'
+    card_type      TEXT NOT NULL DEFAULT 'basic',
+    front_jp       TEXT,
+    back_jp        TEXT
 );
 
 -- One row per 'vocab' card_type card: the four-phase word/example/image/
@@ -82,7 +84,10 @@ CREATE TABLE IF NOT EXISTS pattern_cards (
     sibling_audio   TEXT,
     cue_en          TEXT,
     options_json    TEXT,
-    constraint_note TEXT
+    constraint_note TEXT,
+    prompt_jp      TEXT,
+    cue_jp         TEXT,
+    constraint_note_jp TEXT
 );
 
 CREATE TABLE IF NOT EXISTS review_state (
@@ -179,6 +184,10 @@ _PROFILE_UPGRADES = {
 _VOCAB_CARD_UPGRADES = {
     "word_en": "TEXT",
 }
+_CARD_UPGRADES.update({"front_jp": "TEXT", "back_jp": "TEXT"})
+_PATTERN_CARD_UPGRADES = {
+    "prompt_jp": "TEXT", "cue_jp": "TEXT", "constraint_note_jp": "TEXT",
+}
 
 
 class Storage:
@@ -222,6 +231,8 @@ class Storage:
         self._upgrade_table("cards", _CARD_UPGRADES)
         self._upgrade_table("review_state", _STATE_UPGRADES)
         self._upgrade_table("vocab_cards", _VOCAB_CARD_UPGRADES)
+        self._upgrade_table("cards", {"front_jp": "TEXT", "back_jp": "TEXT"})
+        self._upgrade_table("pattern_cards", _PATTERN_CARD_UPGRADES)
         added = self._upgrade_table("child_profiles", _PROFILE_UPGRADES)
         if "daily_goal_cards" in added:
             # Existing profiles were tuned around the old review+new caps;
@@ -307,21 +318,24 @@ class Storage:
 
     def upsert_card(self, card_id, note_id, deck, front, back, tags,
                     audio_filename=None, audio_side=None, now_iso=None,
-                    card_type="basic"):
+                    card_type="basic", front_jp=None, back_jp=None):
         self.conn.execute(
             """INSERT INTO cards (id, note_id, deck, front, back, tags,
                                   audio_filename, audio_side,
-                                  created_at, updated_at, card_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  created_at, updated_at, card_type,
+                                  front_jp, back_jp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    note_id=excluded.note_id, deck=excluded.deck,
                    front=excluded.front, back=excluded.back,
                    tags=excluded.tags, audio_filename=excluded.audio_filename,
                    audio_side=excluded.audio_side,
                    updated_at=excluded.updated_at,
-                   card_type=excluded.card_type""",
+                   card_type=excluded.card_type,
+                   front_jp=excluded.front_jp, back_jp=excluded.back_jp""",
             (card_id, note_id, deck, front, back, tags,
-             audio_filename, audio_side, now_iso, now_iso, card_type))
+             audio_filename, audio_side, now_iso, now_iso, card_type,
+             front_jp, back_jp))
 
     def upsert_vocab_card(self, card_id, word, word_jp, gendered_forms,
                           definitions, image_filename, example_es,
@@ -366,7 +380,8 @@ class Storage:
                             skeleton_es=None, answer_es=None,
                             answer_audio=None, sibling_audio=None,
                             cue_en=None, options_json=None,
-                            constraint_note=None):
+                            constraint_note=None, prompt_jp=None, cue_jp=None,
+                            constraint_note_jp=None):
         """Insert or refresh the drill-content row for a 'pattern' card.
 
         Re-importing updates the displayed content only; review_state
@@ -377,8 +392,8 @@ class Storage:
                (card_id, pattern_id, kind, tier, gate, priority_score,
                 template, prompt_en, sibling_es, skeleton_es, answer_es,
                 answer_audio, sibling_audio, cue_en, options_json,
-                constraint_note)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                constraint_note, prompt_jp, cue_jp, constraint_note_jp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(card_id) DO UPDATE SET
                    pattern_id=excluded.pattern_id,
                    kind=excluded.kind,
@@ -394,11 +409,13 @@ class Storage:
                    sibling_audio=excluded.sibling_audio,
                    cue_en=excluded.cue_en,
                    options_json=excluded.options_json,
-                   constraint_note=excluded.constraint_note""",
+                   constraint_note=excluded.constraint_note,
+                   prompt_jp=excluded.prompt_jp, cue_jp=excluded.cue_jp,
+                   constraint_note_jp=excluded.constraint_note_jp""",
             (card_id, pattern_id, kind, tier, gate, priority_score,
              template, prompt_en, sibling_es, skeleton_es, answer_es,
              answer_audio, sibling_audio, cue_en, options_json,
-             constraint_note))
+             constraint_note, prompt_jp, cue_jp, constraint_note_jp))
 
     def get_pattern_detail(self, card_id):
         """The drill-content row for a 'pattern' card, or None."""
