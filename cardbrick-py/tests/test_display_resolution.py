@@ -1,6 +1,12 @@
 """Handheld display resolution selection."""
 
-from cardbrick.app import _compute_scaled_canvas_size, _resolve_logical_size
+from cardbrick.app import (
+    DEFAULT_FONT_SIZES,
+    RGB30_FONT_SIZES,
+    _compute_scaled_canvas_size,
+    _resolve_font_sizes,
+    _resolve_logical_size,
+)
 
 
 def test_fullscreen_720x480_uses_native_logical_size():
@@ -39,6 +45,15 @@ def test_custom_logical_size_is_not_overridden():
     assert _resolve_logical_size(
         (800, 480), display_size=(720, 480), fullscreen=True
     ) == (800, 480)
+
+
+def test_rgb30_uses_readable_typography_profile():
+    assert _resolve_font_sizes((720, 720)) == RGB30_FONT_SIZES == (40, 30, 25)
+
+
+def test_other_logical_sizes_keep_default_typography():
+    for size in ((640, 480), (720, 480), (1024, 768), (800, 480)):
+        assert _resolve_font_sizes(size) == DEFAULT_FONT_SIZES == (38, 26, 18)
 
 
 def test_integer_scaling_1024x768_display_fills_exactly():

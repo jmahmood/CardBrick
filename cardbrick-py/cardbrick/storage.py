@@ -436,8 +436,28 @@ class Storage:
 
     def all_tags(self):
         """Sorted distinct tags across all cards."""
+        return self.tags_in_decks()
+
+    def tags_in_decks(self, deck_names=None):
+        """Sorted distinct tags on cards in ``deck_names``.
+
+        ``None`` means every deck and an explicit empty list means no
+        decks, matching the deck-filter convention used by queue queries.
+        This deliberately reads the card table directly: picker visibility
+        reflects imported deck membership, not today's review eligibility.
+        """
+        if deck_names is not None and len(deck_names) == 0:
+            return []
+
+        query = "SELECT DISTINCT tags FROM cards"
+        params = []
+        if deck_names is not None:
+            placeholders = ", ".join("?" for _ in deck_names)
+            query += f" WHERE deck IN ({placeholders})"
+            params = deck_names
+
         tags = set()
-        for row in self.conn.execute("SELECT DISTINCT tags FROM cards"):
+        for row in self.conn.execute(query, params):
             tags.update(row["tags"].split())
         return sorted(tags)
 

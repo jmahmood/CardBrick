@@ -43,13 +43,13 @@ Common to both kinds:
 | `gate` | Copy from the table's Gate column, e.g. `"A1"`. |
 | `priority_score` | Table's Score column **divided by 100**, e.g. table score `96` → `0.96`. (Matches the convention already shipped in `assets/patterns/sample_pack.json`.) |
 | `template` | Copy the Canonical template column verbatim. |
-| `tags` | One or more freeform `topic:xxx` tags reflecting the sentence's real-world context — `topic:transit`, `topic:health`, `topic:money`, `topic:emergency`, `topic:smalltalk`, `topic:taxi`, `topic:restaurant`, `topic:shopping`, `topic:requests`, etc. Space-separated if more than one. **Do not** add `tier:` or `gate:` tags yourself — the importer adds those automatically from the fields above. |
+| `tags` | One or more freeform `topic:xxx` tags reflecting the sentence's real-world context — `topic:transit`, `topic:health`, `topic:money`, `topic:emergency`, `topic:smalltalk`, `topic:taxi`, `topic:restaurant`, `topic:shopping`, `topic:requests`, etc. Space-separated if more than one. Grammar labels such as `topic:past-tense`, `topic:subjunctive`, or `topic:fronting` are not topics and must not appear here. **Do not** add `tier:` or `gate:` tags yourself — the importer adds those automatically from the fields above. |
 
 `production` adds:
 
 | Field | Value |
 |---|---|
-| `prompt_en` | An English **task cue**, not a translation — "Ask whether...", "Tell the pharmacist...", "Say that...". Describe a realistic situation (Mexico City travel context where the pattern allows it — see tier files for which ones are safety/travel-weighted). |
+| `prompt_en` | An English **task cue**, not a translation — "Ask whether...", "Tell the pharmacist...", "Say that...". Describe a realistic situation (Mexico City travel context where the pattern allows it — see tier files for which ones are safety/travel-weighted). **A competent speaker given `prompt_en` must be able to produce `answer_es` or a trivial variant: put every content word needed by the target in the cue rather than leaving the event, object, place, or other details open. When the pattern drills verb morphology, explicitly pin the intended person and number (and any otherwise ambiguous gender) in the cue.** |
 | `sibling_es` | A **different, complete** Spanish sentence using the *same construction*, with different lexical content than the answer. This is the "similar sentence" hint — it must itself be natural and correct. |
 | `skeleton_es` | The `answer_es` sentence with its key inflected word/phrase (the part that varies by person/tense/mood) replaced by `___`. Everything else stays in Spanish — this is a scaffold, not an English gloss. |
 | `answer_es` | The single canonical, idiomatic Spanish sentence that correctly answers `prompt_en` and satisfies the pattern's template and constraints. |

@@ -84,6 +84,8 @@ log = logging.getLogger(__name__)
 
 FPS = 30
 DEFAULT_LOGICAL_SIZE = (640, 480)
+DEFAULT_FONT_SIZES = (38, 26, 18)
+RGB30_FONT_SIZES = (40, 30, 25)
 NATIVE_FULLSCREEN_SIZES = {
     (640, 480),  # RG35XX Plus and similar 4:3 panels
     (720, 480),  # RG34XX SP widescreen panel
@@ -224,6 +226,39 @@ def _compute_scaled_canvas_size(display_size, logical_size, integer_scaling):
     return (int(w * ratio), int(h * ratio)), "aspect-fit"
 
 
+def _resolve_font_sizes(logical_size):
+    """Return (large, normal, secondary) sizes for a logical canvas."""
+    if tuple(logical_size) == (720, 720):
+        return RGB30_FONT_SIZES
+    return DEFAULT_FONT_SIZES
+
+
+def _wrap_footer_text(font, text, second_line, max_width):
+    """Lay out a footer in at most two readable, width-bounded lines."""
+    paragraphs = [part for part in (text, second_line) if part]
+    lines = []
+    for paragraph in paragraphs:
+        lines.extend(wrap_text(font, paragraph, max_width))
+    if len(lines) <= 2:
+        return lines
+
+    # Extremely long hints still stay at the configured readable size. Merge
+    # overflow into line two, truncating only after using all available width.
+    overflow = "   ".join(lines[1:])
+    ellipsis = "…"
+    while overflow and font.size(overflow + ellipsis)[0] > max_width:
+        overflow = overflow[:-1]
+    return [lines[0], overflow.rstrip() + ellipsis]
+
+
+def _footer_height(font, line_count):
+    """Chassis height required for one or two lines of the active font."""
+    line_count = max(1, line_count)
+    measured = 8 + line_count * font.get_linesize() + (line_count - 1) * 4 + 8
+    legacy_minimum = 64 if line_count > 1 else 44
+    return max(legacy_minimum, measured)
+
+
 def resolve_font_path():
     """First existing font candidate, or None for the builtin fallback."""
     for path in FONT_CANDIDATES:
@@ -362,9 +397,16 @@ class CardBrickApp:
         for i in range(pygame.joystick.get_count()):
             self._open_joystick(i)
 
-        self.font_big = _load_font(38)
-        self.font = _load_font(26)
-        self.font_small = _load_font(18)
+        font_sizes = _resolve_font_sizes((self.w, self.h))
+        self.font_big = _load_font(font_sizes[0])
+        self.font = _load_font(font_sizes[1])
+        self.font_small = _load_font(font_sizes[2])
+        self._max_footer_height = _footer_height(self.font_small, 2)
+        log.info(
+            "typography: %s (%d/%d/%d px)",
+            "rgb30-readable" if (self.w, self.h) == (720, 720) else "default",
+            *font_sizes,
+        )
         self.clock = pygame.time.Clock()
 
         log_display_diagnostics(
@@ -651,12 +693,25 @@ class CardBrickApp:
         active = self.profile["active_decks"]
         return self.storage.deck_names_list() if active is None else list(active)
 
+    def _effective_deck_filter(self):
+        """Deck scope for this sitting, including the picker fast path."""
+        if self._session_deck_filter is not None:
+            return self._session_deck_filter
+        return self.profile["active_decks"]
+
     def _resolve_available_categories(self):
-        """Tags the parent has assigned to this profile: every observed
-        tag if active_categories is None, else that explicit (possibly
-        empty) list. Same convention as _resolve_available_decks."""
+        """Tags assigned to this profile that exist in this sitting's deck.
+
+        A selected deck narrows the topic menu to its imported cards. When
+        the deck picker is skipped, the profile's assigned deck scope supplies
+        the same restriction. ``None`` continues to mean all decks/tags.
+        """
         active = self.profile["active_categories"]
-        return self.storage.all_tags() if active is None else list(active)
+        deck_tags = self.storage.tags_in_decks(self._effective_deck_filter())
+        if active is None:
+            return deck_tags
+        deck_tag_set = set(deck_tags)
+        return [tag for tag in active if tag in deck_tag_set]
 
     def _drill_ticket_status(self):
         """(next_sprint_cards, bonus_cards) across the profile's drill
@@ -675,8 +730,8 @@ class CardBrickApp:
 
     def _next_after_deck_choice(self):
         """Where to go once the deck for this sitting is settled: the
-        topic/tag picker if there's a real choice to make, else
-        straight to Review — mirrors the deck-count threshold."""
+        topic/tag picker if more than one topic exists in the effective deck
+        scope, else straight to Review — mirrors the deck-count threshold."""
         return (
             "CATEGORY_SELECT"
             if len(self._resolve_available_categories()) > 1
@@ -2348,7 +2403,7 @@ class CardBrickApp:
             if notice:
                 for line in wrap_text(self.font_small, notice, self.w - 120):
                     self._center(self.font_small.render(line, True, WARN), y + 6)
-                    y += 22
+                    y += max(22, self.font_small.get_linesize() + 2)
             self._footer("Up/Down = Choose   A = Select   B = Back")
             self.present()
             self.clock.tick(FPS)
@@ -2429,7 +2484,7 @@ class CardBrickApp:
             y = self.h - 160
             for line in wrap_text(self.font_small, message, self.w - 120):
                 self._center(self.font_small.render(line, True, WARN), y)
-                y += 24
+                y += max(24, self.font_small.get_linesize() + 2)
         self._footer("A = Import   B = Back")
 
     def screen_parent_categories(self):
@@ -2753,11 +2808,11 @@ class CardBrickApp:
                 f"{'raw event':<26}{'semantic':<16}study action", True, DIM
             )
             self.screen.blit(header, (48, y))
-            y += 26
+            y += max(26, self.font_small.get_linesize() + 2)
             for raw, semantic, study in events:
                 line = f"{raw:<26}{semantic:<16}{study}"
                 self.screen.blit(self.font_small.render(line, True, FG), (48, y))
-                y += 24
+                y += max(24, self.font_small.get_linesize() + 2)
             if not events:
                 self._center(
                     self.font.render("Press buttons to see events…", True, DIM), 220
@@ -2849,7 +2904,7 @@ class CardBrickApp:
                 y = 300
                 for line in wrap_text(self.font_small, "So far: " + done, self.w - 80):
                     self._center(self.font_small.render(line, True, DIM), y)
-                    y += 22
+                    y += max(22, self.font_small.get_linesize() + 2)
             self._footer("Esc = cancel (keyboard)")
             self.present()
             self.clock.tick(FPS)
@@ -2916,7 +2971,14 @@ class CardBrickApp:
             self.audio.play_effect(PAGE_FEED_SFX, volume=volume)
 
     def _draw_roll(self, roll):
-        roll.draw(self.screen, self.content_x0, self.content_x1, self.h - 44)
+        # Reserve enough room for the largest active chassis. This prevents a
+        # 25 px two-line RGB30 hint from covering printed card content.
+        roll.draw(
+            self.screen,
+            self.content_x0,
+            self.content_x1,
+            self.h - self._max_footer_height,
+        )
 
     def _draw_printer_view_at(self, roll, x):
         view = pygame.Surface((self.w, self.h))
@@ -2952,14 +3014,14 @@ class CardBrickApp:
         y = rule_y + 10
         if subtitle:
             self._center(self.font_small.render(subtitle, True, DIM), y)
-            y += 26
+            y += self.font_small.get_linesize() + 4
         return y
 
     def _stub_surface(self, left, right):
         """Receipt stub printed at the top of every page: small pencil
         caps, left and right ends of one row."""
         width = self.content_x1 - self.content_x0 - 32
-        surf = pygame.Surface((width, 24), pygame.SRCALPHA)
+        surf = pygame.Surface((width, self.font_small.get_linesize()), pygame.SRCALPHA)
         right_s = self.font_small.render(right, True, DIM)
         left_max = width - right_s.get_width() - 24
         left_s = self.font_small.render(
@@ -3032,10 +3094,12 @@ class CardBrickApp:
     def _footer(self, text, second_line=None):
         """Button hints on the chassis bar — the printer body under the
         paper. Fixed: it never scrolls with the roll."""
-        top = self.h - (64 if second_line else 44)
+        lines = _wrap_footer_text(self.font_small, text, second_line, self.w - 32)
+        height = _footer_height(self.font_small, len(lines))
+        top = self.h - height
         pygame.draw.rect(self.screen, CHASSIS, (0, top, self.w, self.h - top))
-        surf = self.font_small.render(text, True, CHASSIS_TEXT)
-        self.screen.blit(surf, ((self.w - surf.get_width()) // 2, top + 10))
-        if second_line:
-            surf2 = self.font_small.render(second_line, True, CHASSIS_TEXT)
-            self.screen.blit(surf2, ((self.w - surf2.get_width()) // 2, top + 34))
+        y = top + 8
+        for line in lines:
+            surf = self.font_small.render(line, True, CHASSIS_TEXT)
+            self.screen.blit(surf, ((self.w - surf.get_width()) // 2, y))
+            y += self.font_small.get_linesize() + 4

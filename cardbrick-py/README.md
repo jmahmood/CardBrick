@@ -364,14 +364,15 @@ when there's no real choice to make.
 Parent Mode's Categories screen decides which tags are *assigned* to
 the child at all; the same "pick one for just this sitting" pattern as
 the deck picker applies to tags too. After the deck choice (if any),
-if more than one category is assigned, a "Choose a Topic" screen
-offers "All assigned categories" plus one entry per assigned tag, each
-with its own due-card count. Picking a tag is pure session-level
+if more than one assigned category exists in the selected deck, a "Choose a
+Topic" screen offers "All assigned categories" plus one entry per matching
+tag, each with its own due-card count. Tags that have no cards in the selected
+deck are not shown. Picking a tag is pure session-level
 filtering — the same non-destructive idea as Anki's filtered decks:
 no card's tags or deck membership ever change, so the tag stays part
-of the whole collection and "All assigned categories" always includes
-it again next time. Skipped automatically when zero or one category is
-assigned, same as the deck picker.
+of the whole collection and reappears when its deck is selected again.
+The picker is skipped automatically when zero or one matching category
+remains, same as the deck picker.
 
 ### Stamp calendar
 
