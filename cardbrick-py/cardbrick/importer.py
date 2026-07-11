@@ -202,6 +202,14 @@ def _import_collection(col_path, storage, scheduler, stats,
             back_raw, back_audio = extract_audio(back_raw)
             front = clean_html(front_raw)
             back = clean_html(back_raw)
+            named = {name.strip().lower(): i
+                     for i, name in enumerate(field_names)}
+            front_jp = clean_html(fields[named["front jp"]]) \
+                if "front jp" in named and named["front jp"] < len(fields) else ""
+            back_jp = clean_html(fields[named["back jp"]]) \
+                if "back jp" in named and named["back jp"] < len(fields) else ""
+            if card["ord"] == 1:
+                front_jp, back_jp = back_jp, front_jp
             if not front and not back:
                 stats.skip(card["id"], "empty after HTML stripping")
                 continue
@@ -220,7 +228,8 @@ def _import_collection(col_path, storage, scheduler, stats,
                 card_id=card["id"], note_id=note["id"], deck=deck,
                 front=front, back=back, tags=tags,
                 audio_filename=audio_filename, audio_side=audio_side,
-                now_iso=iso(now_utc()))
+                now_iso=iso(now_utc()), front_jp=front_jp or None,
+                back_jp=back_jp or None)
             storage.init_review_state(scheduler.initial_state(card["id"]))
 
             stats.cards += 1
@@ -296,7 +305,8 @@ def _import_vocab_note(card, note, field_names, deck, storage, scheduler,
         tags=tags,
         audio_filename=word_audio_files[0] if word_audio_files else None,
         audio_side="front" if word_audio_files else None,
-        now_iso=iso(now_utc()), card_type="vocab")
+        now_iso=iso(now_utc()), card_type="vocab",
+        front_jp=word_jp or None, back_jp=example_jp or None)
     stats.note_media(word_audio_files[0] if word_audio_files else None)
     stats.note_media(example_audio_files[0] if example_audio_files else None)
     stats.note_media(image_filename)

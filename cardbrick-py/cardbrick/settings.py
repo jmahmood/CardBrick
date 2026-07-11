@@ -11,6 +11,7 @@ import os
 log = logging.getLogger(__name__)
 
 DEFAULTS = {
+    "language": "en",
     "current_child_profile_id": None,
     "auto_play_audio": True,
     "paper_feed_sfx_enabled": True,

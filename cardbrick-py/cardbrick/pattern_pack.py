@@ -139,6 +139,10 @@ def import_pattern_pack(json_path, storage, scheduler, deck_name=None):
             options_json=(json.dumps(item["options"], ensure_ascii=False)
                           if kind == "mcq" else None),
             constraint_note=(item.get("constraint_note") or "").strip()
+            or None,
+            prompt_jp=(item.get("prompt_jp") or "").strip() or None,
+            cue_jp=(item.get("cue_jp") or "").strip() or None,
+            constraint_note_jp=(item.get("constraint_note_jp") or "").strip()
             or None)
         storage.init_review_state(scheduler.initial_state(card_id))
 
