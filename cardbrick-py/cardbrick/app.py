@@ -819,10 +819,10 @@ class CardBrickApp:
             self._paper(roll)
             self._draw_roll(roll)
             self._footer(
-                "A = Start    X = Calendar"
+                self._jp("A = Start    X = Calendar", "A = 開始    X = カレンダー")
                 if (startable or bonus)
-                else "X = Calendar",
-                "START = Parent    SELECT = Quit",
+                else self._jp("X = Calendar", "X = カレンダー"),
+                self._jp("START = Parent    SELECT = Quit", "START = 保護者    SELECT = 終了"),
             )
             self.present()
             self.clock.tick(FPS)
@@ -854,52 +854,53 @@ class CardBrickApp:
                 headline = (
                     "Last sprint of the day!" if n == 1 else f"{n} sprints to go today"
                 )
+            headline = self._jp(headline, headline.replace("sprints to go today", "スプリント残り").replace("sprints today", "スプリント").replace("Last sprint of the day!", "今日の最後のスプリントです！").replace("Just one sprint today!", "今日は1スプリントです！"))
             roll.feed(self.font_big.render(headline, True, FG))
             roll.feed_gap(8)
-            progress = f"{status['cards_done']} / {status['goal_today']} cards done"
+            progress = self._jp(f"{status['cards_done']} / {status['goal_today']} cards done", f"{status['cards_done']} / {status['goal_today']} 枚完了")
             if status["goal_today"] < status["goal"]:
                 # Supply-limited (e.g. a fresh deck paced by
                 # daily_new_cards): say why the day is short.
-                progress += " — more unlock tomorrow"
+                progress += self._jp(" — more unlock tomorrow", " — 続きは明日解除されます")
             roll.feed(self.font.render(progress, True, DIM))
             roll.feed_gap(4)
             minutes = self.profile["session_time_minutes"]
             sprint_line = f"next sprint: {status['next_sprint_cards']} cards" + (
                 f" / about {minutes} min" if minutes else ""
             )
-            roll.feed(self.font_small.render(sprint_line, True, DIM))
+            roll.feed(self.font_small.render(self._jp(sprint_line, f"次のスプリント：{status['next_sprint_cards']}枚" + (f" / 約{minutes}分" if minutes else "")), True, DIM))
             if drill_cards:
                 roll.feed_gap(4)
                 roll.feed(
                     self.font_small.render(
-                        f"Pattern drills ready too: {drill_cards} cards",
+                        self._jp(f"Pattern drills ready too: {drill_cards} cards", f"パターンドリルも準備完了：{drill_cards}枚"),
                         True,
                         DIM,
                     )
                 )
             roll.feed_gap(18)
-            roll.feed(self.font.render("Press the A button to start!", True, GOOD))
+            roll.feed(self.font.render(self._jp("Press the A button to start!", "Aボタンで開始！"), True, GOOD))
         elif startable:
             # Only drill work remains (or exists): a tiny, honest day.
-            roll.feed(self.font_big.render("Drill time!", True, FG))
+            roll.feed(self.font_big.render(self._jp("Drill time!", "ドリルの時間です！"), True, FG))
             roll.feed_gap(8)
             minutes = self.profile.get("drill_sprint_minutes")
             drill_line = f"next drill sprint: {drill_cards} cards" + (
                 f" / about {minutes} min" if minutes else ""
             )
-            roll.feed(self.font.render(drill_line, True, DIM))
+            roll.feed(self.font.render(self._jp(drill_line, f"次のドリル：{drill_cards}枚"), True, DIM))
             roll.feed_gap(18)
-            roll.feed(self.font.render("Press the A button to start!", True, GOOD))
+            roll.feed(self.font.render(self._jp("Press the A button to start!", "Aボタンで開始！"), True, GOOD))
         elif bonus:
             headline = (
-                "Goal reached! Great job!"
+                self._jp("Goal reached! Great job!", "目標達成！よくできました！")
                 if status["goal_met"]
-                else "That's everything for today!"
+                else self._jp("That's everything for today!", "今日はこれで終わりです！")
             )
             roll.feed(self.font_big.render(headline, True, GOOD))
             roll.feed_gap(8)
             roll.feed(
-                self.font.render(f"{status['cards_done']} cards done today", True, DIM)
+                self.font.render(self._jp(f"{status['cards_done']} cards done today", f"今日は{status['cards_done']}枚完了"), True, DIM)
             )
             roll.feed_gap(4)
             if status["bonus_cards"]:
@@ -917,7 +918,7 @@ class CardBrickApp:
             roll.feed_gap(10)
             roll.feed(self._stamp_surface("All done for today!", GOOD), reveal=False)
             roll.feed_gap(12)
-            roll.feed(self.font.render("Come back tomorrow.", True, DIM))
+            roll.feed(self.font.render(self._jp("Come back tomorrow.", "また明日来てください。"), True, DIM))
         return roll
 
     def screen_deck_select(self):
@@ -927,7 +928,7 @@ class CardBrickApp:
         child choose one specific assigned deck, or all of them
         combined, for just this sitting."""
         available = self._resolve_available_decks()
-        entries = [("All assigned decks", None)] + [
+        entries = [(self._jp("All assigned decks", "割り当てられたすべてのデッキ"), None)] + [
             (name, [name]) for name in available
         ]
         # Due/new counts computed once up front, not per frame — this
@@ -949,8 +950,8 @@ class CardBrickApp:
             setup_roll = None
         rows = self._print_choice_page(
             roll,
-            "Choose a Deck",
-            "Which deck do you want to study?",
+            self._jp("Choose a Deck", "デッキを選択"),
+            self._jp("Which deck do you want to study?", "どのデッキを学習しますか？"),
             entries,
             counts,
         )
@@ -992,7 +993,7 @@ class CardBrickApp:
             self._draw_roll(roll)
             if not roll.printing_busy:
                 self._draw_choice_marker(roll, rows, index)
-            self._footer("Up/Down = Choose   A = Select   B = Back")
+            self._footer(self._jp("Up/Down = Choose   A = Select   B = Back", "上下 = 選択   A = 決定   B = 戻る"))
             self.present()
             self.clock.tick(FPS)
 
@@ -1008,7 +1009,7 @@ class CardBrickApp:
         available = self._resolve_available_categories()
         # Labels are prettified ("::" hierarchy, underscores) but the
         # filter value stays the raw tag the cards are matched against.
-        entries = [("All assigned categories", None)] + [
+        entries = [(self._jp("All assigned categories", "割り当てられたすべてのトピック"), None)] + [
             (format_tag_label(name), [name]) for name in available
         ]
         # One batched call for the same reason as the deck picker: the
@@ -1028,8 +1029,8 @@ class CardBrickApp:
             setup_roll = None
         rows = self._print_choice_page(
             roll,
-            "Choose a Topic",
-            "Want to focus on something specific?",
+            self._jp("Choose a Topic", "トピックを選択"),
+            self._jp("Want to focus on something specific?", "特定のトピックに集中しますか？"),
             entries,
             counts,
         )
@@ -1072,7 +1073,7 @@ class CardBrickApp:
             self._draw_roll(roll)
             if not roll.printing_busy:
                 self._draw_choice_marker(roll, rows, index)
-            self._footer("Up/Down = Choose   A = Select   B = Back")
+            self._footer(self._jp("Up/Down = Choose   A = Select   B = Back", "上下 = 選択   A = 決定   B = 戻る"))
             self.present()
             self.clock.tick(FPS)
 
@@ -1107,7 +1108,7 @@ class CardBrickApp:
         for i, (label, _filter) in enumerate(entries):
             due, new = counts[i]
             text = self._truncate_to_width(
-                self.font, f"{label}   ({due + new} due)", self.w - 160
+                self.font, f"{label}   ({due + new} {self._jp('due', '件')})", self.w - 160
             )
             surf = self.font.render(text, True, FG)
             rows.append(
@@ -1198,7 +1199,7 @@ class CardBrickApp:
         roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         text = self._truncate_to_width(
-            self.font_small, f"TOPIC SELECTED: {label}", self.w - 170
+            self.font_small, self._jp(f"TOPIC SELECTED: {label}", f"選択したトピック：{label}"), self.w - 170
         )
         roll.feed(self.font_small.render(text, True, GOOD), x=80)
 
