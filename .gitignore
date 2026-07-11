@@ -16,6 +16,11 @@ workspace
 cardbrick-py/*.apkg
 cardbrick-py/mise.toml
 
+cardbrick-py/assets/patterns/generated/
+cardbrick-py/assets/patterns/generated_v2/
+cardbrick-py/assets/patterns/generated_v3/
+docs/LINGUISTIC_INFRASTRUCTURE.md
+
 # Knulli packaging outputs (deploy/knulli)
 deploy/knulli/dist/
 deploy/knulli/runtime-build/build/
