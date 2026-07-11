@@ -212,6 +212,95 @@ def test_non_reveal_surface_behaves_like_regular_feed():
     assert roll._items[-1].reveal_progress == 1.0
 
 
+def test_attachment_scrolls_before_it_drops_and_staples():
+    events = []
+    roll = make_roll(on_feed=events.append)
+    roll.feed_page(perf=False)
+    roll.feed_attachment(FakeSurf(h=60))
+
+    phases = []
+    offsets = []
+    for _ in range(200):
+        if roll._active_attachment is not None:
+            phases.append(roll._active_attachment.attach_phase)
+            offsets.append(roll.offset)
+        if not roll.busy:
+            break
+        roll.update()
+
+    assert phases[0] == "waiting_for_reel"
+    first_drop = phases.index("dropping")
+    assert abs(offsets[first_drop] - roll._target) <= 0.6
+    assert "impact" in phases
+    assert roll._items[-1].attach_phase == "settled"
+    assert events.count("line") == 1
+    assert events.count("staple") == 1
+
+
+def test_staple_press_pops_up_then_settles_at_resting_geometry():
+    roll = make_roll()
+    item = type("Attachment", (), {
+        "surf": FakeSurf(h=60),
+        "attach_phase": "impact",
+        "attach_progress": 0.20,
+    })()
+
+    pressed_y, pressed_x_scale, pressed_y_scale = roll._attachment_pose(item, 40)
+    assert pressed_y > 40
+    assert pressed_x_scale > 1.0
+    assert pressed_y_scale < 1.0
+
+    item.attach_progress = 0.62
+    popped_y, popped_x_scale, popped_y_scale = roll._attachment_pose(item, 40)
+    assert popped_y < 40
+    assert popped_x_scale < 1.0
+    assert popped_y_scale > 1.0
+
+    item.attach_progress = 1.0
+    assert roll._attachment_pose(item, 40) == (40.0, 1.0, 1.0)
+
+
+def test_finish_attachment_skips_effects_and_leaves_final_state():
+    events = []
+    roll = make_roll(on_feed=events.append)
+    roll.feed_attachment(FakeSurf(h=60), angle=-1.5)
+    roll.update()
+    roll.finish()
+
+    item = roll._items[-1]
+    assert not roll.busy
+    assert item.attach_phase == "settled"
+    assert item.attach_progress == 1.0
+    assert item.angle == -1.5
+    assert events == ["line"]
+
+    roll.feed(None, h=20)
+    settle(roll)
+    assert not roll.busy
+
+
+def test_reduced_motion_attachment_is_immediately_settled_and_silent():
+    events = []
+    roll = make_roll(reduced_motion=True, on_feed=events.append)
+    roll.feed_attachment(FakeSurf(h=60))
+
+    assert not roll.busy
+    assert roll._items[-1].attach_phase == "settled"
+    assert events == []
+
+
+def test_attachment_height_participates_in_reel_geometry_and_rewind():
+    roll = make_roll(reduced_motion=True)
+    roll.feed_page(perf=False)
+    roll.feed_attachment(FakeSurf(h=60))
+    assert roll.offset == -40
+    roll.feed_page()
+    roll.feed(None, h=20)
+
+    assert roll.rewind_page()
+    assert roll.offset == -100
+
+
 def test_manual_scroll_moves_view_without_changing_print_target():
     roll = make_roll()
     roll.feed_page(perf=False)

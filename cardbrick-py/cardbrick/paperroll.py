@@ -40,10 +40,15 @@ PAGE_GAP = 36
 # Per-frame reveal speed for the tiny printer head. At 30 FPS this
 # makes a line appear in about 2-3 ticks: visible, but never precious.
 REVEAL_STEP = 0.45
+ATTACH_DROP_FRAMES = 9
+ATTACH_IMPACT_FRAMES = 7
 
 
 class _Item:
-    __slots__ = ("kind", "surf", "h", "x", "event", "reveal", "reveal_progress")
+    __slots__ = (
+        "kind", "surf", "h", "x", "event", "reveal", "reveal_progress",
+        "attach_phase", "attach_progress", "angle",
+    )
 
     def __init__(self, kind, surf, h, x=None, event=None, reveal=False):
         self.kind = kind  # "surf" | "perf" | "tear-perf" | "gap"
@@ -53,6 +58,9 @@ class _Item:
         self.event = event
         self.reveal = bool(reveal and surf is not None)
         self.reveal_progress = 1.0
+        self.attach_phase = "waiting_for_reel" if kind == "attachment" else None
+        self.attach_progress = 0.0
+        self.angle = 0.0
 
 
 class PaperRoll:
@@ -68,6 +76,7 @@ class PaperRoll:
         self._target = self.offset
         self._view_target = self.offset
         self._active_reveal = None
+        self._active_attachment = None
         # Roll coordinate + committed-item index where each page's
         # content begins (right after its perforation group).
         self._pages = []
@@ -97,6 +106,19 @@ class PaperRoll:
 
     def feed_gap(self, h):
         self._queue.append(_Item("gap", None, h))
+        self.scroll_to_print_position()
+        self._maybe_snap()
+
+    def feed_attachment(self, surf, h=None, x=None, angle=0.0,
+                        impact_event="staple"):
+        """Reserve reel space, then drop and fasten a physical attachment."""
+        item = _Item(
+            "attachment", surf,
+            surf.get_height() if h is None else h,
+            x, event=impact_event, reveal=False,
+        )
+        item.angle = float(angle)
+        self._queue.append(item)
         self.scroll_to_print_position()
         self._maybe_snap()
 
@@ -150,6 +172,7 @@ class PaperRoll:
             bool(self._queue)
             or abs(self._view_target - self.offset) > SNAP_PX
             or self._active_reveal is not None
+            or self._active_attachment is not None
         )
 
     @property
@@ -158,6 +181,7 @@ class PaperRoll:
         return (
             bool(self._queue)
             or self._active_reveal is not None
+            or self._active_attachment is not None
             or (
                 abs(self._view_target - self._target) <= SNAP_PX
                 and abs(self._target - self.offset) > SNAP_PX
@@ -199,6 +223,10 @@ class PaperRoll:
         for item in self._items:
             item.reveal_progress = 1.0
         self._active_reveal = None
+        if self._active_attachment is not None:
+            self._active_attachment.attach_phase = "settled"
+            self._active_attachment.attach_progress = 1.0
+        self._active_attachment = None
         self._view_target = self._target
         self.offset = self._target
         self._prune()
@@ -209,7 +237,9 @@ class PaperRoll:
             was_busy = self.busy
             self.finish()
             return was_busy
-        if self._active_reveal is not None:
+        if self._active_attachment is not None:
+            self._advance_attachment()
+        elif self._active_reveal is not None:
             self._advance_reveal()
         elif self._queue and abs(self._target - self.offset) <= RELEASE_PX:
             # Blank paper and page bookkeeping ride along for free: a
@@ -235,10 +265,14 @@ class PaperRoll:
             if item.reveal:
                 item.reveal_progress = 0.0
                 self._active_reveal = item
+            elif item.kind == "attachment":
+                item.attach_phase = "waiting_for_reel"
+                item.attach_progress = 0.0
+                self._active_attachment = item
         self._target = self._total - self.print_y
         self._view_target = self._target
         if notify and self.on_feed:
-            if item.kind == "surf":
+            if item.kind in ("surf", "attachment"):
                 self.on_feed("line")
             elif item.event:
                 self.on_feed(item.event)
@@ -250,6 +284,31 @@ class PaperRoll:
         item.reveal_progress = min(item.reveal_progress + REVEAL_STEP, 1.0)
         if item.reveal_progress >= 1.0:
             self._active_reveal = None
+
+    def _advance_attachment(self):
+        item = self._active_attachment
+        if item is None:
+            return
+        if item.attach_phase == "waiting_for_reel":
+            if abs(self._target - self.offset) <= SNAP_PX:
+                item.attach_phase = "dropping"
+                item.attach_progress = 0.0
+        elif item.attach_phase == "dropping":
+            item.attach_progress = min(
+                item.attach_progress + 1.0 / ATTACH_DROP_FRAMES, 1.0
+            )
+            if item.attach_progress >= 1.0:
+                item.attach_phase = "impact"
+                item.attach_progress = 0.0
+                if self.on_feed and item.event:
+                    self.on_feed(item.event)
+        elif item.attach_phase == "impact":
+            item.attach_progress = min(
+                item.attach_progress + 1.0 / ATTACH_IMPACT_FRAMES, 1.0
+            )
+            if item.attach_progress >= 1.0:
+                item.attach_phase = "settled"
+                self._active_attachment = None
 
     def _maybe_snap(self):
         if self.reduced_motion:
@@ -306,6 +365,19 @@ class PaperRoll:
                         )
             elif item.surf is not None:
                 x = item.x if item.x is not None else x0 + (x1 - x0 - item.surf.get_width()) // 2
+                draw_top = top
+                draw_surf = item.surf
+                if item.kind == "attachment":
+                    draw_top, scale_x, scale_y = self._attachment_pose(item, top)
+                    if scale_x != 1.0 or scale_y != 1.0:
+                        scaled_w = max(1, int(item.surf.get_width() * scale_x))
+                        scaled_h = max(1, int(item.surf.get_height() * scale_y))
+                        draw_surf = pygame.transform.smoothscale(
+                            item.surf, (scaled_w, scaled_h)
+                        )
+                        # Scale about the attachment's centre so the press
+                        # feels perpendicular to the paper, not side-anchored.
+                        x -= (scaled_w - item.surf.get_width()) // 2
                 if item.reveal and item.reveal_progress < 1.0:
                     visible_w = int(item.surf.get_width() * item.reveal_progress)
                     if visible_w > 0:
@@ -315,7 +387,58 @@ class PaperRoll:
                         screen.blit(item.surf, (x, int(top)), area)
                     self._draw_head(screen, x + visible_w, int(top), item)
                 else:
-                    screen.blit(item.surf, (x, int(top)))
+                    screen.blit(draw_surf, (x, int(draw_top)))
+                    if item.kind == "attachment" and item.attach_phase in ("impact", "settled"):
+                        self._draw_staple(screen, x, int(draw_top), item)
+
+    def _attachment_pose(self, item, final_top):
+        """Return top, x-scale, y-scale for the drop/press/rebound pose."""
+        if item.attach_phase == "waiting_for_reel":
+            return -item.surf.get_height() - 8, 1.0, 1.0
+        if item.attach_phase == "dropping":
+            p = item.attach_progress
+            # Accelerating fall with a tiny overshoot at the end.
+            start = -item.surf.get_height() - 8
+            y = start + (final_top - start) * (p * p)
+            if p > 0.82:
+                y += 4.0 * ((p - 0.82) / 0.18)
+            return y, 1.0, 1.0
+        if item.attach_phase == "impact":
+            p = item.attach_progress
+            if p >= 1.0:
+                return final_top, 1.0, 1.0
+            if p < 0.30:
+                # Stapler drives the print into the page: down, slightly
+                # wider, and flatter to imply pressure toward the screen.
+                q = p / 0.30
+                return final_top + 4.0 * q, 1.0 + 0.012 * q, 1.0 - 0.035 * q
+            if p < 0.62:
+                # Release pressure and pop just above the paper plane.
+                q = (p - 0.30) / 0.32
+                return final_top + 4.0 - 7.0 * q, 1.012 - 0.020 * q, 0.965 + 0.050 * q
+            # Damped return from the raised pose to the exact resting geometry.
+            q = (p - 0.62) / 0.38
+            return final_top - 3.0 * (1.0 - q), 0.992 + 0.008 * q, 1.015 - 0.015 * q
+        return final_top, 1.0, 1.0
+
+    def _draw_staple(self, screen, x, y, item):
+        import pygame
+
+        sx, sy = int(x + 17), int(y + 13)
+        metal = (112, 111, 108)
+        tilt = max(-2, min(2, round(item.angle)))
+        pygame.draw.line(
+            screen, metal, (sx - 5, sy - tilt), (sx + 5, sy + tilt), 2
+        )
+        if item.attach_phase == "impact":
+            fade = 1.0 - item.attach_progress
+            reach = max(2, int(8 * fade))
+            ink = (196, 138, 44)
+            for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+                pygame.draw.line(
+                    screen, ink, (sx + dx * 7, sy + dy * 5),
+                    (sx + dx * (7 + reach), sy + dy * (5 + reach)), 1,
+                )
 
     def _draw_head(self, screen, x, y, item):
         import pygame

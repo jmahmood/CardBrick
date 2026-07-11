@@ -61,6 +61,7 @@ import calendar as _calendar
 import logging
 import os
 import time
+import zlib
 
 import pygame
 
@@ -134,6 +135,12 @@ MCQ_OPTION_LABELS = ("X", "Y", "B")
 DPAD = ("dpad_up", "dpad_down", "dpad_left", "dpad_right")
 LINE_FEED_SFX = "line-tick.wav"
 PAGE_FEED_SFX = "page-whirr.wav"
+STAPLE_SFX = "staple-clack.wav"
+
+
+def _autoplay_vocab_phase(previous_phase, current_phase):
+    """Only the sentence reveal owns automatic example-audio playback."""
+    return previous_phase < 1 and current_phase == 1
 
 _BUNDLED_FONT_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts"
@@ -1414,10 +1421,12 @@ class CardBrickApp:
                         self._render_highlight_line(line, vocab_detail["word"], self.font)
                     )
             elif p == 2:
-                image = vocab_image_surface()
+                image, angle = self._vocab_attachment_surface(
+                    vocab_detail["image_filename"]
+                )
                 if image is not None:
                     roll.feed_gap(8)
-                    roll.feed(image, reveal=False)
+                    roll.feed_attachment(image, angle=angle)
             elif p == 3:
                 roll.feed_gap(10)
                 roll.feed(self._rule_surface(), reveal=False)
@@ -1757,9 +1766,16 @@ class CardBrickApp:
                         continue
                 elif action == "dpad_down":
                     if phase < self.VOCAB_MAX_PHASE:
+                        previous_phase = phase
                         phase = next_vocab_phase(phase)
                         print_up_to(phase)
-                        if auto_play:
+                        # Sentence audio belongs to the sentence reveal only.
+                        # Later picture/definition phases keep it available on
+                        # L1, but must not restart it automatically (or mask
+                        # the attachment's staple impact).
+                        if auto_play and _autoplay_vocab_phase(
+                            previous_phase, phase
+                        ):
                             play_vocab()
                 elif action == "east_button":
                     elapsed = int(
@@ -1999,7 +2015,7 @@ class CardBrickApp:
                     raw = raw.convert_alpha()
                 except pygame.error:
                     raw = raw.convert()
-                if raw.get_height() > max_height:
+                if max_height is not None and raw.get_height() > max_height:
                     scale = max_height / raw.get_height()
                     raw = pygame.transform.smoothscale(
                         raw, (max(1, int(raw.get_width() * scale)), max_height)
@@ -2013,6 +2029,62 @@ class CardBrickApp:
                                      os.path.basename(filename)))
         self._image_cache[key] = surf
         return surf
+
+    def _vocab_attachment_surface(self, filename):
+        """Mount an image like a small paper print and rotate it predictably."""
+        if not filename:
+            return None, 0.0
+        key = ("attachment", filename, self.content_x1 - self.content_x0)
+        if key in self._image_cache:
+            return self._image_cache[key]
+        # Attachments are the visual clue, not a printer-sized thumbnail.
+        # Load the full source and make the mounted photo span 80% of the
+        # logical screen; tall photos simply occupy more of the scrollable reel.
+        image = self._vocab_image_surface(filename, max_height=None)
+        if image is None:
+            result = (None, 0.0)
+            self._image_cache[key] = result
+            return result
+
+        border, shadow = 7, 4
+        target_mount_w = min(
+            int(self.w * 0.80),
+            self.content_x1 - self.content_x0 - 4,
+        )
+        target_image_w = target_mount_w - border * 2 - shadow
+        if image.get_width() != target_image_w:
+            scale = target_image_w / image.get_width()
+            image = pygame.transform.smoothscale(
+                image,
+                (target_image_w, max(1, int(image.get_height() * scale))),
+            )
+        mount = pygame.Surface(
+            (image.get_width() + border * 2 + shadow,
+             image.get_height() + border * 2 + shadow),
+            pygame.SRCALPHA,
+        )
+        pygame.draw.rect(
+            mount, (65, 61, 56, 45),
+            (shadow, shadow,
+             image.get_width() + border * 2,
+             image.get_height() + border * 2),
+            border_radius=2,
+        )
+        pygame.draw.rect(
+            mount, (249, 246, 237),
+            (0, 0, image.get_width() + border * 2,
+             image.get_height() + border * 2),
+            border_radius=2,
+        )
+        mount.blit(image, (border, border))
+        seed = zlib.crc32(os.path.basename(filename).encode("utf-8"))
+        angle = (1.0 + (seed % 11) / 10.0) * (
+            -1 if seed & 0x80000000 else 1
+        )
+        mounted = pygame.transform.rotozoom(mount, angle, 1.0)
+        result = (mounted, angle)
+        self._image_cache[key] = result
+        return result
 
     def _render_highlight_line(self, line, word, font):
         """One wrapped line as a surface, with the headword rendered in
@@ -2969,6 +3041,10 @@ class CardBrickApp:
             self.audio.play_effect(LINE_FEED_SFX, volume=volume)
         elif event == "page":
             self.audio.play_effect(PAGE_FEED_SFX, volume=volume)
+        elif event == "staple":
+            # Paper feed is intentionally subtle at its default 15%; the
+            # attachment impact needs a firmer transient to read as fastening.
+            self.audio.play_effect(STAPLE_SFX, volume=min(1.0, volume * 2.5))
 
     def _draw_roll(self, roll):
         # Reserve enough room for the largest active chassis. This prevents a
