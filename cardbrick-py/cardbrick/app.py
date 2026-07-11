@@ -854,10 +854,14 @@ class CardBrickApp:
                 headline = (
                     "Last sprint of the day!" if n == 1 else f"{n} sprints to go today"
                 )
-            headline = self._jp(headline, headline.replace("sprints to go today", "スプリント残り").replace("sprints today", "スプリント").replace("Last sprint of the day!", "今日の最後のスプリントです！").replace("Just one sprint today!", "今日は1スプリントです！"))
+            if self.language == "ja":
+                if status["cards_done"] == 0:
+                    headline = "今日は1回復習します" if n == 1 else f"今日は{n}回復習します"
+                else:
+                    headline = "今日の最後の復習です" if n == 1 else f"残り{n}回復習します"
             roll.feed(self.font_big.render(headline, True, FG))
             roll.feed_gap(8)
-            progress = self._jp(f"{status['cards_done']} / {status['goal_today']} cards done", f"{status['cards_done']} / {status['goal_today']} 枚完了")
+            progress = self._jp(f"{status['cards_done']} / {status['goal_today']} cards done", f"{status['goal_today']}枚中{status['cards_done']}枚完了")
             if status["goal_today"] < status["goal"]:
                 # Supply-limited (e.g. a fresh deck paced by
                 # daily_new_cards): say why the day is short.
@@ -868,12 +872,12 @@ class CardBrickApp:
             sprint_line = f"next sprint: {status['next_sprint_cards']} cards" + (
                 f" / about {minutes} min" if minutes else ""
             )
-            roll.feed(self.font_small.render(self._jp(sprint_line, f"次のスプリント：{status['next_sprint_cards']}枚" + (f" / 約{minutes}分" if minutes else "")), True, DIM))
+            roll.feed(self.font_small.render(self._jp(sprint_line, f"次の復習：{status['next_sprint_cards']}枚" + (f"（約{minutes}分）" if minutes else "")), True, DIM))
             if drill_cards:
                 roll.feed_gap(4)
                 roll.feed(
                     self.font_small.render(
-                        self._jp(f"Pattern drills ready too: {drill_cards} cards", f"パターンドリルも準備完了：{drill_cards}枚"),
+                        self._jp(f"Pattern drills ready too: {drill_cards} cards", f"文型練習も{drill_cards}枚準備完了"),
                         True,
                         DIM,
                     )
@@ -882,13 +886,13 @@ class CardBrickApp:
             roll.feed(self.font.render(self._jp("Press the A button to start!", "Aボタンで開始！"), True, GOOD))
         elif startable:
             # Only drill work remains (or exists): a tiny, honest day.
-            roll.feed(self.font_big.render(self._jp("Drill time!", "ドリルの時間です！"), True, FG))
+            roll.feed(self.font_big.render(self._jp("Drill time!", "文型練習の時間です！"), True, FG))
             roll.feed_gap(8)
             minutes = self.profile.get("drill_sprint_minutes")
             drill_line = f"next drill sprint: {drill_cards} cards" + (
                 f" / about {minutes} min" if minutes else ""
             )
-            roll.feed(self.font.render(self._jp(drill_line, f"次のドリル：{drill_cards}枚"), True, DIM))
+            roll.feed(self.font.render(self._jp(drill_line, f"次の文型練習：{drill_cards}枚"), True, DIM))
             roll.feed_gap(18)
             roll.feed(self.font.render(self._jp("Press the A button to start!", "Aボタンで開始！"), True, GOOD))
         elif bonus:
@@ -906,13 +910,17 @@ class CardBrickApp:
             if status["bonus_cards"]:
                 bonus_line = (f"Spare time? A bonus sprint of "
                               f"{status['bonus_cards']} cards is ready.")
+                if self.language == "ja":
+                    bonus_line = f"時間があれば、ボーナス復習{status['bonus_cards']}枚をどうぞ。"
             else:
                 bonus_line = (f"Spare time? A bonus drill sprint of "
                               f"{drill_bonus} cards is ready.")
+                if self.language == "ja":
+                    bonus_line = f"時間があれば、ボーナス文型練習{drill_bonus}枚をどうぞ。"
             roll.feed(self.font_small.render(bonus_line, True, DIM))
             roll.feed_gap(18)
             roll.feed(
-                self.font.render("A button = bonus sprint (totally optional!)", True, GOOD)
+                self.font.render(self._jp("A button = bonus sprint (totally optional!)", "Aボタンでボーナス復習（任意）"), True, GOOD)
             )
         else:
             roll.feed_gap(10)
@@ -928,7 +936,7 @@ class CardBrickApp:
         child choose one specific assigned deck, or all of them
         combined, for just this sitting."""
         available = self._resolve_available_decks()
-        entries = [(self._jp("All assigned decks", "割り当てられたすべてのデッキ"), None)] + [
+        entries = [(self._jp("All assigned decks", "割り当てられたすべての問題集"), None)] + [
             (name, [name]) for name in available
         ]
         # Due/new counts computed once up front, not per frame — this
@@ -950,8 +958,8 @@ class CardBrickApp:
             setup_roll = None
         rows = self._print_choice_page(
             roll,
-            self._jp("Choose a Deck", "デッキを選択"),
-            self._jp("Which deck do you want to study?", "どのデッキを学習しますか？"),
+            self._jp("Choose a Deck", "問題集を選択"),
+            self._jp("Which deck do you want to study?", "学習する内容を選んでください"),
             entries,
             counts,
         )
@@ -1009,7 +1017,7 @@ class CardBrickApp:
         available = self._resolve_available_categories()
         # Labels are prettified ("::" hierarchy, underscores) but the
         # filter value stays the raw tag the cards are matched against.
-        entries = [(self._jp("All assigned categories", "割り当てられたすべてのトピック"), None)] + [
+        entries = [(self._jp("All assigned categories", "すべての分野"), None)] + [
             (format_tag_label(name), [name]) for name in available
         ]
         # One batched call for the same reason as the deck picker: the
@@ -1029,8 +1037,8 @@ class CardBrickApp:
             setup_roll = None
         rows = self._print_choice_page(
             roll,
-            self._jp("Choose a Topic", "トピックを選択"),
-            self._jp("Want to focus on something specific?", "特定のトピックに集中しますか？"),
+            self._jp("Choose a Topic", "学習分野を選択"),
+            self._jp("Want to focus on something specific?", "重点的に練習する分野を選んでください"),
             entries,
             counts,
         )
@@ -1199,13 +1207,13 @@ class CardBrickApp:
         roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         text = self._truncate_to_width(
-            self.font_small, self._jp(f"TOPIC SELECTED: {label}", f"選択したトピック：{label}"), self.w - 170
+            self.font_small, self._jp(f"TOPIC SELECTED: {label}", f"選択した分野：{label}"), self.w - 170
         )
         roll.feed(self.font_small.render(text, True, GOOD), x=80)
 
     def _draw_category_select(self, entries, counts, index, top, visible):
         self._paper()
-        self._page_header("Choose a Topic", "Want to focus on something specific?")
+        self._page_header(self._jp("Choose a Topic", "学習分野を選択"), self._jp("Want to focus on something specific?", "重点的に練習する分野を選んでください"))
         y = 140
         for i in range(top, min(top + visible, len(entries))):
             label = entries[i][0]
@@ -1249,7 +1257,7 @@ class CardBrickApp:
                 setup_roll.update()
             self._paper(setup_roll)
             self._draw_roll(setup_roll)
-            self._footer("Topic selected", "Looking over to the card printer...")
+            self._footer(self._jp("Topic selected", "分野を選択しました"), self._jp("Looking over to the card printer...", "学習画面を準備しています…"))
             self.present()
             self.clock.tick(FPS)
 
@@ -1264,14 +1272,14 @@ class CardBrickApp:
             self.screen.fill(BG)
             self._draw_printer_view_at(setup_roll, old_x)
             self._draw_printer_view_at(review_roll, new_x)
-            self._footer("Topic selected", "Card printer ready")
+            self._footer(self._jp("Topic selected", "分野を選択しました"), self._jp("Card printer ready", "学習画面の準備完了"))
             self.present()
             self.clock.tick(FPS)
         return "REVIEW"
 
     def screen_review(self):
         if self._session_bonus:
-            self._sprint_label = "Bonus sprint"
+            self._sprint_label = self._jp("Bonus sprint", "ボーナス復習")
         else:
             # Drill sittings count their own tiny sprints; the label
             # says so, and the numbers come from the drill day, not
@@ -1287,7 +1295,7 @@ class CardBrickApp:
                 status["sprints_planned"] - status["sprints_remaining"] + 1,
                 status["sprints_planned"],
             )
-            word = "Drill sprint" if drill_sitting else "Sprint"
+            word = self._jp("Drill sprint", "文型練習") if drill_sitting else self._jp("Sprint", "復習")
             self._sprint_label = (
                 f"{word} {number}/{status['sprints_planned']}")
         session = StudySession(
@@ -2438,10 +2446,10 @@ class CardBrickApp:
     def screen_parent_menu(self):
         direction = self.profile.get("study_direction", "normal")
         entries = [
-            (self._jp("Import deck (.apkg)", "デッキをインポート (.apkg)"), "PARENT_IMPORT"),
-            (self._jp("Decks", "デッキ"), "PARENT_DECKS"),
+            (self._jp("Import deck (.apkg)", "問題集をインポート (.apkg)"), "PARENT_IMPORT"),
+            (self._jp("Decks", "問題集"), "PARENT_DECKS"),
             (self._jp("Categories", "カテゴリー"), "PARENT_CATEGORIES"),
-            (self._jp("Daily goal & sprints", "毎日の目標とスプリント"), "PARENT_LIMITS"),
+            (self._jp("Daily goal & sprints", "毎日の目標と復習"), "PARENT_LIMITS"),
             (self._jp("Paper feed sound", "紙送り音"), "PARENT_AUDIO"),
             (self._jp("Suspended cards", "停止中のカード"), "PARENT_SUSPENDED"),
             (self._jp("Progress", "進捗"), "PARENT_PROGRESS"),
