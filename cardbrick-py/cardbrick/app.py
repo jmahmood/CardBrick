@@ -936,7 +936,7 @@ class CardBrickApp:
         child choose one specific assigned deck, or all of them
         combined, for just this sitting."""
         available = self._resolve_available_decks()
-        entries = [(self._jp("All assigned decks", "割り当てられたすべてのデッキ"), None)] + [
+        entries = [(self._jp("All assigned decks", "割り当てられたすべての問題集"), None)] + [
             (name, [name]) for name in available
         ]
         # Due/new counts computed once up front, not per frame — this
@@ -958,8 +958,8 @@ class CardBrickApp:
             setup_roll = None
         rows = self._print_choice_page(
             roll,
-            self._jp("Choose a Deck", "デッキを選択"),
-            self._jp("Which deck do you want to study?", "どのデッキを学習しますか？"),
+            self._jp("Choose a Deck", "問題集を選択"),
+            self._jp("Which deck do you want to study?", "学習する内容を選んでください"),
             entries,
             counts,
         )
@@ -2446,8 +2446,8 @@ class CardBrickApp:
     def screen_parent_menu(self):
         direction = self.profile.get("study_direction", "normal")
         entries = [
-            (self._jp("Import deck (.apkg)", "デッキをインポート (.apkg)"), "PARENT_IMPORT"),
-            (self._jp("Decks", "デッキ"), "PARENT_DECKS"),
+            (self._jp("Import deck (.apkg)", "問題集をインポート (.apkg)"), "PARENT_IMPORT"),
+            (self._jp("Decks", "問題集"), "PARENT_DECKS"),
             (self._jp("Categories", "カテゴリー"), "PARENT_CATEGORIES"),
             (self._jp("Daily goal & sprints", "毎日の目標と復習"), "PARENT_LIMITS"),
             (self._jp("Paper feed sound", "紙送り音"), "PARENT_AUDIO"),
