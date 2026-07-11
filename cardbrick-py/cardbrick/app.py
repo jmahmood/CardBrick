@@ -854,10 +854,14 @@ class CardBrickApp:
                 headline = (
                     "Last sprint of the day!" if n == 1 else f"{n} sprints to go today"
                 )
-            headline = self._jp(headline, headline.replace("sprints to go today", "スプリント残り").replace("sprints today", "スプリント").replace("Last sprint of the day!", "今日の最後のスプリントです！").replace("Just one sprint today!", "今日は1スプリントです！"))
+            if self.language == "ja":
+                if status["cards_done"] == 0:
+                    headline = "今日は1スプリントです" if n == 1 else f"今日は{n}スプリントです"
+                else:
+                    headline = "今日の最後のスプリントです" if n == 1 else f"残り{n}スプリントです"
             roll.feed(self.font_big.render(headline, True, FG))
             roll.feed_gap(8)
-            progress = self._jp(f"{status['cards_done']} / {status['goal_today']} cards done", f"{status['cards_done']} / {status['goal_today']} 枚完了")
+            progress = self._jp(f"{status['cards_done']} / {status['goal_today']} cards done", f"{status['goal_today']}枚中{status['cards_done']}枚完了")
             if status["goal_today"] < status["goal"]:
                 # Supply-limited (e.g. a fresh deck paced by
                 # daily_new_cards): say why the day is short.
@@ -868,12 +872,12 @@ class CardBrickApp:
             sprint_line = f"next sprint: {status['next_sprint_cards']} cards" + (
                 f" / about {minutes} min" if minutes else ""
             )
-            roll.feed(self.font_small.render(self._jp(sprint_line, f"次のスプリント：{status['next_sprint_cards']}枚" + (f" / 約{minutes}分" if minutes else "")), True, DIM))
+            roll.feed(self.font_small.render(self._jp(sprint_line, f"次のスプリント：{status['next_sprint_cards']}枚" + (f"（約{minutes}分）" if minutes else "")), True, DIM))
             if drill_cards:
                 roll.feed_gap(4)
                 roll.feed(
                     self.font_small.render(
-                        self._jp(f"Pattern drills ready too: {drill_cards} cards", f"パターンドリルも準備完了：{drill_cards}枚"),
+                        self._jp(f"Pattern drills ready too: {drill_cards} cards", f"パターンドリルも{drill_cards}枚準備完了"),
                         True,
                         DIM,
                     )
@@ -906,13 +910,17 @@ class CardBrickApp:
             if status["bonus_cards"]:
                 bonus_line = (f"Spare time? A bonus sprint of "
                               f"{status['bonus_cards']} cards is ready.")
+                if self.language == "ja":
+                    bonus_line = f"時間があれば、ボーナススプリント{status['bonus_cards']}枚をどうぞ。"
             else:
                 bonus_line = (f"Spare time? A bonus drill sprint of "
                               f"{drill_bonus} cards is ready.")
+                if self.language == "ja":
+                    bonus_line = f"時間があれば、ボーナスドリル{drill_bonus}枚をどうぞ。"
             roll.feed(self.font_small.render(bonus_line, True, DIM))
             roll.feed_gap(18)
             roll.feed(
-                self.font.render("A button = bonus sprint (totally optional!)", True, GOOD)
+                self.font.render(self._jp("A button = bonus sprint (totally optional!)", "Aボタンでボーナススプリント（任意）"), True, GOOD)
             )
         else:
             roll.feed_gap(10)
