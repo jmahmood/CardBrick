@@ -1017,7 +1017,7 @@ class CardBrickApp:
         available = self._resolve_available_categories()
         # Labels are prettified ("::" hierarchy, underscores) but the
         # filter value stays the raw tag the cards are matched against.
-        entries = [(self._jp("All assigned categories", "割り当てられたすべてのトピック"), None)] + [
+        entries = [(self._jp("All assigned categories", "すべての分野"), None)] + [
             (format_tag_label(name), [name]) for name in available
         ]
         # One batched call for the same reason as the deck picker: the
@@ -1037,8 +1037,8 @@ class CardBrickApp:
             setup_roll = None
         rows = self._print_choice_page(
             roll,
-            self._jp("Choose a Topic", "トピックを選択"),
-            self._jp("Want to focus on something specific?", "特定のトピックに集中しますか？"),
+            self._jp("Choose a Topic", "学習分野を選択"),
+            self._jp("Want to focus on something specific?", "重点的に練習する分野を選んでください"),
             entries,
             counts,
         )
@@ -1207,13 +1207,13 @@ class CardBrickApp:
         roll.feed(self._rule_surface(), reveal=False)
         roll.feed_gap(10)
         text = self._truncate_to_width(
-            self.font_small, self._jp(f"TOPIC SELECTED: {label}", f"選択したトピック：{label}"), self.w - 170
+            self.font_small, self._jp(f"TOPIC SELECTED: {label}", f"選択した分野：{label}"), self.w - 170
         )
         roll.feed(self.font_small.render(text, True, GOOD), x=80)
 
     def _draw_category_select(self, entries, counts, index, top, visible):
         self._paper()
-        self._page_header("Choose a Topic", "Want to focus on something specific?")
+        self._page_header(self._jp("Choose a Topic", "学習分野を選択"), self._jp("Want to focus on something specific?", "重点的に練習する分野を選んでください"))
         y = 140
         for i in range(top, min(top + visible, len(entries))):
             label = entries[i][0]
@@ -1257,7 +1257,7 @@ class CardBrickApp:
                 setup_roll.update()
             self._paper(setup_roll)
             self._draw_roll(setup_roll)
-            self._footer("Topic selected", "Looking over to the card printer...")
+            self._footer(self._jp("Topic selected", "分野を選択しました"), self._jp("Looking over to the card printer...", "学習画面を準備しています…"))
             self.present()
             self.clock.tick(FPS)
 
@@ -1272,7 +1272,7 @@ class CardBrickApp:
             self.screen.fill(BG)
             self._draw_printer_view_at(setup_roll, old_x)
             self._draw_printer_view_at(review_roll, new_x)
-            self._footer("Topic selected", "Card printer ready")
+            self._footer(self._jp("Topic selected", "分野を選択しました"), self._jp("Card printer ready", "学習画面の準備完了"))
             self.present()
             self.clock.tick(FPS)
         return "REVIEW"
