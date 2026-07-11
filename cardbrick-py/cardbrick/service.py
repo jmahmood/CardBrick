@@ -45,7 +45,7 @@ DEFAULT_LIMITS = {
     # nothing here counts against the vocab goal.
     "drill_sprint_cards": 6,
     "drill_sprint_minutes": 5,
-    "drill_daily_new": 3,
+    "drill_daily_new": 6,
 }
 
 

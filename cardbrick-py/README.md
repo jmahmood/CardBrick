@@ -254,10 +254,12 @@ card.
 **Multiple-choice cards** show a cue plus three candidate sentences
 picked with **X / Y / B** — **A is deliberately not an option**, so
 it keeps meaning "I know it" everywhere (and can't be spammed).
-A correct pick rates Good, or Easy when answered within ~5 seconds;
-a wrong pick rates Again and re-prints the correct sentence with a
-short note on why the others are wrong (A continues). D-pad down
-before choosing is a "show me" bail-out: Again, same feedback.
+A correct pick rates Easy — recognition graduates immediately, with
+no same-session repeat (the pattern's production cards are the real
+consolidation); a wrong pick rates Again and re-prints the correct
+sentence with a short note on why the others are wrong (A continues).
+D-pad down before choosing is a "show me" bail-out: Again, same
+feedback.
 Option order is shuffled per card but stable across sessions.
 Keyboard note: the digit keys map to face buttons, so `1` (B) picks
 the third option and `3` (A) does nothing on these cards.
@@ -292,11 +294,13 @@ on-ramp:
   in the deck picker; "All assigned decks" and single vocab decks
   never serve them. The day ticket shows "Pattern drills ready: N
   cards" alongside the vocab plan — or "Drill time!" when only
-  drills remain.
+  drills remain. A finished drill day still offers a bonus drill
+  sprint (one more tiny sprint of extra patterns), so wanting to
+  study more never hits a locked door.
 - **Tiny sprints.** A drill sitting is capped by `drill_sprint_cards`
   (default **6**) and `drill_sprint_minutes` (default **5**), not the
   20-card vocab sprint. The review header says "Drill sprint 1/2".
-- **A fixed drip of new patterns.** `drill_daily_new` (default **3**)
+- **A fixed drip of new patterns.** `drill_daily_new` (default **6**)
   new patterns per day, never goal-paced — a fresh 500-pattern pack
   cannot flood anyone.
 - **Recognition before production, per pattern.** New drill cards

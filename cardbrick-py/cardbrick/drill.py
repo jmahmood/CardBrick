@@ -4,8 +4,8 @@ Pattern cards keep CardBrick's no-rating-buttons rule: the learner
 never picks Again/Hard/Good/Easy. For production-scaffold cards the
 phase at which "I know this" is pressed *is* the rating (the same
 ladder the vocab cards use); for multiple-choice cards the rating is
-derived from correctness and answer latency. Keeping the mappings
-here, out of app.py, makes them unit-testable without a display.
+derived from correctness. Keeping the mappings here, out of app.py,
+makes them unit-testable without a display.
 """
 
 import json
@@ -17,23 +17,17 @@ import random
 PHASE_RATING = {0: 4, 1: 3, 2: 2, 3: 1}
 MAX_PHASE = 3
 
-# A correct MCQ pick at or under this latency is promoted Good -> Easy;
-# no button ever asks the learner how well they knew it.
-MCQ_EASY_LATENCY_MS = 5000
-
-
-def mcq_rating(correct, elapsed_ms):
+def mcq_rating(correct, elapsed_ms=None):
     """FSRS rating for a multiple-choice answer.
 
-    Wrong (or bailed out with "show me") is Again regardless of speed.
-    Correct is Good, promoted to Easy when answered fast; an unknown
-    latency stays Good.
+    Wrong (or bailed out with "show me") is Again; correct is Easy —
+    recognition is a ramp stage, and a correct pick graduates
+    immediately instead of earning a same-session learning step (the
+    pattern's production cards are the real consolidation). Latency
+    is logged with the review but never grades: reading three
+    sentences takes as long as it takes.
     """
-    if not correct:
-        return 1
-    if elapsed_ms is not None and elapsed_ms <= MCQ_EASY_LATENCY_MS:
-        return 4
-    return 3
+    return 4 if correct else 1
 
 
 def mcq_option_order(card_id, n=3):

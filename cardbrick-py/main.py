@@ -104,7 +104,7 @@ def build_parser():
                                 "(default 5, 0 = no limit)")
     p_profile.add_argument("--drill-daily-new", type=int,
                            help="Fixed drip of new drill patterns per "
-                                "day (default 3, 0 = none)")
+                                "day (default 6, 0 = none)")
     p_profile.add_argument("--study-ahead-days", type=int,
                            help="How many days ahead a sprint may pull "
                                 "soon-due cards from (default 1)")

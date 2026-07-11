@@ -70,15 +70,19 @@ def test_drill_sittings_serve_only_pattern_cards(
 
 def test_new_patterns_arrive_as_a_fixed_drip(
         tmp_path, storage, service, profile):
+    storage.update_profile(profile["id"], drill_daily_new=3)
+    profile = storage.get_profile(profile["id"])
     import_drill_items(tmp_path, storage, service,
                        many_production_items(10))
     queue = service.get_due_cards(profile=profile,
                                   deck_filter=[DRILL_DECK])
-    assert len(queue) == 3  # drill_daily_new default, not goal-paced
+    assert len(queue) == 3  # the drip, not goal-paced
 
 
 def test_drip_resets_at_midnight(tmp_path, storage, service, profile,
                                  clock):
+    storage.update_profile(profile["id"], drill_daily_new=3)
+    profile = storage.get_profile(profile["id"])
     import_drill_items(tmp_path, storage, service,
                        many_production_items(10))
     for row in service.get_due_cards(profile=profile,
@@ -145,7 +149,7 @@ def test_vocab_reviews_never_consume_the_drill_drip(
         service.answer_card(card_id, 3)
     queue = service.get_due_cards(profile=profile,
                                   deck_filter=[DRILL_DECK])
-    assert len(queue) == 3  # full drip still available
+    assert len(queue) == 6  # full default drip still available
 
 
 def test_drill_sprint_status_reports_the_drill_day(
@@ -154,9 +158,29 @@ def test_drill_sprint_status_reports_the_drill_day(
                        many_production_items(10))
     status = service.sprint_status(profile=profile,
                                    deck_filter=[DRILL_DECK])
-    assert status["goal_today"] == 3  # the drip is the whole drill day
-    assert status["next_sprint_cards"] == 3
+    assert status["goal_today"] == 6  # the drip is the whole drill day
+    assert status["next_sprint_cards"] == 6
     assert status["sprints_remaining"] == 1
+
+
+def test_finished_drill_day_still_offers_a_bonus_sprint(
+        tmp_path, storage, service, profile):
+    """Wanting to study more never hits a locked door: once the drill
+    day is done, the drill world reports bonus cards (extra new
+    patterns, one tiny sprint's worth) exactly like the vocab bonus."""
+    import_drill_items(tmp_path, storage, service,
+                       many_production_items(20))
+    for row in service.get_due_cards(profile=profile,
+                                     deck_filter=[DRILL_DECK]):
+        service.answer_card(row["id"], 4)  # clean Easy day, no repeats
+    status = service.sprint_status(profile=profile,
+                                   deck_filter=[DRILL_DECK])
+    assert status["next_sprint_cards"] == 0  # day done...
+    assert status["bonus_cards"] == 6  # ...but a bonus sprint is ready
+    bonus_queue = service.get_due_cards(
+        profile=profile, deck_filter=[DRILL_DECK], bonus=True)
+    assert len(bonus_queue) == 6
+    assert all(row["reps"] == 0 for row in bonus_queue)
 
 
 # -- recognition before production --------------------------------------------
@@ -200,7 +224,7 @@ def test_picker_counts_split_the_worlds(tmp_path, storage, service,
         [(None, None), ([DRILL_DECK], None), (["Spanish"], None)],
         profile=profile)
     assert counts[0] == (0, 1)  # all-decks: the one (new) vocab card,
-    assert counts[1] == (0, 3)  # drills excluded; drill deck: the drip
+    assert counts[1] == (0, 6)  # drills excluded; drill deck: the drip
     assert counts[2] == (0, 1)
 
 
@@ -222,4 +246,4 @@ def test_new_profiles_get_drill_defaults(storage):
     profile = storage.ensure_default_profile("Maya")
     assert profile["drill_sprint_cards"] == 6
     assert profile["drill_sprint_minutes"] == 5
-    assert profile["drill_daily_new"] == 3
+    assert profile["drill_daily_new"] == 6

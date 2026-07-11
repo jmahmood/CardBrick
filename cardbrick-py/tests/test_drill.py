@@ -17,17 +17,12 @@ def test_mcq_wrong_is_again_regardless_of_speed():
     assert drill.mcq_rating(False, None) == 1
 
 
-def test_mcq_correct_fast_is_easy():
-    assert drill.mcq_rating(True, drill.MCQ_EASY_LATENCY_MS) == 4
+def test_mcq_correct_is_easy_regardless_of_speed():
+    # Recognition graduates immediately: a correct pick never earns a
+    # same-session learning step, however long the reading took.
     assert drill.mcq_rating(True, 0) == 4
-
-
-def test_mcq_correct_slow_is_good():
-    assert drill.mcq_rating(True, drill.MCQ_EASY_LATENCY_MS + 1) == 3
-
-
-def test_mcq_correct_unknown_latency_is_good():
-    assert drill.mcq_rating(True, None) == 3
+    assert drill.mcq_rating(True, 100000) == 4
+    assert drill.mcq_rating(True, None) == 4
 
 
 def test_mcq_option_order_is_deterministic_per_card():

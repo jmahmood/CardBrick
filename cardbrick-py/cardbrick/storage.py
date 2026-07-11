@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS child_profiles (
     study_ahead_enabled  INTEGER NOT NULL DEFAULT 1,
     drill_sprint_cards   INTEGER NOT NULL DEFAULT 6,
     drill_sprint_minutes INTEGER NOT NULL DEFAULT 5,
-    drill_daily_new      INTEGER NOT NULL DEFAULT 3
+    drill_daily_new      INTEGER NOT NULL DEFAULT 6
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck);
@@ -174,7 +174,7 @@ _PROFILE_UPGRADES = {
     # (a production card takes minutes, not seconds).
     "drill_sprint_cards": "INTEGER NOT NULL DEFAULT 6",
     "drill_sprint_minutes": "INTEGER NOT NULL DEFAULT 5",
-    "drill_daily_new": "INTEGER NOT NULL DEFAULT 3",
+    "drill_daily_new": "INTEGER NOT NULL DEFAULT 6",
 }
 _VOCAB_CARD_UPGRADES = {
     "word_en": "TEXT",

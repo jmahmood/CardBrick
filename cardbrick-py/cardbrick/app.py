@@ -658,17 +658,20 @@ class CardBrickApp:
         active = self.profile["active_categories"]
         return self.storage.all_tags() if active is None else list(active)
 
-    def _drill_ticket_cards(self):
-        """Next-sprint drill count across the profile's drill decks (0
-        when none are assigned or nothing is due): pattern drills live
-        outside the vocab goal, so the day ticket asks separately."""
+    def _drill_ticket_status(self):
+        """(next_sprint_cards, bonus_cards) across the profile's drill
+        decks — (0, 0) when none are assigned. Pattern drills live
+        outside the vocab goal, so the day ticket asks separately; the
+        bonus count keeps the A button alive after the drill day is
+        done ("study more" pulls the next patterns, one tiny sprint at
+        a time, same as the vocab bonus)."""
         drill_decks = [name for name in self._resolve_available_decks()
                        if self.service.is_drill_filter([name])]
         if not drill_decks:
-            return 0
-        return self.service.sprint_status(
-            profile=self.profile,
-            deck_filter=drill_decks)["next_sprint_cards"]
+            return 0, 0
+        status = self.service.sprint_status(profile=self.profile,
+                                            deck_filter=drill_decks)
+        return status["next_sprint_cards"], status["bonus_cards"]
 
     def _next_after_deck_choice(self):
         """Where to go once the deck for this sitting is settled: the
@@ -688,16 +691,20 @@ class CardBrickApp:
         available_decks = self._resolve_available_decks()
         # Pattern drill decks live outside the vocab day: their work is
         # reachable through the deck picker and keeps the A button
-        # alive even when the vocab goal is done (or absent).
-        drill_cards = self._drill_ticket_cards()
+        # alive even when the vocab goal is done (or absent) — and a
+        # finished drill day still offers a bonus drill sprint, so a
+        # keen learner is never locked out until tomorrow.
+        drill_cards, drill_bonus = self._drill_ticket_status()
         startable = status["next_sprint_cards"] > 0 or drill_cards > 0
-        bonus = not startable and status["bonus_cards"] > 0
+        bonus = not startable and (status["bonus_cards"] > 0
+                                   or drill_bonus > 0)
 
         roll = self._child_start_handoff_roll
         self._child_start_handoff_roll = None
         if roll is None:
             roll = self._build_child_start_roll(status, startable, bonus,
-                                                drill_cards=drill_cards)
+                                                drill_cards=drill_cards,
+                                                drill_bonus=drill_bonus)
         if self._ticket_printed and not hasattr(roll, "_child_start_view_target"):
             roll.finish()
         self._ticket_printed = True
@@ -748,7 +755,7 @@ class CardBrickApp:
             self.clock.tick(FPS)
 
     def _build_child_start_roll(self, status, startable, bonus,
-                                drill_cards=0):
+                                drill_cards=0, drill_bonus=0):
         # The day's job ticket, printed onto the roll once on first
         # entry this run; later visits snap instantly so navigation
         # never animates in the child's way.
@@ -822,14 +829,13 @@ class CardBrickApp:
                 self.font.render(f"{status['cards_done']} cards done today", True, DIM)
             )
             roll.feed_gap(4)
-            roll.feed(
-                self.font_small.render(
-                    f"Spare time? A bonus sprint of "
-                    f"{status['bonus_cards']} cards is ready.",
-                    True,
-                    DIM,
-                )
-            )
+            if status["bonus_cards"]:
+                bonus_line = (f"Spare time? A bonus sprint of "
+                              f"{status['bonus_cards']} cards is ready.")
+            else:
+                bonus_line = (f"Spare time? A bonus drill sprint of "
+                              f"{drill_bonus} cards is ready.")
+            roll.feed(self.font_small.render(bonus_line, True, DIM))
             roll.feed_gap(18)
             roll.feed(
                 self.font.render("A button = bonus sprint (totally optional!)", True, GOOD)
@@ -2123,11 +2129,13 @@ class CardBrickApp:
             return "CHILD_START"
 
         status = self.service.sprint_status(profile=self.profile)
-        drill_cards = self._drill_ticket_cards()
+        drill_cards, drill_bonus = self._drill_ticket_status()
         startable = status["next_sprint_cards"] > 0 or drill_cards > 0
-        bonus = not startable and status["bonus_cards"] > 0
+        bonus = not startable and (status["bonus_cards"] > 0
+                                   or drill_bonus > 0)
         start_roll = self._build_child_start_roll(status, startable, bonus,
-                                                  drill_cards=drill_cards)
+                                                  drill_cards=drill_cards,
+                                                  drill_bonus=drill_bonus)
         start_roll.finish()
         self._ticket_printed = True
 
