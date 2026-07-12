@@ -67,6 +67,7 @@ from datetime import datetime
 import pygame
 
 from . import __version__, drill
+from .audio import MIXER_SETTINGS
 from .bootlog import log_display_diagnostics, log_pygame_versions
 from .importer import ApkgError, import_apkg
 from .input_map import (
@@ -87,6 +88,20 @@ from .textutil import format_tag_label, wrap_text
 log = logging.getLogger(__name__)
 
 FPS = 30
+
+# Idle polling ladder (PERFORMANCE.md Phase 2). A truly blocking
+# pygame.event.wait() is not an option: SDL only implements real
+# blocking on desktop backends (X11/Wayland/Cocoa/Windows); on the
+# handheld's kmsdrm/mali backend it falls back to an internal ~1 kHz
+# poll loop that costs MORE than ticking at 30 Hz. So idle screens
+# keep polling, just slower: full rate right after activity so input
+# stays snappy, 10 Hz once the screen has been static for a couple of
+# seconds, 4 Hz once the device has clearly been set down.
+IDLE_SLOW_AFTER_S = 2.0
+IDLE_DEEP_AFTER_S = 30.0
+IDLE_WAIT_MS = 100
+IDLE_DEEP_WAIT_MS = 250
+
 DEFAULT_LOGICAL_SIZE = (640, 480)
 DEFAULT_FONT_SIZES = (38, 26, 18)
 RGB30_FONT_SIZES = (40, 30, 25)
@@ -147,6 +162,43 @@ SYNC_DEVICE_NAMES = (
     ("Maysa", "maysa"),
     ("Zak", "zak"),
 )
+
+
+class FrameGate:
+    """Repaint gate for screen loops (see PERFORMANCE.md).
+
+    Screens are static almost all of the time — a flashcard app is
+    mostly a child reading — so repainting the full canvas at 30 FPS
+    burns battery for identical frames. Each loop asks the gate before
+    drawing: it says yes when the frame is dirty (input arrived, the
+    paper roll is animating) and otherwise once a second as a safety
+    heartbeat, mirroring the review screen's original needs_draw
+    pattern.
+
+    The gate is wall-clock based (not frame-counted) because idle
+    loops slow their polling rate (_idle_tick): a heartbeat must mean
+    "about a second" regardless of how fast the loop is spinning.
+    """
+
+    def __init__(self, heartbeat_s=1.0):
+        self._heartbeat_s = heartbeat_s
+        self._last_draw = None  # None -> first tick always draws
+        self._last_dirty = time.monotonic()
+
+    def tick(self, dirty=False):
+        """True when this iteration should repaint."""
+        now = time.monotonic()
+        if dirty:
+            self._last_dirty = now
+        if dirty or self._last_draw is None \
+                or now - self._last_draw >= self._heartbeat_s:
+            self._last_draw = now
+            return True
+        return False
+
+    def idle_for(self):
+        """Seconds since the screen last had a dirty (active) frame."""
+        return time.monotonic() - self._last_dirty
 
 
 def _friendly_sync_name(value):
@@ -419,7 +471,18 @@ class CardBrickApp:
         self.input = InputTranslator(self.input_map)
         self._held_inputs = {}  # input source -> semantic currently held
 
+        if getattr(pygame, "mixer", None):
+            # pygame.init() opens the audio device implicitly; make sure
+            # it uses the cheap mixer settings (an open device costs CPU
+            # even in silence — see PERFORMANCE.md). Usually the
+            # AudioPlayer's mixer backend already opened it this way and
+            # this is a no-op.
+            pygame.mixer.pre_init(**MIXER_SETTINGS)
         pygame.init()
+        if self.audio.backend.name != "mixer" and getattr(pygame, "mixer", None):
+            # Audio goes through a CLI player or is disabled: don't keep
+            # an ALSA device open that the app will never play through.
+            pygame.mixer.quit()
         log_pygame_versions()
         ensure_font_support()
         self.w = int(settings.get("logical_width", DEFAULT_LOGICAL_SIZE[0]))
@@ -648,6 +711,24 @@ class CardBrickApp:
         self._joysticks[joy.get_instance_id()] = joy
         return joy
 
+    def _idle_tick(self, gate):
+        """Pace a loop iteration that drew nothing.
+
+        Descends the idle ladder (see IDLE_* constants) based on how
+        long the screen has been static. A held button pins full rate:
+        hold-to-undo and similar timers need 30 Hz sampling.
+        """
+        idle = gate.idle_for()
+        if self._held_inputs or idle < IDLE_SLOW_AFTER_S:
+            self.clock.tick(FPS)
+        elif idle < IDLE_DEEP_AFTER_S:
+            pygame.time.wait(IDLE_WAIT_MS)
+        else:
+            pygame.time.wait(IDLE_DEEP_WAIT_MS)
+        # An open-but-silent audio device costs real CPU; let it go
+        # once nothing has been audible for a while.
+        self.audio.release_if_idle()
+
     def poll(self):
         """Next semantic action, or None.
 
@@ -828,6 +909,7 @@ class CardBrickApp:
         if not hasattr(roll, "_child_start_total"):
             roll._child_start_total = roll._child_start_view_target + roll.print_y
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action and roll.busy:
@@ -857,6 +939,9 @@ class CardBrickApp:
                     self._category_select_handoff_roll = roll
                 return next_state
 
+            if not gate.tick(bool(action) or roll.busy):
+                self._idle_tick(gate)
+                continue
             roll.update()
             self._paper(roll)
             self._draw_roll(roll)
@@ -1010,6 +1095,7 @@ class CardBrickApp:
             self._scroll_choice_to_index(roll, rows, index)
         choice_aligned = setup_roll is None
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action and roll.printing_busy:
@@ -1037,6 +1123,9 @@ class CardBrickApp:
             if not roll.printing_busy and not choice_aligned:
                 self._scroll_choice_to_index(roll, rows, index)
                 choice_aligned = True
+            if not gate.tick(bool(action) or roll.busy):
+                self._idle_tick(gate)
+                continue
             if roll.busy:
                 roll.update()
             self._paper(roll)
@@ -1089,6 +1178,7 @@ class CardBrickApp:
             self._scroll_choice_to_index(roll, rows, index)
         choice_aligned = setup_roll is None
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action and roll.printing_busy:
@@ -1117,6 +1207,9 @@ class CardBrickApp:
             if not roll.printing_busy and not choice_aligned:
                 self._scroll_choice_to_index(roll, rows, index)
                 choice_aligned = True
+            if not gate.tick(bool(action) or roll.busy):
+                self._idle_tick(gate)
+                continue
             if roll.busy:
                 roll.update()
             self._paper(roll)
@@ -1384,7 +1477,7 @@ class CardBrickApp:
         audio_status = None
         menu = None  # action-menu overlay index, or None when closed
         needs_draw = True
-        heartbeat = 0
+        gate = FrameGate()
         tear_next_page = False
         up_hold_started = None
         up_hold_undo_fired = False
@@ -1971,13 +2064,12 @@ class CardBrickApp:
                 continue
 
             # The screen is static between inputs: redraw only while
-            # the roll is feeding or when something happened (plus a
-            # 1 s heartbeat as a safety net).
+            # the roll is feeding or when something happened (plus the
+            # gate's 1 s heartbeat as a safety net).
             if roll.busy:
                 roll.update()
                 needs_draw = True
-            heartbeat += 1
-            if needs_draw or heartbeat >= FPS:
+            if gate.tick(needs_draw):
                 self._draw_review(
                     flipped,
                     menu,
@@ -1990,8 +2082,10 @@ class CardBrickApp:
                     mcq_result=mcq_result,
                 )
                 needs_draw = False
-                heartbeat = 0
-            self.clock.tick(FPS)
+            if roll.busy:
+                self.clock.tick(FPS)
+            else:
+                self._idle_tick(gate)
 
     def _draw_review(self, flipped, menu, phase, vocab, known_confirmation,
                      roll, pattern=None, mcq_result=None, teach=False):
@@ -2286,6 +2380,7 @@ class CardBrickApp:
         roll.feed_gap(6)
         roll.feed_perf()
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action and roll.busy:
@@ -2307,6 +2402,9 @@ class CardBrickApp:
                 self._start_printer_handoff_roll = roll
                 return "START_PRINTER_HANDOFF"
 
+            if not gate.tick(bool(action) or roll.busy):
+                self._idle_tick(gate)
+                continue
             roll.update()
             self._paper(roll)
             self._draw_roll(roll)
@@ -2388,6 +2486,7 @@ class CardBrickApp:
             roll.feed_page()
             roll.feed(self._calendar_sheet(year, month, counts, today), reveal=False)
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action and roll.busy:
@@ -2404,6 +2503,9 @@ class CardBrickApp:
                 if (year, month) != (today.year, today.month):
                     show_month(today.year, today.month)
 
+            if not gate.tick(bool(action) or roll.busy):
+                self._idle_tick(gate)
+                continue
             roll.update()
             self._paper(roll)
             self._draw_roll(roll)
@@ -2513,6 +2615,7 @@ class CardBrickApp:
             notice = "No decks yet — copy an .apkg to the data folder and use Import."
         # Leave room for the notice lines under the list when it shows.
         visible = 6 if notice else 7
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -2536,6 +2639,9 @@ class CardBrickApp:
                 return target
             top = min(max(top, index - visible + 1), index)
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._paper()
             self._page_header(self._jp("Parent Mode", "保護者モード"), f"Profile: {self.profile['name']}")
             y = 124
@@ -2561,8 +2667,12 @@ class CardBrickApp:
              "PARENT_SYNC_RESTORE"),
             (self._jp("Back", "戻る"), "PARENT_MENU"),
         )
+        # Read once and refresh after sync actions — a per-frame read
+        # would hit the SD card 30 times a second for a file that only
+        # changes when this screen itself runs a sync.
+        status = SyncState(self.paths.data_dir).data
+        gate = FrameGate()
         while True:
-            status = SyncState(self.paths.data_dir).data
             action = self.poll()
             if action in ("start", "south_button", "select"):
                 return "PARENT_MENU"
@@ -2583,6 +2693,9 @@ class CardBrickApp:
                 message = self._run_parent_sync(force_backup=target == "BACKUP")
                 status = SyncState(self.paths.data_dir).data
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._draw_parent_sync(status, index, message)
             self.present()
             self.clock.tick(FPS)
@@ -2593,6 +2706,7 @@ class CardBrickApp:
         identities = [identity for _, identity in SYNC_DEVICE_NAMES]
         index = identities.index(current) if current in identities else 0
         message = None
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -2608,6 +2722,9 @@ class CardBrickApp:
                 except (OSError, SyncError) as exc:
                     message = "Could not save device name: %s" % exc
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._draw_parent_sync_name(SYNC_DEVICE_NAMES, index, current, message)
             self.present()
             self.clock.tick(FPS)
@@ -2665,6 +2782,7 @@ class CardBrickApp:
             message = "Could not list backups: %s" % exc
         confirmed = False
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -2687,6 +2805,9 @@ class CardBrickApp:
                         message = "Restore download failed: %s" % exc
                         confirmed = False
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._draw_parent_sync_restore(latest, confirmed, message)
             self.present()
             self.clock.tick(FPS)
@@ -2820,6 +2941,7 @@ class CardBrickApp:
         files = self._scan_apkg_files()
         index = 0
         message = None
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -2844,6 +2966,9 @@ class CardBrickApp:
                     message = f"Import failed: {exc}"
                     log.error("import %s failed: %s", files[index], exc)
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._draw_import(files, index, message)
             self.present()
             self.clock.tick(FPS)
@@ -2915,6 +3040,7 @@ class CardBrickApp:
             )
             self._reload_profile()
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -2937,6 +3063,9 @@ class CardBrickApp:
                         selected.add(item)
             top = min(max(top, index - visible + 1), index)
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._paper()
             self._page_header(title, subtitle)
             y = 124
@@ -2977,6 +3106,7 @@ class CardBrickApp:
         ]
         values = {key: self.profile[key] for _, key, _, _ in fields}
         index = 0
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -2992,6 +3122,9 @@ class CardBrickApp:
                 step = {"dpad_left": -1, "dpad_right": 1, "l1": -10, "r1": 10}[action]
                 values[key] = min(max(values[key] + step, lo), hi)
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._paper()
             sprint_size = max(values["session_card_limit"], 1)
             sprints = -(-values["daily_goal_cards"] // sprint_size)
@@ -3022,6 +3155,7 @@ class CardBrickApp:
             self.settings.set("paper_feed_sfx_enabled", enabled)
             self.settings.set("paper_feed_sfx_volume", volume / 100)
 
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -3043,6 +3177,9 @@ class CardBrickApp:
                 volume = min(max(volume + step, 0), 100)
                 self.audio.play_effect(LINE_FEED_SFX, volume=volume / 100)
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._paper()
             self._page_header("Paper Feed Sound", "Tick and page-feed whirr")
             rows = [
@@ -3062,6 +3199,7 @@ class CardBrickApp:
     def screen_parent_suspended(self):
         index, top, visible = 0, 0, 7
         cards = self.storage.suspended_cards()
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "select"):
@@ -3078,6 +3216,9 @@ class CardBrickApp:
             index = min(index, max(len(cards) - 1, 0))
             top = min(max(top, index - visible + 1), index) if cards else 0
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._paper()
             self._page_header("Suspended Cards")
             if not cards:
@@ -3098,11 +3239,15 @@ class CardBrickApp:
         totals = self.service.recent_daily_totals(7)
         suspended = len(self.storage.suspended_cards())
         total_cards = self._card_count()
+        gate = FrameGate()
         while True:
             action = self.poll()
             if action in ("start", "south_button", "east_button", "select"):
                 return "PARENT_MENU"
 
+            if not gate.tick(bool(action)):
+                self._idle_tick(gate)
+                continue
             self._paper()
             self._page_header(
                 "Progress",

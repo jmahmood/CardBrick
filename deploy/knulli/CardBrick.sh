@@ -276,6 +276,22 @@ if [ ! -f "${CARD_BRICK_DATA_DIR}/.smoke-ok" ] && [ "$#" -eq 0 ]; then
     fi
 fi
 
+# Tool passthrough: a .py path as the first argument runs that script
+# on the runtime interpreter with everything already set up (squashfs
+# mount, PYTHONHOME, SDL drivers). Main use: the on-device perf A/B
+# from cardbrick-py/PERFORMANCE.md —
+#   ./CardBrick.sh scripts/perf_probe.py --real-display --no-gate
+#   ./CardBrick.sh scripts/perf_probe.py --real-display
+# (cwd is cardbrick-py/, so relative script paths resolve from there.)
+case "${1:-}" in
+    *.py)
+        TOOL_SCRIPT="$1"
+        shift
+        "$PYTHON" "$TOOL_SCRIPT" "$@" 2>&1 | tee -a "$LAUNCH_LOG"
+        exit "${PIPESTATUS[0]}"
+        ;;
+esac
+
 if [ "$#" -gt 0 ]; then
     # Passthrough mode (e.g. --smoke-test over SSH). Show output on the
     # terminal AND keep it in the log.

@@ -109,6 +109,12 @@ $SCP ${SCP_FLAGS[@]+"${SCP_FLAGS[@]}"} -q \
 $SCP ${SCP_FLAGS[@]+"${SCP_FLAGS[@]}"} -q \
     "${APP_SRC}/cardbrick/"*.py \
     "${HOST}:${DEST}/cardbrick-py/cardbrick/"
+# Dev tools (perf probe etc.) ride along — small, and CardBrick.sh can
+# run them on the bundled interpreter (see cardbrick-py/PERFORMANCE.md).
+run_remote "mkdir -p '${DEST}/cardbrick-py/scripts'"
+$SCP ${SCP_FLAGS[@]+"${SCP_FLAGS[@]}"} -q \
+    "${APP_SRC}/scripts/"*.py \
+    "${HOST}:${DEST}/cardbrick-py/scripts/"
 
 # Stale bytecode is harmless (CPython revalidates against the source),
 # but clearing it keeps the on-device tree clean and rules it out when

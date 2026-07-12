@@ -196,3 +196,37 @@ def test_command_sound_effect_volume_uses_scaled_wav(tmp_path):
     with wave.open(scaled_path, "rb") as wf:
         frames = wf.readframes(wf.getnframes())
     assert struct.unpack("<hh", frames) == (2500, -2500)
+
+
+def test_mixer_closes_after_silence_and_reopens(tmp_path):
+    """PERFORMANCE.md: an open-but-silent audio device costs real CPU
+    (8.6% measured on-device), so the mixer backend must release it
+    after silence and reopen transparently on the next play."""
+    import pytest
+
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    pygame = pytest.importorskip("pygame")
+    from cardbrick.audio import _MixerBackend
+    try:
+        backend = _MixerBackend()
+    except Exception as exc:  # noqa: BLE001 - optional module/device
+        pytest.skip(f"pygame.mixer unavailable here: {exc}")
+    try:
+        assert pygame.mixer.get_init()
+
+        # Recent activity: the device stays open.
+        backend.release_if_idle(idle_s=3600)
+        assert pygame.mixer.get_init()
+
+        # Long silence: the device is released.
+        backend._last_active -= 7200
+        backend.release_if_idle(idle_s=3600)
+        assert not pygame.mixer.get_init()
+
+        # Next play reopens it transparently.
+        clip = tmp_path / "tick.wav"
+        write_wav(clip, [3000, -3000, 3000, -3000])
+        assert backend.play_effect(str(clip)) is True
+        assert pygame.mixer.get_init()
+    finally:
+        pygame.mixer.quit()

@@ -27,10 +27,25 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import wave
 import struct
 
 log = logging.getLogger(__name__)
+
+# Mixer device settings (PERFORMANCE.md). 48000 Hz matches the
+# handheld's DAC (/proc/asound hw_params: rate 48000, period 1024) —
+# opening at 44100 made SDL resample every sample of every callback,
+# which is where most of the measured 8.6%-CPU-while-silent went; ALSA
+# clamps the period size anyway, so a bigger buffer alone didn't help.
+# SDL_mixer converts each file once at load, so 44.1 kHz media still
+# plays fine.
+MIXER_SETTINGS = {"frequency": 48000, "size": -16, "channels": 2,
+                  "buffer": 2048}
+# Close the audio device once nothing has been audible for this long;
+# it reopens transparently on the next play. An open device costs CPU
+# (and battery) even in silence.
+AUDIO_IDLE_CLOSE_S = 10.0
 
 # name, argv prefix, extensions handled (None = anything)
 _CLI_PLAYERS = [
@@ -51,15 +66,55 @@ class _MixerBackend:
         import pygame
         if not getattr(pygame, "mixer", None):
             raise RuntimeError("pygame built without mixer module")
-        pygame.mixer.init()  # raises pygame.error if SDL_mixer/device bad
+        self._pygame = pygame
+        # raises pygame.error if SDL_mixer/device bad
+        pygame.mixer.init(**MIXER_SETTINGS)
         self._music = pygame.mixer.music
         self._sounds = {}
         self._sound_cls = pygame.mixer.Sound
         self._error = pygame.error
+        self._last_active = time.monotonic()
         log.info("audio: pygame.mixer initialised: %s",
                  pygame.mixer.get_init())
 
+    def _ensure_ready(self):
+        """Reopen the device if release_if_idle() closed it."""
+        if self._pygame.mixer.get_init():
+            return True
+        try:
+            self._pygame.mixer.init(**MIXER_SETTINGS)
+        except self._error as exc:
+            log.warning("mixer could not reopen audio device: %s", exc)
+            return False
+        # Sound objects don't outlive a device session.
+        self._sounds.clear()
+        self._sound_cls = self._pygame.mixer.Sound
+        self._music = self._pygame.mixer.music
+        log.debug("audio: mixer reopened")
+        return True
+
+    def release_if_idle(self, idle_s=AUDIO_IDLE_CLOSE_S):
+        """Close the audio device after ``idle_s`` of silence.
+
+        An open device runs its mixing callback (and costs CPU) even
+        with nothing to play; screens call this from their idle path.
+        """
+        mixer = self._pygame.mixer
+        if not mixer.get_init():
+            return
+        if mixer.get_busy() or self._music.get_busy():
+            self._last_active = time.monotonic()
+            return
+        if time.monotonic() - self._last_active < idle_s:
+            return
+        mixer.quit()
+        self._sounds.clear()
+        log.debug("audio: mixer closed after %.0fs of silence", idle_s)
+
     def play(self, path):
+        if not self._ensure_ready():
+            return False
+        self._last_active = time.monotonic()
         try:
             self._music.stop()
             self._music.load(path)
@@ -70,6 +125,9 @@ class _MixerBackend:
             return False
 
     def play_effect(self, path, volume=1.0):
+        if not self._ensure_ready():
+            return False
+        self._last_active = time.monotonic()
         try:
             sound = self._sounds.get(path)
             if sound is None:
@@ -83,6 +141,8 @@ class _MixerBackend:
             return False
 
     def stop(self):
+        if not self._pygame.mixer.get_init():
+            return
         try:
             self._music.stop()
         except self._error:
@@ -338,6 +398,12 @@ class AudioPlayer:
 
     def stop(self):
         self.backend.stop()
+
+    def release_if_idle(self, idle_s=AUDIO_IDLE_CLOSE_S):
+        """Let the backend close its audio device after silence."""
+        release = getattr(self.backend, "release_if_idle", None)
+        if release is not None:
+            release(idle_s)
 
 
 def _scaled_wav(path, volume):
