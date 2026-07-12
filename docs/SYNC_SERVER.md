@@ -154,7 +154,12 @@ choose Jawaad, Yumiko, Maria, Nadia, Maysa, or Zak. The app stores the
 lowercase form as the server identity. Then choose **Sync now**; the same
 screen shows the last successful sync and backup, installed package count,
 and the most recent error. **Force backup** uploads a fresh archive without
-fetching assigned content.
+fetching assigned content. **Restore latest backup** shows the newest verified
+server backup for that device, requires two confirmations, downloads and
+checks its SHA-256, then closes CardBrick before replacing the local data.
+The confirmation screen warns that CardBrick closes after restoration and
+must be relaunched. The previous data directory is retained as a timestamped
+rollback.
 
 The equivalent CLI setup remains available for troubleshooting or custom
 device identities:
@@ -203,6 +208,10 @@ Restore verifies the SQLite database before replacing data and keeps the
 previous data directory as a timestamped rollback. The current device name
 and server address survive a restore, which permits restoring a learner onto
 replacement hardware.
+
+The same operation is available without SSH from **Parent Mode → Server sync
+→ Restore latest backup**. CardBrick exits after restoring; launch it again to
+use the restored decks and study progress.
 
 ## Operational checks
 

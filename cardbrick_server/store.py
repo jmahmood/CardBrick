@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,12 +90,20 @@ class Store:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
 
+    @contextmanager
     def connect(self):
         conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def touch_device(self, name, app_version=None, schema_version=None):
         name = normalize_device_name(name)
@@ -297,9 +306,38 @@ class Store:
         if device_name:
             query += " WHERE device_name=?"
             params = (normalize_device_name(device_name),)
-        query += " ORDER BY device_name, created_at DESC"
+        query += " ORDER BY device_name, created_at DESC, id DESC"
         with self.connect() as conn:
             return [dict(row) for row in conn.execute(query, params)]
+
+    def available_backups(self, device_name):
+        """Verified backups that still exist, newest first."""
+        name = normalize_device_name(device_name)
+        available = []
+        for item in self.backups(name):
+            path = self.backups_dir / name / item["filename"]
+            if item["verified"] and path.is_file():
+                available.append(item)
+        return available
+
+    def backup_file(self, device_name, filename):
+        """Return metadata and path for a verified device backup."""
+        name = normalize_device_name(device_name)
+        safe_name = os.path.basename(filename)
+        if safe_name != filename or not safe_name:
+            raise ValueError("invalid backup filename")
+        with self.connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM backups
+                   WHERE device_name=? AND filename=? AND verified=1""",
+                (name, safe_name),
+            ).fetchone()
+        if row is None:
+            return None, None
+        path = self.backups_dir / name / safe_name
+        if not path.is_file():
+            return None, None
+        return dict(row), path
 
     def verify_backups(self):
         results = []

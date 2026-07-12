@@ -33,6 +33,7 @@ if "fsrs" not in sys.modules:
 from cardbrick.paths import AppPaths  # noqa: E402
 from cardbrick.storage import Storage  # noqa: E402
 from cardbrick.sync import (SyncError, SyncState, create_backup,  # noqa: E402
+                            download_backup, list_backups,
                             restore_backup, sync_once)
 from cardbrick_server.server import make_server  # noqa: E402
 from cardbrick_server.store import Store  # noqa: E402
@@ -119,6 +120,15 @@ class ServerTests(unittest.TestCase):
                 self.assertEqual(stored.read_bytes(), payload)
                 self.assertFalse(list(store.tmp_dir.glob("*.partial")))
 
+                listed = json_request(
+                    "GET", running.url + "/devices/maya/backups")
+                self.assertEqual(len(listed["backups"]), 1)
+                self.assertEqual(listed["backups"][0]["sha256"], digest)
+                filename = listed["backups"][0]["filename"]
+                with urlopen(running.url + "/devices/maya/backups/" +
+                             filename) as response:
+                    self.assertEqual(response.read(), payload)
+
     def test_bad_backup_checksum_is_not_published(self):
         with tempfile.TemporaryDirectory() as root, RunningServer(root) as running:
             request = Request(
@@ -128,6 +138,7 @@ class ServerTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as caught:
                 urlopen(request)
             self.assertEqual(caught.exception.code, 400)
+            caught.exception.close()
             store = Store(root)
             self.assertEqual(store.backups("maya"), [])
             self.assertFalse(list(store.tmp_dir.glob("*.partial")))
@@ -264,6 +275,15 @@ class DeviceTests(unittest.TestCase):
                 )
                 self.assertIsNone(
                     SyncState(paths.data_dir).data["last_error"])
+                available = list_backups(paths.data_dir)
+                self.assertEqual(len(available), 1)
+                downloaded = download_backup(paths, available[0])
+                self.assertTrue(os.path.isfile(downloaded["archive"]))
+                self.assertEqual(
+                    hashlib.sha256(Path(downloaded["archive"]).read_bytes())
+                    .hexdigest(),
+                    available[0]["sha256"],
+                )
 
                 stages = []
                 first = sync_once(storage, scheduler, paths, "1.0",

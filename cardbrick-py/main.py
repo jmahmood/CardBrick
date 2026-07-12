@@ -322,6 +322,30 @@ def _run_app(storage, scheduler, paths, fullscreen=None,
 
     try:
         app.run()
+        if app.pending_restore_archive:
+            # The database must be closed before restore_backup atomically
+            # replaces the complete data directory. Storage.close() is
+            # idempotent because main() also closes it in its finally block.
+            storage.close()
+            from cardbrick.sync import restore_backup
+            try:
+                rollback = restore_backup(
+                    app.pending_restore_archive, paths.data_dir)
+                log.warning("in-app restore complete; previous data at %s",
+                            rollback)
+                print("Restore complete. Previous data retained at:\n  %s" %
+                      rollback)
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                log.exception("in-app restore failed")
+                show_error_screen(
+                    "Restore failed",
+                    str(exc),
+                    log_path=paths.log_path,
+                    next_action="The previous CardBrick data was kept. "
+                                "Restart the app to continue.",
+                )
+                return 1
     except Exception as exc:  # noqa: BLE001
         log.exception("unhandled error during session")
         show_error_screen("CardBrick hit an error", str(exc),

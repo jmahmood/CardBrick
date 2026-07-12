@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
+import cardbrick.app as app_module  # noqa: E402
 from cardbrick.app import (CardBrickApp, SYNC_DEVICE_NAMES,  # noqa: E402
                            _friendly_sync_name)
 from cardbrick.paths import AppPaths  # noqa: E402
@@ -25,6 +26,8 @@ def _bare_app(tmp_path, actions):
     app.clock = _Clock()
     app._draw_parent_sync = lambda *_args: None
     app._draw_parent_sync_name = lambda *_args: None
+    app._draw_parent_sync_restore = lambda *_args: None
+    app._draw_sync_progress = lambda *_args: None
     return app
 
 
@@ -76,3 +79,34 @@ def test_sync_action_routes_unconfigured_device_to_name_screen(tmp_path):
 
     assert app.screen_parent_sync() == "PARENT_SYNC_NAME"
     assert SyncState(str(tmp_path)).data["device_name"] is None
+
+
+def test_restore_action_routes_unconfigured_device_to_name_screen(tmp_path):
+    app = _bare_app(
+        tmp_path,
+        ["dpad_down", "dpad_down", "dpad_down", "east_button"],
+    )
+
+    assert app.screen_parent_sync() == "PARENT_SYNC_NAME"
+
+
+def test_restore_latest_requires_two_confirmations(tmp_path, monkeypatch):
+    state = SyncState(str(tmp_path))
+    state.configure(name="maysa")
+    backup = {
+        "filename": "maysa-latest.tar.gz",
+        "created_at": "2026-07-11T12:00:00+00:00",
+        "size": 1234,
+        "sha256": "a" * 64,
+    }
+    monkeypatch.setattr(app_module, "list_backups", lambda _data_dir: [backup])
+    monkeypatch.setattr(
+        app_module,
+        "download_backup",
+        lambda _paths, selected, progress=None:
+        dict(selected, archive=str(tmp_path / selected["filename"])),
+    )
+    app = _bare_app(tmp_path, ["east_button", "east_button"])
+
+    assert app.screen_parent_sync_restore() == "QUIT"
+    assert app.pending_restore_archive == str(tmp_path / backup["filename"])

@@ -130,14 +130,15 @@ Maysa, or Zak) once, then use **Sync now** to back up changed local data
 and install content assigned by the family server. **Force backup**
 uploads a fresh backup without downloading content. The screen shows
 the configured server, successful sync/backup times, installed package
-count, and the last error. New devices use
+count, and the last error. **Restore latest backup** downloads the newest
+verified backup for the selected device, asks twice before replacing local
+data, and retains the previous data directory as a rollback. New devices use
 `http://10.0.0.30:6429`; the CLI, `sync.json`, or
 `CARDBRICK_SYNC_URL` can still override it for troubleshooting.
 
 Handheld launchers continue to perform their automatic pre-study sync
-and post-study backup once a device name has been configured. Full-data
-restore remains an admin CLI/SSH operation because it replaces the live
-data directory.
+and post-study backup once a device name has been configured. The existing
+CLI restore command remains available for recovery outside the app.
 
 No deck handy? Generate a test one:
 `python scripts/make_sample_apkg.py sample.apkg`

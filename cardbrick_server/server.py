@@ -51,6 +51,29 @@ class CardBrickHandler(BaseHTTPRequestHandler):
                 self._json(200, {"device": name,
                                  "content": self.store.manifest(name)})
                 return
+            if len(parts) == 3 and parts[0] == "devices" and \
+                    parts[2] == "backups":
+                name = normalize_device_name(parts[1])
+                self._json(200, {"device": name,
+                                 "backups": self.store.available_backups(name)})
+                return
+            if len(parts) == 4 and parts[0] == "devices" and \
+                    parts[2] == "backups":
+                _item, path = self.store.backup_file(parts[1], parts[3])
+                if not path:
+                    self._json(404, {"error": "backup not found"})
+                    return
+                size = path.stat().st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "application/gzip")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s"' % path.name)
+                self.end_headers()
+                with open(path, "rb") as source:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        self.wfile.write(chunk)
+                return
             if len(parts) == 2 and parts[0] == "files" and parts[1].isdigit():
                 path = self.store.content_path(int(parts[1]))
                 if not path:

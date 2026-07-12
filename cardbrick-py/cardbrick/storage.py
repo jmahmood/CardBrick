@@ -309,7 +309,9 @@ class Storage:
         return added
 
     def close(self):
-        self.conn.close()
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
 
     def commit(self):
         self.conn.commit()

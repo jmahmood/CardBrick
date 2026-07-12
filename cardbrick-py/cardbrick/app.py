@@ -80,7 +80,8 @@ from .input_map import (
 from .paperroll import PAGE_GAP, PERF_H, PaperRoll
 from .scheduler import iso
 from .session import StudySession
-from .sync import SyncError, SyncState, sync_once
+from .sync import (SyncError, SyncState, download_backup, list_backups,
+                   sync_once)
 from .textutil import format_tag_label, wrap_text
 
 log = logging.getLogger(__name__)
@@ -161,6 +162,18 @@ def _format_sync_time(value):
         return parsed.strftime("%Y-%m-%d %H:%M")
     except (TypeError, ValueError):
         return str(value)
+
+
+def _format_bytes(value):
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return "Unknown size"
+    if size >= 1024 * 1024:
+        return "%.1f MB" % (size / (1024 * 1024))
+    if size >= 1024:
+        return "%.1f KB" % (size / 1024)
+    return "%d bytes" % size
 
 
 def _autoplay_vocab_phase(previous_phase, current_phase):
@@ -388,6 +401,7 @@ class CardBrickApp:
         self.language = settings.get("language", "en")
         self.paths = paths
         self.initial_state = initial_state
+        self.pending_restore_archive = None
 
         self.input_map = InputMap(paths.input_map_path if paths else None)
         self._image_cache = {}  # vocab card images, decoded once per file
@@ -609,6 +623,7 @@ class CardBrickApp:
             "PARENT_PROGRESS": self.screen_parent_progress,
             "PARENT_SYNC": self.screen_parent_sync,
             "PARENT_SYNC_NAME": self.screen_parent_sync_name,
+            "PARENT_SYNC_RESTORE": self.screen_parent_sync_restore,
             "INPUT_DIAG": self.screen_input_diagnostic,
             "CALIBRATE": self.screen_calibrate,
         }
@@ -2542,6 +2557,8 @@ class CardBrickApp:
             (self._jp("Device name", "端末名"), "PARENT_SYNC_NAME"),
             (self._jp("Sync now", "今すぐ同期"), "SYNC"),
             (self._jp("Force backup", "強制バックアップ"), "BACKUP"),
+            (self._jp("Restore latest backup", "最新バックアップを復元"),
+             "PARENT_SYNC_RESTORE"),
             (self._jp("Back", "戻る"), "PARENT_MENU"),
         )
         while True:
@@ -2555,7 +2572,11 @@ class CardBrickApp:
                 index = (index + 1) % len(entries)
             elif action == "east_button":
                 target = entries[index][1]
-                if target in ("PARENT_SYNC_NAME", "PARENT_MENU"):
+                if target in ("PARENT_SYNC_NAME", "PARENT_SYNC_RESTORE",
+                              "PARENT_MENU"):
+                    if target == "PARENT_SYNC_RESTORE" and not \
+                            status.get("device_name"):
+                        return "PARENT_SYNC_NAME"
                     return target
                 if not status.get("device_name"):
                     return "PARENT_SYNC_NAME"
@@ -2621,12 +2642,95 @@ class CardBrickApp:
             self._jp("Device name", "端末名"),
             self._jp("Sync now", "今すぐ同期"),
             self._jp("Force backup", "強制バックアップ"),
+            self._jp("Restore latest backup", "最新バックアップを復元"),
             self._jp("Back", "戻る"),
         )
         for row, label in enumerate(labels):
             self._menu_row(label, left + 16, y, row == index)
             y += 38
         self._footer("Up/Down = Choose   A = Select   B = Back")
+
+    def screen_parent_sync_restore(self):
+        state = SyncState(self.paths.data_dir)
+        if not state.data.get("device_name"):
+            return "PARENT_SYNC_NAME"
+        try:
+            self._draw_sync_progress(
+                "checking-backups", "Checking the server for backups…")
+            backups = list_backups(self.paths.data_dir)
+            latest = backups[0] if backups else None
+            message = None if latest else "No server backups found for this device."
+        except (OSError, SyncError) as exc:
+            latest = None
+            message = "Could not list backups: %s" % exc
+        confirmed = False
+
+        while True:
+            action = self.poll()
+            if action in ("start", "south_button", "select"):
+                return "PARENT_SYNC"
+            if action == "east_button" and latest:
+                if not confirmed:
+                    confirmed = True
+                else:
+                    try:
+                        downloaded = download_backup(
+                            self.paths, latest,
+                            progress=self._draw_sync_progress)
+                        self.pending_restore_archive = downloaded["archive"]
+                        self._draw_sync_progress(
+                            "restoring",
+                            "Restoring the backup and closing CardBrick…",
+                        )
+                        return "QUIT"
+                    except (OSError, SyncError) as exc:
+                        message = "Restore download failed: %s" % exc
+                        confirmed = False
+
+            self._draw_parent_sync_restore(latest, confirmed, message)
+            self.present()
+            self.clock.tick(FPS)
+
+    def _draw_parent_sync_restore(self, backup, confirmed, message=None):
+        self._paper()
+        self._page_header(
+            self._jp("Restore Latest Backup", "最新バックアップを復元"))
+        width = self.w - 140
+        y = 125
+        if backup:
+            details = (
+                "Created: %s" % _format_sync_time(backup.get("created_at")),
+                "Size: %s" % _format_bytes(backup.get("size")),
+                "File: %s" % backup.get("filename", "Unknown"),
+            )
+            for detail in details:
+                detail = self._truncate_to_width(
+                    self.font_small, detail, width)
+                self._center(self.font_small.render(detail, True, DIM), y)
+                y += 30
+            y += 18
+            warning = (
+                "Press A again to restore. CardBrick will close; relaunch it "
+                "when the restore finishes."
+                if confirmed else
+                "This replaces this device's decks and study progress. "
+                "CardBrick will close afterward and must be relaunched."
+            )
+            color = ACCENT if confirmed else WARN
+            for line in wrap_text(self.font, warning, width):
+                self._center(self.font.render(line, True, color), y)
+                y += self.font.get_linesize() + 4
+        if message:
+            y = max(y + 12, 250)
+            for line in wrap_text(self.font_small, message, width)[:3]:
+                self._center(self.font_small.render(line, True, WARN), y)
+                y += 24
+        if backup:
+            footer = "A = Confirm restore   B = Cancel" if confirmed else \
+                "A = Continue   B = Cancel"
+        else:
+            footer = "B = Back"
+        self._footer(footer)
 
     def _draw_parent_sync_name(self, names, index, current_name, message=None):
         self._paper()

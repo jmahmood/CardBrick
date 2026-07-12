@@ -478,6 +478,51 @@ def sync_status(data_dir):
     return SyncState(data_dir).data
 
 
+def list_backups(data_dir):
+    """Return this device's verified server backups, newest first."""
+    state = SyncState(data_dir)
+    name = state.data.get("device_name")
+    server = state.data.get("server") or DEFAULT_SERVER
+    if not name:
+        raise SyncError("sync is not configured; choose a device name first")
+    response = _json_request(
+        "GET", "%s/devices/%s/backups" % (server, quote(name)))
+    backups = response.get("backups", [])
+    if not isinstance(backups, list):
+        raise SyncError("server returned an invalid backup list")
+    return backups
+
+
+def download_backup(paths, backup, progress=None):
+    """Download and checksum one backup selected from ``list_backups``."""
+    state = SyncState(paths.data_dir)
+    name = state.data.get("device_name")
+    server = state.data.get("server") or DEFAULT_SERVER
+    if not name:
+        raise SyncError("sync is not configured; choose a device name first")
+    try:
+        filename = os.path.basename(backup["filename"])
+        expected_sha = backup["sha256"]
+    except (KeyError, TypeError) as exc:
+        raise SyncError("invalid backup information") from exc
+    if not filename or filename != backup["filename"]:
+        raise SyncError("invalid backup filename")
+    download_dir = os.path.join(paths.data_dir, "sync-downloads")
+    os.makedirs(download_dir, exist_ok=True)
+    destination = os.path.join(download_dir, filename)
+    _emit_progress(progress, "downloading-backup",
+                   "Downloading the latest backup…")
+    _download(
+        "%s/devices/%s/backups/%s" %
+        (server, quote(name), quote(filename)),
+        destination,
+        expected_sha,
+    )
+    result = dict(backup)
+    result["archive"] = destination
+    return result
+
+
 def restore_backup(archive_path, data_dir):
     """Restore a local backup archive, preserving an automatic rollback."""
     archive_path = os.path.abspath(archive_path)
