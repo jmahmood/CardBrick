@@ -1920,7 +1920,7 @@ class CardBrickApp:
                         confirm_known(mistake=True)
                         continue
                     if action == "r1":
-                        discard_current("BURIED")
+                        discard_current("SUSPENDED", suspend=True)
                         continue
                 elif action == "dpad_down":
                     if phase < self.VOCAB_MAX_PHASE:
@@ -1954,7 +1954,7 @@ class CardBrickApp:
                     if auto_play:
                         play_vocab()
                 elif action == "r1":
-                    discard_current("BURIED")
+                    discard_current("SUSPENDED", suspend=True)
                     continue
             elif pattern_detail is not None and pattern_detail["kind"] == "mcq":
                 if mcq_result is None:
@@ -1987,7 +1987,7 @@ class CardBrickApp:
                         print_mcq_feedback()
                         mcq_result = {"rating": 1}
                     elif action == "r1":
-                        discard_current("BURIED")
+                        discard_current("SUSPENDED", suspend=True)
                         continue
                 else:
                     if scroll_card(action):
@@ -2012,7 +2012,7 @@ class CardBrickApp:
                         confirm_known(mistake=True)
                         continue
                     if action == "r1":
-                        discard_current("BURIED")
+                        discard_current("SUSPENDED", suspend=True)
                         continue
                 elif action == "dpad_down":
                     if phase < drill.MAX_PHASE:
@@ -2042,7 +2042,7 @@ class CardBrickApp:
                     phase = drill.MAX_PHASE
                     print_pattern_up_to(phase)
                 elif action == "r1":
-                    discard_current("BURIED")
+                    discard_current("SUSPENDED", suspend=True)
                     continue
             elif not flipped:
                 if action == "dpad_down" or action in ("east_button", "unmapped"):
@@ -2060,7 +2060,7 @@ class CardBrickApp:
                 advance()
                 continue
             elif action == "r1":
-                discard_current("BURIED")
+                discard_current("SUSPENDED", suspend=True)
                 continue
 
             # The screen is static between inputs: redraw only while
@@ -2098,7 +2098,7 @@ class CardBrickApp:
             if mcq_result is None:
                 self._footer(
                     "X / Y / B = Choose   Down = Show answer",
-                    "Hold Up = Undo   R1 = Bury   START = Menu",
+                    "Hold Up = Undo   R1 = Suspend   START = Menu",
                 )
             else:
                 self._footer(
@@ -2119,12 +2119,12 @@ class CardBrickApp:
             elif phase < drill.MAX_PHASE:
                 self._footer(
                     "Say it out loud!   A = I know this",
-                    "Down = More help   R1 = Bury   START = Menu",
+                    "Down = More help   R1 = Suspend   START = Menu",
                 )
             else:
                 self._footer(
                     "A = Go to next card",
-                    "D-pad=Scroll   R1=Bury   START=Menu",
+                    "D-pad=Scroll   R1=Suspend   START=Menu",
                 )
         elif vocab is not None:
             if known_confirmation is not None:
@@ -2135,17 +2135,17 @@ class CardBrickApp:
             elif phase < self.VOCAB_MAX_PHASE:
                 self._footer(
                     "Down = Reveal more   Hold Up = Undo   A = I know this",
-                    "L1 = Replay audio   R1 = Bury   START = Menu",
+                    "L1 = Replay audio   R1 = Suspend   START = Menu",
                 )
             else:
                 self._footer(
                     "A = Go to next card",
-                    "D-pad=Scroll   L1=Replay   R1=Bury   START=Menu",
+                    "D-pad=Scroll   L1=Replay   R1=Suspend   START=Menu",
                 )
         elif flipped:
             self._footer(
                 "A=Good  B=Again  Y=Easy  X=Hard",
-                "D-pad=Scroll   R1=Bury   START=Menu   SELECT=Finish",
+                "D-pad=Scroll   R1=Suspend   START=Menu   SELECT=Finish",
             )
         else:
             self._footer(
