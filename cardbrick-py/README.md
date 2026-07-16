@@ -177,12 +177,12 @@ Buttons use this fixed face layout:
 | Y              | —                   | Easy        |
 | X              | —                   | Hard        |
 | L1             | Replay audio        | Replay audio|
-| R1             | —                   | Bury until tomorrow |
-| START          | Action menu (undo / bury / suspend / end) | same |
+| R1             | —                   | Suspend (parent will check) |
+| START          | Action menu (undo / bury / suspend / report / end) | same |
 | SELECT         | Finish session / quit | same |
 
 Keyboard fallback for desktop testing: arrows/Space reveal, `1/2/3/4` =
-Again/Hard/Good/Easy (or literal `A/B/X/Y` keys), `L` replay, `R` bury,
+Again/Hard/Good/Easy (or literal `A/B/X/Y` keys), `L` replay, `R` suspend,
 `U` undo, `Tab` menu, `Esc` finish/quit.
 
 Raw button indices are mapped to semantic actions through
@@ -223,7 +223,7 @@ much you needed to see*:
 | 3 (needed the full definition) | Again |
 
 L1 replays the current phase's audio (word audio at phase 0, example
-audio from phase 1 on); R1 bury and START menu work the same as
+audio from phase 1 on); R1 suspend and START menu work the same as
 regular cards. The header, definitions, and gendered forms are shown
 as plain text (HTML/CSS from the original card is not rendered — see
 Scope, below); the headword highlight inside the example sentence is
@@ -436,6 +436,39 @@ and always ask `Type 'yes' to confirm:` unless `--yes` is passed —
 there's no undo button in the child-facing UI, so these are the only
 commands in the app that discard data outright. They are admin/CLI
 only; deliberately not exposed in Parent Mode's on-device UI.
+
+### Flagging bad sentences
+
+Some example sentences are wrong or inappropriate for a new learner — the
+English/Japanese translation doesn't carry the word's meaning, or the sentence
+uses a colloquial sense that isn't in the card's listed meanings. During review
+a child can report one from the action menu (**START → Report sentence**),
+which opens a **keyboard-free multiple-choice reason picker** (wrong
+translation / meaning not listed–slang / not appropriate / something else).
+The card is stamped `FLAGGED` and **auto-suspended**, so a bad sentence leaves
+rotation immediately; it then shows in Parent Mode → *Suspended cards* like any
+suspend, and the reason is stored for correction.
+
+Correcting flags is an **offline loop** — the handheld only raises them:
+
+```bash
+# 1. export open flags with full card context (also travels in the sync backup)
+python main.py flags export --out flags.json
+
+# 2. on your computer, classify each with a local LLM (Ollama) — no data leaves
+#    the machine. Decides: rewrite the sentence, or add the missing sense to
+#    the word card. Use --backend dry to stub the round trip with no model.
+python scripts/flag_pipeline.py flags.json --out resolutions.json --model llama3.1
+
+# 3. apply the corrections back: updates vocab content, closes each flag, and
+#    unsuspends fixed cards. FSRS review progress is preserved (content-only
+#    update, exactly like a re-import).
+python main.py flags apply resolutions.json
+```
+
+Flags are ordinary DB rows (`sentence_flags`), so they ride upstream inside the
+existing sync backup and corrections come back as vocab content the importer
+already knows how to apply — no new sync protocol.
 
 ### Daily goal & sprints (microstudying)
 

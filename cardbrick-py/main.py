@@ -165,6 +165,18 @@ def build_parser():
     p_restore.add_argument("archive")
     p_restore.add_argument("--yes", action="store_true",
                            help="Skip the destructive confirmation")
+
+    p_flags = sub.add_parser(
+        "flags", help="Export / apply learner sentence flags")
+    flags_sub = p_flags.add_subparsers(dest="flags_command")
+    p_flags_export = flags_sub.add_parser(
+        "export", help="Write open sentence flags (with card context) as JSON")
+    p_flags_export.add_argument(
+        "--out", help="Output file (default: stdout)")
+    p_flags_apply = flags_sub.add_parser(
+        "apply", help="Apply a pipeline resolution pack back into the DB")
+    p_flags_apply.add_argument("resolutions",
+                               help="resolutions.json produced by the pipeline")
     return parser
 
 
@@ -273,6 +285,8 @@ def main(argv=None):
             from cardbrick.sync import sync_status
             print(json.dumps(sync_status(paths.data_dir), indent=2,
                              sort_keys=True))
+        elif args.command == "flags":
+            return _flags_command(storage, args)
         elif args.command == "admin":
             return _admin_command(storage, paths, args)
         else:  # study
@@ -354,6 +368,50 @@ def _run_app(storage, scheduler, paths, fullscreen=None,
                                       "Restart the app to continue.")
         return 1
     return 0
+
+
+def _flags_command(storage, args):
+    """Bridge between the on-device flags and the offline correction pipeline.
+
+    ``export`` emits open flags with full card context (the pipeline's input);
+    ``apply`` writes a resolution pack back — updating vocab content (progress
+    preserved) and closing each flag with what was done.
+    """
+    if args.flags_command == "export":
+        rows = [dict(r) for r in storage.open_flags()]
+        text = json.dumps(rows, indent=2, ensure_ascii=False, sort_keys=True)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as handle:
+                handle.write(text + "\n")
+            print(f"Exported {len(rows)} open flag(s) to {args.out}")
+        else:
+            print(text)
+        return 0
+
+    if args.flags_command == "apply":
+        with open(args.resolutions, encoding="utf-8") as handle:
+            resolutions = json.load(handle)
+        now_iso = iso(now_utc())
+        applied = 0
+        for item in resolutions:
+            flag_id = item["flag_id"]
+            resolution = item.get("resolution", "no_change")
+            card_id = item.get("card_id")
+            vocab = item.get("vocab") or {}
+            if vocab and card_id is not None:
+                storage.update_vocab_fields(card_id, vocab)
+            if item.get("unsuspend") and card_id is not None:
+                storage.set_suspended(card_id, False, now_iso=now_iso)
+            if resolution == "no_change":
+                storage.dismiss_flag(flag_id, now_iso=now_iso)
+            else:
+                storage.resolve_flag(flag_id, resolution, now_iso=now_iso)
+            applied += 1
+        print(f"Applied {applied} resolution(s).")
+        return 0
+
+    print("usage: flags {export|apply}", file=sys.stderr)
+    return 1
 
 
 def _profile_command(storage, args):

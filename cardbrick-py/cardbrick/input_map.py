@@ -45,7 +45,7 @@ STUDY_ACTIONS = {
     "west_button": "rate_easy",
     "north_button": "rate_hard",
     "l1": "replay_audio",
-    "r1": "bury_card",
+    "r1": "suspend_card",
     "select": "quit",
     "start": "open_action_menu",
     "dpad_up": "hold_to_undo_before_reveal",

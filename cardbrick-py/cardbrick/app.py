@@ -58,6 +58,7 @@ U undo, Tab menu, Esc finish/quit.
 """
 
 import calendar as _calendar
+import json
 import logging
 import os
 import time
@@ -1365,8 +1366,21 @@ class CardBrickApp:
         "Undo last action",
         "Bury card (back tomorrow)",
         "Suspend card (parent will check)",
+        "Report sentence",
         "End session",
         "Cancel",
+    )
+
+    # Keyboard-free reason picker shown when "Report sentence" is chosen on a
+    # vocab card: (label, reason) where reason is one of storage.FLAG_REASONS,
+    # or None for the trailing Cancel. Navigated with the d-pad + confirm, so a
+    # child can flag a bad example without ever typing.
+    FLAG_REASON_ENTRIES = (
+        ("Wrong translation", "wrong_translation"),
+        ("Meaning not listed / slang", "meaning_not_listed"),
+        ("Not appropriate", "inappropriate"),
+        ("Something else", "other"),
+        ("Cancel", None),
     )
 
     # Four-phase vocab cards (word -> example -> image -> definition):
@@ -1476,6 +1490,7 @@ class CardBrickApp:
         shown_at = None
         audio_status = None
         menu = None  # action-menu overlay index, or None when closed
+        flag_menu = None  # reason-picker overlay index, or None when closed
         needs_draw = True
         gate = FrameGate()
         tear_next_page = False
@@ -1813,6 +1828,22 @@ class CardBrickApp:
             tear_next_page = True
             advance()
 
+        def record_flag(reason):
+            """Record a sentence flag for the current vocab card, then suspend
+            it so the child stops seeing a bad example immediately. The chosen
+            reason is the whole signal — nothing is typed."""
+            if vocab_detail is None:
+                return
+            snapshot = json.dumps({
+                "example_es": vocab_detail["example_es"],
+                "example_en": vocab_detail["example_en"],
+                "example_jp": vocab_detail["example_jp"],
+            })
+            self.storage.add_sentence_flag(
+                card["id"], reason, snapshot=snapshot,
+                now_iso=iso(self.service.now()))
+            discard_current("FLAGGED", suspend=True)
+
         def undo_last_answer():
             nonlocal card
             restored = session.undo()
@@ -1827,7 +1858,8 @@ class CardBrickApp:
             return True
 
         def before_flip_controls_active():
-            if menu is not None or card is None or roll.printing_busy:
+            if (menu is not None or flag_menu is not None
+                    or card is None or roll.printing_busy):
                 return False
             if pattern_detail is not None:
                 if pattern_detail["kind"] == "mcq":
@@ -1881,7 +1913,20 @@ class CardBrickApp:
                 # pre-flip controls are active.
                 if not up_hold_undo_fired:
                     up_hold_started = None
-            if menu is not None:
+            if flag_menu is not None:
+                entries = self.FLAG_REASON_ENTRIES
+                if action == "dpad_up":
+                    flag_menu = (flag_menu - 1) % len(entries)
+                elif action == "dpad_down":
+                    flag_menu = (flag_menu + 1) % len(entries)
+                elif action in ("south_button", "select", "start"):
+                    flag_menu = None
+                elif action == "east_button":
+                    reason = entries[flag_menu][1]
+                    flag_menu = None
+                    if reason is not None:
+                        record_flag(reason)
+            elif menu is not None:
                 if action == "dpad_up":
                     menu = (menu - 1) % len(self.MENU_ENTRIES)
                 elif action == "dpad_down":
@@ -1896,6 +1941,11 @@ class CardBrickApp:
                         discard_current("BURIED")
                     elif choice.startswith("Suspend"):
                         discard_current("SUSPENDED", suspend=True)
+                    elif choice.startswith("Report"):
+                        # Only vocab cards carry an example sentence to flag;
+                        # on other card types the entry is inert.
+                        if vocab_detail is not None:
+                            flag_menu = 0
                     elif choice == "End session":
                         return end_session()
             elif action == "start":
@@ -2080,6 +2130,7 @@ class CardBrickApp:
                     roll=roll,
                     pattern=pattern_detail,
                     mcq_result=mcq_result,
+                    flag_menu=flag_menu,
                 )
                 needs_draw = False
             if roll.busy:
@@ -2088,7 +2139,8 @@ class CardBrickApp:
                 self._idle_tick(gate)
 
     def _draw_review(self, flipped, menu, phase, vocab, known_confirmation,
-                     roll, pattern=None, mcq_result=None, teach=False):
+                     roll, pattern=None, mcq_result=None, teach=False,
+                     flag_menu=None):
         """One frame of the review screen: the paper roll carries all
         card content (pre-rendered when printed); only the chrome —
         sprocket strips, chassis hints, overlay menu — is drawn here."""
@@ -2153,7 +2205,9 @@ class CardBrickApp:
                 "START = Menu   SELECT = Finish",
             )
 
-        if menu is not None:
+        if flag_menu is not None:
+            self._draw_flag_overlay(flag_menu)
+        elif menu is not None:
             self._draw_menu_overlay(menu)
         self.present()
 
@@ -2279,6 +2333,22 @@ class CardBrickApp:
         pygame.draw.rect(self.screen, FG, (x, y, box_w, box_h), 2, border_radius=8)
         for i, entry in enumerate(entries):
             self._menu_row(entry, x + 44, y + 16 + i * line_h, i == index)
+
+    def _draw_flag_overlay(self, index):
+        """The keyboard-free reason picker for 'Report sentence': a paper slip
+        of fixed multiple-choice reasons, same look and interaction as the
+        action menu (up/down + confirm)."""
+        entries = self.FLAG_REASON_ENTRIES
+        title = "What's wrong with this sentence?"
+        box_w, line_h = 520, 42
+        box_h = line_h * len(entries) + 64
+        x = (self.w - box_w) // 2
+        y = (self.h - box_h) // 2
+        pygame.draw.rect(self.screen, OVERLAY_BG, (x, y, box_w, box_h), border_radius=8)
+        pygame.draw.rect(self.screen, FG, (x, y, box_w, box_h), 2, border_radius=8)
+        self.screen.blit(self.font_small.render(title, True, DIM), (x + 24, y + 16))
+        for i, (label, _reason) in enumerate(entries):
+            self._menu_row(label, x + 44, y + 48 + i * line_h, i == index)
 
     # -- summary ---------------------------------------------------------------------
 

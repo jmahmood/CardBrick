@@ -51,6 +51,12 @@ merely deferred.
 - Add a flag/report action alongside bury/suspend.
 - Persist the flag (and reason) so it can feed the audit in item 5.
 
+**Status: implemented.** In-review *Report sentence* action with a keyboard-free
+reason picker (auto-suspends the card), a `sentence_flags` table, `flags
+export` / `flags apply` CLI, and a local-LLM correction pipeline
+(`scripts/flag_pipeline.py`, Ollama). See `docs/FLAGGED_SENTENCES_PLAN.md`.
+The `sentence_flags` rows are exactly what the item #5 audit feed can populate.
+
 ## 4. Memory helpers for frequently-missed words
 
 **Problem:** Some words are missed repeatedly with no extra scaffolding to
