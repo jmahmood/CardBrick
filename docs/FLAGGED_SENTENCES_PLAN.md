@@ -34,8 +34,13 @@ These shape the design below. Any can be changed before implementation.
 2. **On flag — auto-suspend the card (default).** Flagging means "this is
    wrong/inappropriate," so the card is hidden from the child immediately via
    the existing suspend path, until the pipeline resolves it. Configurable.
-3. **Flag entry — both.** A quick in-review flag action with a reason picker,
-   plus a parent-mode triage screen to add/edit reasons and resolve.
+3. **Flag entry — child quick flag only.** A single in-review action opening a
+   **simple multiple-choice reason picker**. The child has **no keyboard**, so
+   there is no free-text note anywhere in the flow — the chosen reason is the
+   entire signal, navigated with the d-pad and confirmed with a button. No
+   parent-mode entry step is required; a parent-side triage screen is optional
+   (see below), because flagged cards are auto-suspended and therefore already
+   appear in the existing *Suspended cards* screen.
 
 ## Data model
 
@@ -47,7 +52,8 @@ CREATE TABLE IF NOT EXISTS sentence_flags (
     card_id       INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
     reason        TEXT NOT NULL,       -- wrong_translation | meaning_not_listed
                                        -- | inappropriate | other
-    note          TEXT,                -- optional free text
+    note          TEXT,                -- reserved; NOT set by the child (no
+                                       -- keyboard). Left for the pipeline/parent.
     example_snapshot TEXT,             -- JSON of example_es/en/jp at flag time
     status        TEXT NOT NULL DEFAULT 'open',   -- open | resolved | dismissed
     resolution    TEXT,                -- sentence_updated | card_updated
@@ -66,35 +72,43 @@ CREATE INDEX IF NOT EXISTS idx_flags_status ON sentence_flags(status);
   content re-import doesn't lose the evidence.
 
 New `Storage` methods (next to `suspended_cards`/`set_suspended`,
-`storage.py:560`): `add_sentence_flag(card_id, reason, note, snapshot)`,
-`open_flags()` (join `vocab_cards` for display + export context),
-`flags_for_card(card_id)`, `resolve_flag(flag_id, resolution)`,
-`dismiss_flag(flag_id)`.
+`storage.py:560`): `add_sentence_flag(card_id, reason, snapshot)` (no `note`
+argument — nothing on the device can type one), `open_flags()` (join
+`vocab_cards` for display + export context), `flags_for_card(card_id)`,
+`resolve_flag(flag_id, resolution)`, `dismiss_flag(flag_id)`.
 
-## In-review capture (child)
+## In-review capture (child) — the whole entry mechanism
+
+Keyboard-free by construction: every step is d-pad + one confirm button.
 
 - Add one entry to `MENU_ENTRIES` (`app.py:1364`), e.g.
-  `"Report sentence (wrong/inappropriate)"`. Selecting it opens a **reason
-  sub-picker** (reuse the existing overlay-menu rendering) listing the four
-  reasons in the user's own terms: *wrong translation*, *meaning not listed /
-  colloquial*, *inappropriate*, *other*.
-- On confirm: `storage.add_sentence_flag(...)`, then (default) suspend the card
-  through the existing `discard_current("SUSPENDED", suspend=True)` closure
-  (`app.py:1805`), printing a `FLAGGED` stamp instead of `SUSPENDED`. This
-  reuses the suspend persistence path verified earlier, so the card leaves the
-  child's rotation at once.
+  `"Report sentence"`. Selecting it opens a **simple multiple-choice reason
+  picker** (reuse the existing overlay-menu list rendering — same up/down +
+  confirm interaction as the main menu, so no new input model) with four fixed
+  choices in the user's own terms: *wrong translation*, *meaning not listed /
+  colloquial*, *inappropriate*, *other*. No text entry at any point.
+- On confirm: `storage.add_sentence_flag(card_id, reason, snapshot)`, then
+  (default) suspend the card through the existing
+  `discard_current("SUSPENDED", suspend=True)` closure (`app.py:1805`),
+  printing a `FLAGGED` stamp instead of `SUSPENDED`. This reuses the suspend
+  persistence path verified earlier, so the card leaves the child's rotation at
+  once.
 - Snapshot the current `example_*` fields from `vocab_detail` into the flag.
 
-## Parent triage screen (`PARENT_FLAGGED`)
+Because the reason enum is the entire signal, the child flow ends here — no
+confirmation typing, no parent hand-off needed to raise a flag.
 
-- Model it on `screen_parent_suspended` (`app.py:3199`): a scrollable list of
-  open flags showing `card["front"]` + reason. Detail view shows word,
-  `definitions`, `example_es/en/jp`, reason, and note. Actions: **Dismiss**
-  (no_change), **Keep suspended**, **Unsuspend** (issue judged fine).
-- Register the screen in the state dispatch table (`app.py:685`, alongside
-  `"PARENT_SUSPENDED"`) and add a menu entry in `screen_parent_menu`
-  (`app.py:2598`), e.g. `("Flagged sentences", "PARENT_FLAGGED")` with the
-  `self._jp(...)` bilingual label like its neighbors.
+## Parent-side visibility (optional, not core)
+
+Flagged cards are auto-suspended, so they already list under the existing
+*Suspended cards* screen (`screen_parent_suspended`, `app.py:3199`) — a parent
+can already unsuspend a false alarm there with no new UI. A dedicated
+`PARENT_FLAGGED` screen (list open flags with their reason, dismiss/unsuspend)
+is a **nice-to-have** that can follow later; if built, mirror
+`screen_parent_suspended`, register it in the state dispatch table
+(`app.py:685`) and add a `self._jp(...)` entry in `screen_parent_menu`
+(`app.py:2598`). It is not required for the export→pipeline→apply loop, which
+reads flags from the DB directly.
 
 ## Export → pipeline → apply
 
@@ -138,9 +152,10 @@ importer knows how to apply.
 
 - `cardbrick/storage.py` — `sentence_flags` table in `SCHEMA`, `SCHEMA_VERSION`
   bump, flag CRUD methods.
-- `cardbrick/app.py` — reason picker off `MENU_ENTRIES`; `FLAGGED` capture via
-  `discard_current`; `screen_parent_flagged`; state-dispatch + parent-menu
-  entries; footer/label copy.
+- `cardbrick/app.py` — simple multiple-choice reason picker off `MENU_ENTRIES`
+  (keyboard-free); `FLAGGED` capture via `discard_current`; footer/label copy.
+  (Optional/later: `screen_parent_flagged` + its state-dispatch and parent-menu
+  entries.)
 - `main.py` — `flags export` / `flags apply` subcommands + handlers.
 - `scripts/flag_pipeline.py` *(new)* — pluggable classifier (manual + optional
   local-LLM backend), emits the resolution pack.
@@ -161,19 +176,21 @@ importer knows how to apply.
    resolution pack → `flags apply` → assert the sentence/definitions changed,
    the flag is `resolved`, the card is unsuspended, and reps/due are intact.
 3. **Run the app** (`python main.py`): flag a sentence from the in-review menu
-   (reason picker + `FLAGGED` stamp, card leaves rotation), then open parent
-   mode → *Flagged sentences* and confirm the entry, detail view, and
-   dismiss/unsuspend actions.
+   using only the d-pad + confirm button (multiple-choice reason picker +
+   `FLAGGED` stamp, card leaves rotation), then open parent mode → *Suspended
+   cards* and confirm the flagged card is there and can be unsuspended.
 
 ## Suggested build order
 
 1. Storage table + methods + tests.
-2. In-review reason picker + auto-suspend capture.
-3. Parent `PARENT_FLAGGED` triage screen.
-4. `flags export` / `flags apply` CLI + apply-preserves-progress test.
-5. `scripts/flag_pipeline.py` scaffold (manual backend first, LLM backend behind
+2. In-review multiple-choice reason picker + auto-suspend capture (the core
+   child flow — keyboard-free).
+3. `flags export` / `flags apply` CLI + apply-preserves-progress test.
+4. `scripts/flag_pipeline.py` scaffold (manual backend first, LLM backend behind
    the same interface).
-6. Docs.
+5. Docs.
+6. *(Optional/later)* `PARENT_FLAGGED` triage screen — not needed for the core
+   loop since flagged cards already appear under *Suspended cards*.
 
 This also lays the groundwork for TODO item #5 (audit feed): the same
 `sentence_flags` rows and export contract are exactly what an automated audit
