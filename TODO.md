@@ -112,6 +112,30 @@ was traced and exercised headlessly:
   simulated app restart. `tests/test_bury_suspend.py::
   test_suspended_cards_visible_to_parent` also passes.
 
-Because the in-code path is verified working, the trigger is likely
-environmental — needs concrete reproduction details (card type,
-same device vs another device, whether a sync/restore ran in between).
+Reported to occur **after an app relaunch**, with **vocab (word) cards**.
+That specific scenario was reproduced headlessly and still works: suspend a
+vocab card via `StudySession.suspend_current`, close the DB, reopen it, and
+`suspended_cards()` still returns it — even after re-running the vocab import
+(`upsert_card` + `upsert_vocab_card` + `init_review_state`) against the same
+stable id.
+
+Every relaunch-time path that could reset the flag was checked and ruled out:
+- **Migrations** (`Storage._migrate`, runs each launch) only `ALTER TABLE ADD
+  COLUMN` and `CREATE TABLE IF NOT EXISTS`; `cards` is never rebuilt.
+- **Import/sync** upserts preserve `suspended` and `review_state`.
+- **Data-root resolution** (`paths.resolve_data_dir`) is deterministic given
+  the same mode/env, so a normal relaunch reads the same `cardbrick.db`.
+
+Because the in-code path is verified working end-to-end, the trigger is likely
+environmental and needs on-device confirmation. Next diagnostic on the failing
+device, right after suspending and relaunching:
+1. Compare the `db_path` logged at startup across the two launches (see
+   `paths.py` / `bootlog.py`) — a differing path means the suspend and the
+   parent view hit different databases (e.g. `CARD_BRICK_DATA_DIR` set on one
+   launch only, or an SD mount not ready at boot).
+2. Query the DB directly: `sqlite3 <db_path> "SELECT id, suspended FROM cards
+   WHERE suspended = 1"`. If the row is there, it's a display/read bug; if it's
+   absent, the write never reached that file.
+Also confirm whether a **sync backup-restore** (`screen_parent_sync_restore`,
+which replaces the whole data dir from a server backup) ran between suspending
+and checking — a restore of a pre-suspend backup would silently drop it.
