@@ -74,3 +74,44 @@ goals or that translations clarify usage.
   used** in that sentence (ties into items 2 and 3).
 
 Flags raised in item 3 should feed into this audit.
+
+## 6. Show deck/topic maturity status at selection time
+
+**Problem:** When selecting a topic (category) or a deck, there's no
+at-a-glance sense of how far along that collection is.
+
+**Idea:** On both the topic-selection and deck-selection screens, show a
+status breakdown per entry: **unseen** vs **studying** vs **mature**.
+
+- Derive counts from `review_state` (e.g. reps = 0 → unseen; young/in-learning
+  → studying; stability past a threshold / FSRS state → mature).
+- Surface the breakdown in the deck picker and the category/topic picker
+  (`cardbrick/app.py` DECK_SELECT / CATEGORY_SELECT screens).
+
+---
+
+# Known Bugs
+
+## B1. Suspended cards don't appear in the parent "Suspended cards" list
+
+**Report:** Despite having suspended cards, they don't show up in the parent
+mode "Suspended cards" list.
+
+**Investigation (unresolved — could not reproduce in code):** The full path
+was traced and exercised headlessly:
+- `session.suspend_current` → `service.suspend_card` → `storage.set_suspended`
+  writes `cards.suspended = 1` and commits.
+- `storage.suspended_cards()` reads `SELECT * FROM cards WHERE suspended = 1`
+  with no profile/deck/type filter.
+- The parent menu ("Suspended cards") routes to `PARENT_SUSPENDED` →
+  `screen_parent_suspended`, which reads `suspended_cards()`.
+- `upsert_card`'s sync/import `ON CONFLICT` update does **not** reset
+  `suspended`, so re-imports preserve it.
+- A headless repro (suspend via `StudySession.suspend_current`, then read
+  `suspended_cards()`) returns the card both same-connection and after a
+  simulated app restart. `tests/test_bury_suspend.py::
+  test_suspended_cards_visible_to_parent` also passes.
+
+Because the in-code path is verified working, the trigger is likely
+environmental — needs concrete reproduction details (card type,
+same device vs another device, whether a sync/restore ran in between).
